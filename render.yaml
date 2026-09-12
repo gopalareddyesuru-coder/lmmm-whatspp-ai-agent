@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: lmmm-whatsapp-ai-agent
+    runtime: node
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: 22
+      - key: META_VERIFY_TOKEN
+        sync: false
+      - key: META_GRAPH_VERSION
+        value: v26.0
+      - key: META_PHONE_NUMBER_ID
+        value: '1242488782290306'
+      - key: META_ACCESS_TOKEN
+        sync: false
