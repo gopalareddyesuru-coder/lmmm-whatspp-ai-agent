@@ -50,35 +50,12 @@ app.get('/health', (_req, res) => {
 app.use(express.json());
 
 // PASTE THIS HERE
-app.get("/webhook", (req, res) => {
-  const mode = req.query["hub.mode"];
-  const token = req.query["hub.verify_token"];
-  const challenge = req.query["hub.challenge"];
-
-  if (mode === "subscribe" && token === process.env.WEBHOOK_VERIFY_TOKEN) {
-    return res.status(200).send(challenge);
-  }
-
-  return res.sendStatus(403);
-});
 
 // your other routes here
 
 app.listen(process.env.PORT || 3000, () => {
   console.log("Server running");
 });
-app.get('/webhook', (req, res) => {
-  const mode = req.query['hub.mode'];
-  const token = String(req.query['hub.verify_token'] ?? '').trim();
-  const challenge = req.query['hub.challenge'];
-
-  console.log('[WEBHOOK VERIFY]', {
-    mode,
-    token_received: Boolean(token),
-    token_length: token.length,
-    token_matches: token === VERIFY_TOKEN,
-    challenge_received: Boolean(challenge)
-  });
 
   if (mode === 'subscribe' && token === VERIFY_TOKEN && challenge) {
     console.log('WEBHOOK VERIFIED');
