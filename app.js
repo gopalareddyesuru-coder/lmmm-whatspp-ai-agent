@@ -35,7 +35,6 @@ app.get('/health', (_req, res) => {
     verify_token_configured: Boolean(VERIFY_TOKEN)
   });
 });
-const express = require("express");
 const app = express();
 
 // your other middleware here
