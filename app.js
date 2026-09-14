@@ -35,7 +35,30 @@ app.get('/health', (_req, res) => {
     verify_token_configured: Boolean(VERIFY_TOKEN)
   });
 });
+const express = require("express");
+const app = express();
 
+// your other middleware here
+app.use(express.json());
+
+// PASTE THIS HERE
+app.get("/webhook", (req, res) => {
+  const mode = req.query["hub.mode"];
+  const token = req.query["hub.verify_token"];
+  const challenge = req.query["hub.challenge"];
+
+  if (mode === "subscribe" && token === process.env.WEBHOOK_VERIFY_TOKEN) {
+    return res.status(200).send(challenge);
+  }
+
+  return res.sendStatus(403);
+});
+
+// your other routes here
+
+app.listen(process.env.PORT || 3000, () => {
+  console.log("Server running");
+});
 app.get('/webhook', (req, res) => {
   const mode = req.query['hub.mode'];
   const token = String(req.query['hub.verify_token'] ?? '').trim();
