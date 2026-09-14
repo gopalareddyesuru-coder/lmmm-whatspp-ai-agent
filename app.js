@@ -9,7 +9,17 @@ const VERIFY_TOKEN = (process.env.META_VERIFY_TOKEN || '').trim();
 const GRAPH_VERSION = process.env.META_GRAPH_VERSION || 'v26.0';
 const PHONE_NUMBER_ID = process.env.META_PHONE_NUMBER_ID || '';
 const ACCESS_TOKEN = process.env.META_ACCESS_TOKEN || '';
+app.get('/webhook', (req, res) => {
+  const mode = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
 
+  if (mode === 'subscribe' && token === VERIFY_TOKEN) {
+    return res.status(200).send(challenge);
+  }
+
+  return res.sendStatus(403);
+});
 app.use((req, _res, next) => {
   console.log(`[REQUEST] ${req.method} ${req.originalUrl}`);
   next();
