@@ -98,8 +98,69 @@ async function initializeDatabase() {
     );
   `);
 
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS processed_messages (
+      message_id TEXT PRIMARY KEY,
+      whatsapp_number VARCHAR(20),
+      message_type TEXT,
+      received_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS maintenance_submissions (
+      id BIGSERIAL PRIMARY KEY,
+      message_id TEXT UNIQUE,
+      whatsapp_number VARCHAR(20) NOT NULL,
+      employee_number VARCHAR(50),
+      message_type TEXT NOT NULL,
+      text_content TEXT,
+      caption TEXT,
+      media_id TEXT,
+      mime_type TEXT,
+      file_name TEXT,
+      module_hint TEXT,
+      equipment_name TEXT,
+      sub_equipment TEXT,
+      event_category TEXT,
+      failure_mode TEXT,
+      failure_cause TEXT,
+      failure_consequence TEXT,
+      maintenance_action TEXT,
+      maintenance_type TEXT,
+      resources_used TEXT,
+      downtime_minutes NUMERIC,
+      condition_data JSONB,
+      received_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  // Safe migrations for an already-created maintenance_submissions table.
+  const maintenanceColumns = [
+    ["module_hint", "TEXT"],
+    ["equipment_name", "TEXT"],
+    ["sub_equipment", "TEXT"],
+    ["event_category", "TEXT"],
+    ["failure_mode", "TEXT"],
+    ["failure_cause", "TEXT"],
+    ["failure_consequence", "TEXT"],
+    ["maintenance_action", "TEXT"],
+    ["maintenance_type", "TEXT"],
+    ["resources_used", "TEXT"],
+    ["downtime_minutes", "NUMERIC"],
+    ["condition_data", "JSONB"]
+  ];
+
+  for (const [column, type] of maintenanceColumns) {
+    await pool.query(
+      `ALTER TABLE maintenance_submissions ADD COLUMN IF NOT EXISTS ${column} ${type}`
+    );
+  }
+
   console.log("[DATABASE] All required tables ready");
   console.log("[AUTHORITY] Default maintenance access is internal and hidden from users");
+  console.log("[MAINTENANCE] Data model aligned to equipment, failure and maintenance-event concepts from LMMM sources and ISO 14224-style reliability data collection.");
+
 }
 
 /* =========================================================
@@ -212,7 +273,19 @@ async function sendWhatsAppText(to, message) {
   return data;
 }
 
-async function sendApprovalButtons(to, employeeNumber) {
+async function sendApprovalButtons(to, data) {
+  const employeeNumber = data.employee_number;
+
+  const body =
+    `NEW LMMM REGISTRATION\\n\\n` +
+    `Name: ${data.name}\\n` +
+    `Employee No: ${data.employee_number}\\n` +
+    `Designation: ${data.designation}\\n` +
+    `Area: ${data.area_of_working}\\n` +
+    `Section: ${data.section_department}\\n\\n` +
+    `Status: PENDING APPROVAL\\n\\n` +
+    `Approve first. Additional authorities can be assigned after approval.`;
+
   const response = await fetch(
     `https://graph.facebook.com/${GRAPH_API_VERSION}/${PHONE_NUMBER_ID}/messages`,
     {
@@ -227,13 +300,7 @@ async function sendApprovalButtons(to, employeeNumber) {
         type: "interactive",
         interactive: {
           type: "button",
-          body: {
-            text:
-              `NEW REGISTRATION\n\n` +
-              `Employee No: ${employeeNumber}\n\n` +
-              "Approve the registration first.\n" +
-              "After approval, you can assign additional authorities."
-          },
+          body: { text: body.slice(0, 1024) },
           action: {
             buttons: [
               {
@@ -257,29 +324,52 @@ async function sendApprovalButtons(to, employeeNumber) {
     }
   );
 
-  const data = await response.json();
-
+  const result = await response.json();
   if (!response.ok) {
-    console.error("[WHATSAPP] Approval button error:", data);
+    console.error("[WHATSAPP] Approval button error:", result);
   }
-
-  return data;
+  return result;
 }
 
-async function sendAdditionalAuthorityMenu(to, employeeNumber, permissions = []) {
+async function sendAdditionalAuthorityMenu(to, employeeNumber, permissions = [], options = {}) {
   const selected = new Set(Array.isArray(permissions) ? permissions : []);
+  const statusLine = options.statusLine || "Authority Management";
 
-  const selectedText =
-    ADDITIONAL_PERMISSIONS
-      .filter(([key]) => selected.has(key))
-      .map(([, label]) => `✓ ${label}`)
-      .join("\n") || "None";
+  const selectedText = ADDITIONAL_PERMISSIONS
+    .filter(([key]) => selected.has(key))
+    .map(([, label]) => `✓ ${label}`)
+    .join("\n") || "None";
 
   const rows = ADDITIONAL_PERMISSIONS.map(([key, label, description]) => ({
     id: `authority_${key}_${employeeNumber}`,
     title: `${selected.has(key) ? "✓ " : ""}${label}`.slice(0, 24),
     description
   }));
+
+  rows.push({
+    id: `authority_details_${employeeNumber}`,
+    title: "View Current Access",
+    description: "See assigned permissions"
+  });
+
+  rows.push({
+    id: `authority_all_users_${employeeNumber}`,
+    title: "View All User Access",
+    description: "Super Admin overview"
+  });
+
+  const body =
+    `${statusLine}\n\n` +
+    `Employee ${employeeNumber}\n\n` +
+    `Default access (hidden from user):\n` +
+    `✓ Data Entry\n` +
+    `✓ View\n` +
+    `✓ Log Book Entry\n` +
+    `✓ Shutdown Jobs Entry\n` +
+    `✓ Jobs Entry\n` +
+    `✓ Vibration Readings Entry\n\n` +
+    `Additional authorities assigned:\n${selectedText}\n\n` +
+    `Select an additional authority to assign/remove it.`;
 
   const response = await fetch(
     `https://graph.facebook.com/${GRAPH_API_VERSION}/${PHONE_NUMBER_ID}/messages`,
@@ -295,24 +385,12 @@ async function sendAdditionalAuthorityMenu(to, employeeNumber, permissions = [])
         type: "interactive",
         interactive: {
           type: "list",
-          body: {
-            text:
-              `Employee ${employeeNumber}\n\n` +
-              `Default access already assigned:\n` +
-              `✓ Data Entry\n` +
-              `✓ View\n` +
-              `✓ Log Book Entry\n` +
-              `✓ Shutdown Jobs Entry\n` +
-              `✓ Jobs Entry\n` +
-              `✓ Vibration Readings Entry\n\n` +
-              `Additional authorities selected:\n${selectedText}\n\n` +
-              "Tap an option to assign/remove it."
-          },
+          body: { text: body.slice(0, 1024) },
           action: {
-            button: "Additional Authorities",
+            button: "Manage Authorities",
             sections: [
               {
-                title: "Optional Authorities",
+                title: "Additional Authorities",
                 rows
               }
             ]
@@ -322,13 +400,11 @@ async function sendAdditionalAuthorityMenu(to, employeeNumber, permissions = [])
     }
   );
 
-  const data = await response.json();
-
+  const result = await response.json();
   if (!response.ok) {
-    console.error("[WHATSAPP] Authority menu error:", data);
+    console.error("[WHATSAPP] Authority menu error:", result);
   }
-
-  return data;
+  return result;
 }
 
 /* =========================================================
@@ -725,29 +801,9 @@ async function notifyOwners(data, from) {
     return;
   }
 
-  const message = `
-🔔 NEW LMMM REGISTRATION
-
-Name: ${data.name}
-Employee No: ${data.employee_number}
-Designation: ${data.designation}
-Area: ${data.area_of_working}
-Section: ${data.section_department}
-WhatsApp: ${from}
-
-Status: PENDING APPROVAL
-
-Approve or Reject using the buttons below.
-`.trim();
-
+  // One clean approval card only. This removes the duplicate text + button messages.
   for (const owner of OWNER_NUMBERS) {
-    /*
-      IMPORTANT:
-      Only ONE approval message is sent here.
-      Authority selection is intentionally shown AFTER approval.
-    */
-    await sendWhatsAppText(owner, message);
-    await sendApprovalButtons(owner, data.employee_number);
+    await sendApprovalButtons(owner, data);
   }
 }
 
@@ -797,6 +853,26 @@ function hasPermission(user, permission) {
 }
 
 async function processAuthorityAction(from, actionId) {
+  const detailsMatch = actionId.match(/^authority_details_(\\d+)$/i);
+  if (detailsMatch) {
+    if (!isSuperAdmin(from)) {
+      await sendWhatsAppText(from, "This information is available only to Super Admin.");
+      return true;
+    }
+    await sendAuthorityDetails(from, detailsMatch[1]);
+    return true;
+  }
+
+  const allUsersMatch = actionId.match(/^authority_all_users_(\\d+)$/i);
+  if (allUsersMatch) {
+    if (!isSuperAdmin(from)) {
+      await sendWhatsAppText(from, "This information is available only to Super Admin.");
+      return true;
+    }
+    await sendAllAuthorityDetails(from);
+    return true;
+  }
+
   const match = actionId.match(
     /^authority_(print_export|master_modify|analysis_reports|smp_sop_troubleshooting|attendance_manpower|maintenance_modules|full_access)_(\d+)$/i
   );
@@ -990,32 +1066,17 @@ async function processApprovalAction(from, action, employeeNumber) {
   if (status === "approved") {
     await sendWhatsAppText(
       user.whatsapp_number,
-      `Registration approved ✅\n\n` +
+      `Status: Approved ✓\n\n` +
       `Welcome to LMMM Maintenance AI Agent, ${user.name}.\n\n` +
-      `Default access enabled:\n` +
-      `✓ Data Entry\n` +
-      `✓ View\n` +
-      `✓ Log Book Entry\n` +
-      `✓ Shutdown Jobs Entry\n` +
-      `✓ Jobs Entry\n` +
-      `✓ Vibration Readings Entry\n\n` +
-      `Send "Hi" to open the Maintenance Menu.`
+      `You can now submit LMMM maintenance information directly by text, voice, image, document, or supported file.`
     );
 
-    await sendWhatsAppText(
-      from,
-      `Employee ${employeeNumber}: APPROVED successfully ✅\n\n` +
-      `Default access has been assigned.\n` +
-      `You can now assign additional authorities.`
-    );
-
-    /*
-      Only after approval do we show the additional-authority menu.
-    */
+    // One clean Super Admin authority-management message after approval.
     await sendAdditionalAuthorityMenu(
       from,
       employeeNumber,
-      DEFAULT_PERMISSIONS
+      DEFAULT_PERMISSIONS,
+      { statusLine: `Employee ${employeeNumber}: APPROVED ✓` }
     );
 
   } else {
@@ -1081,10 +1142,6 @@ async function sendAuthorityDetails(to, employeeNumber) {
     `Additional authorities:\n` +
     (extra.length ? extra.map(x => `✓ ${x}`).join("\n") : "None")
   );
-
-  if (user.approval_status === "approved") {
-    await sendAdditionalAuthorityMenu(to, employeeNumber, user.permissions || []);
-  }
 
   return true;
 }
@@ -1398,42 +1455,102 @@ async function processRegistration(from, text) {
    MAINTENANCE FIELD
 ========================================================= */
 
-async function processMaintenanceField(from, text, user) {
-  const n = Number(text.trim());
+async function saveMaintenanceSubmission({
+  messageId,
+  from,
+  user,
+  messageType,
+  textContent = null,
+  caption = null,
+  mediaId = null,
+  mimeType = null,
+  fileName = null
+}) {
+  const result = await pool.query(
+    `
+    INSERT INTO maintenance_submissions
+      (message_id, whatsapp_number, employee_number, message_type,
+       text_content, caption, media_id, mime_type, file_name)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+    ON CONFLICT (message_id) DO NOTHING
+    RETURNING id
+    `,
+    [
+      messageId || null,
+      from,
+      user.employee_number || null,
+      messageType,
+      textContent,
+      caption,
+      mediaId,
+      mimeType,
+      fileName
+    ]
+  );
+
+  return result.rowCount > 0;
+}
+
+async function processMaintenanceField(from, text, user, context = {}) {
+  const value = String(text || "").trim();
+  const n = Number(value);
 
   const names = {
-    1: "LOG BOOK",
-    2: "BREAKDOWN / DELAY MANAGEMENT",
-    3: "DEFECT MANAGEMENT",
-    4: "MAINTENANCE JOBS / WORK ORDERS",
-    5: "PREVENTIVE MAINTENANCE (PM)",
-    6: "INSPECTION & CONDITION MONITORING",
-    7: "CBM / VIBRATION MONITORING",
-    8: "EQUIPMENT MASTER",
-    9: "SAP SUB-EQUIPMENT",
-    10: "MAINTENANCE HISTORY",
-    11: "SPARE PARTS MANAGEMENT",
-    12: "DRAWINGS & TECHNICAL DOCUMENTS",
-    13: "SMP – STANDARD MAINTENANCE PROCEDURE",
-    14: "SOP – STANDARD OPERATING PROCEDURE",
-    15: "TROUBLESHOOTING & FAILURE ANALYSIS",
-    16: "RCM / RELIABILITY MANAGEMENT",
-    17: "SHUTDOWN MAINTENANCE",
-    18: "EMPLOYEE ATTENDANCE",
-    19: "CONTRACT WORKER ATTENDANCE",
-    20: "MANPOWER / LABOUR MANAGEMENT"
+    1: "Log Book",
+    2: "Breakdown / Delay Management",
+    3: "Defect Management",
+    4: "Maintenance Jobs / Work Orders",
+    5: "Preventive Maintenance (PM)",
+    6: "Inspection & Condition Monitoring",
+    7: "CBM / Vibration Monitoring",
+    8: "Equipment Master",
+    9: "SAP Sub-Equipment",
+    10: "Maintenance History",
+    11: "Spare Parts Management",
+    12: "Drawings & Technical Documents",
+    13: "SMP / Standard Maintenance Procedure",
+    14: "SOP / Standard Operating Procedure",
+    15: "Troubleshooting & Failure Analysis",
+    16: "RCM / Reliability Management",
+    17: "Shutdown Maintenance",
+    18: "Employee Attendance",
+    19: "Contract Worker Attendance",
+    20: "Manpower / Labour Management"
   };
 
-  if (!Number.isInteger(n) || !names[n]) {
-    await sendWhatsAppText(from, getMainMenu(user));
+  // Numeric input remains available as an optional shortcut.
+  if (/^\d+$/.test(value) && names[n]) {
+    await sendWhatsAppText(
+      from,
+      `Selected: ${names[n]}\n\n` +
+      `Send the maintenance details directly.\n` +
+      `Text, voice, image or document are supported.`
+    );
+    return;
+  }
+
+  const saved = await saveMaintenanceSubmission({
+    messageId: context.messageId,
+    from,
+    user,
+    messageType: context.messageType || "text",
+    textContent: value || null,
+    caption: context.caption || null,
+    mediaId: context.mediaId || null,
+    mimeType: context.mimeType || null,
+    fileName: context.fileName || null
+  });
+
+  if (!saved && context.messageId) {
+    // Webhook retry / duplicate message: no second acknowledgement.
     return;
   }
 
   await sendWhatsAppText(
     from,
-    `${names[n]}\n\n` +
-    "Module selected.\n\n" +
-    "The module workflow will be connected to the LMMM maintenance data layer."
+    `Received ✓\n\n` +
+    `Your LMMM maintenance information has been recorded.\n` +
+    `Equipment, sub-equipment, defect/failure, maintenance action, condition/CBM, downtime and supporting evidence can be linked during processing.`
   );
 }
 
@@ -1459,15 +1576,26 @@ async function processIncomingMessage(message) {
       message.interactive?.list_reply?.id ||
       "";
   } else if (["image", "document", "audio", "video", "sticker"].includes(message.type)) {
-    // Media is accepted as a maintenance submission after approval.
-    // The actual media download/AI extraction layer will be connected to the
-    // maintenance data pipeline; registration still requires text fields.
-    text = `[${message.type.toUpperCase()} RECEIVED]`;
+    const media = message[message.type] || {};
+    text = media.caption?.trim() || "";
   } else {
     return;
   }
 
   console.log("[INCOMING]", from, text || interactiveAction);
+
+  // WhatsApp may retry webhook deliveries. Process each message only once.
+  const messageId = String(message.id || "").trim();
+  if (messageId) {
+    const seen = await pool.query(
+      `INSERT INTO processed_messages (message_id, whatsapp_number, message_type)
+       VALUES ($1,$2,$3)
+       ON CONFLICT (message_id) DO NOTHING
+       RETURNING message_id`,
+      [messageId, from, message.type]
+    );
+    if (!seen.rowCount) return;
+  }
 
   if (interactiveAction) {
     /*
@@ -1600,17 +1728,17 @@ async function processIncomingMessage(message) {
       return;
     }
 
-    if (/^\[(IMAGE|DOCUMENT|AUDIO|VIDEO|STICKER) RECEIVED\]$/.test(text)) {
-      await sendWhatsAppText(
-        from,
-        `Received successfully ✅\n\n` +
-        `Your maintenance file/media can be submitted for maintenance processing.`
-      );
-      return;
-    }
+    const media = message[message.type] || {};
 
     // No permission list is shown to the user.
-    await processMaintenanceField(from, text, user);
+    await processMaintenanceField(from, text, user, {
+      messageId,
+      messageType: message.type,
+      caption: media.caption || null,
+      mediaId: media.id || null,
+      mimeType: media.mime_type || null,
+      fileName: media.filename || null
+    });
     return;
   }
 
