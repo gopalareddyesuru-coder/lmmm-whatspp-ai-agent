@@ -501,7 +501,7 @@ async function submitRegistration(from, data) {
 
     await sendWhatsAppText(
       from,
-      `${registrationSummary(data)}\n\nYour registration has been submitted to the authorised administrator.`
+      "Registration submitted successfully. Status: Pending Approval ⏳"
     );
 
     await notifyOwners(data, from);
