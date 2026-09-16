@@ -1,500 +1,1353 @@
-mport "dotenv/config";
+import "dotenv/config";
 import express from "express";
 import pg from "pg";
 
 const { Pool } = pg;
+
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: "20mb" }));
 
 const PORT = process.env.PORT || 10000;
-const META_GRAPH_VERSION = process.env.META_GRAPH_VERSION || "v26.0";
-const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
-const META_ACCESS_TOKEN = process.env.META_ACCESS_TOKEN;
-const META_VERIFY_TOKEN = process.env.META_VERIFY_TOKEN;
-const SUPER_ADMIN_NUMBERS = (process.env.SUPER_ADMIN_NUMBERS || "")
-  .split(",").map(x => x.replace(/\D/g, "")).filter(Boolean);
+
+/* =========================================================
+   DATABASE
+========================================================= */
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false
+  ssl: { rejectUnauthorized: false }
 });
 
-const PERMISSIONS = [
-  ["data_entry", "Data Entry"],
-  ["view", "View"],
-  ["print_export", "Print / Export"],
-  ["master_data", "Master Data Modification"],
-  ["analysis_reports", "Analysis / Reports"],
-  ["knowledge", "SMP / SOP / Troubleshooting / History"],
-  ["attendance_manpower", "Attendance / Manpower"],
-  ["maintenance_modules", "Maintenance Modules"]
-];
-
-const FULL_ACCESS = "full_access";
-
-async function initDb() {
+async function initializeDatabase() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
-      id SERIAL PRIMARY KEY,
-      whatsapp_number TEXT UNIQUE NOT NULL,
+      id BIGSERIAL PRIMARY KEY,
+      whatsapp_number VARCHAR(20) UNIQUE NOT NULL,
       name TEXT,
-      employee_number TEXT,
+      employee_number VARCHAR(50) UNIQUE,
       designation TEXT,
       area_of_working TEXT,
       section_department TEXT,
-      role TEXT DEFAULT 'user',
+      system_role TEXT DEFAULT 'pending',
       approval_status TEXT DEFAULT 'pending',
-      permissions JSONB NOT NULL DEFAULT '[]'::jsonb,
-      created_at TIMESTAMPTZ DEFAULT NOW(),
-      updated_at TIMESTAMPTZ DEFAULT NOW()
-    )
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
   `);
 
-  // Existing LMMM databases may already have an older users table.
-  // Add every newer column safely before registration/approval queries use them.
-  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS name TEXT`);
-  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS employee_number TEXT`);
-  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS designation TEXT`);
-  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS area_of_working TEXT`);
-  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS section_department TEXT`);
-  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'user'`);
-  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS approval_status TEXT DEFAULT 'pending'`);
-  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS permissions JSONB NOT NULL DEFAULT '[]'::jsonb`);
-  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()`);
-  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()`);
+  await pool.query(`
+    ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS permissions JSONB NOT NULL DEFAULT '[]'::jsonb;
+  `);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS user_change_audit (
-      id SERIAL PRIMARY KEY,
-      employee_number TEXT,
-      whatsapp_number TEXT,
-      changed_by TEXT,
-      field_name TEXT,
+      id BIGSERIAL PRIMARY KEY,
+      whatsapp_number VARCHAR(20),
+      employee_number VARCHAR(50),
+      changed_by VARCHAR(20) NOT NULL,
+      field_name TEXT NOT NULL,
       old_value TEXT,
       new_value TEXT,
-      changed_at TIMESTAMPTZ DEFAULT NOW()
-    )
+      changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
   `);
 
-  console.log("[DATABASE] Users table ready");
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS system_role TEXT DEFAULT 'pending'`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS approval_status TEXT DEFAULT 'pending'`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS permissions JSONB NOT NULL DEFAULT '[]'::jsonb`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS registration_requests (
+      id BIGSERIAL PRIMARY KEY,
+      whatsapp_number VARCHAR(20) NOT NULL,
+      name TEXT,
+      employee_number VARCHAR(50),
+      designation TEXT,
+      area_of_working TEXT,
+      section_department TEXT,
+      status TEXT DEFAULT 'pending',
+      submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      reviewed_at TIMESTAMP,
+      reviewed_by VARCHAR(20)
+    );
+  `);
+
+  console.log("[DATABASE] Users and registration_requests tables ready");
 }
 
-function normalizeNumber(v) {
-  return String(v || "").replace(/\D/g, "");
+/* =========================================================
+   META / WHATSAPP
+========================================================= */
+
+const VERIFY_TOKEN = (process.env.META_VERIFY_TOKEN || "").trim();
+const ACCESS_TOKEN = (process.env.META_ACCESS_TOKEN || "").trim();
+const PHONE_NUMBER_ID = (process.env.PHONE_NUMBER_ID || process.env.META_PHONE_NUMBER_ID || "").trim();
+const GRAPH_API_VERSION = process.env.META_GRAPH_VERSION || "v26.0";
+
+const OWNER_NUMBERS = new Set(
+  (process.env.SUPER_ADMIN_NUMBERS || process.env.OWNER_WHATSAPP_NUMBERS || "")
+    .split(",")
+    .map(x => x.replace(/\D/g, ""))
+    .filter(Boolean)
+);
+
+/* =========================================================
+   MESSAGES
+========================================================= */
+
+const REGISTRATION_MESSAGE = `
+Welcome to LMMM Maintenance AI Agent 👋
+
+You can register in ONE message.
+
+Please send:
+• Name
+• Employee Number
+• Designation
+• Area of Working
+• Section / Department
+
+Example:
+Gopala Reddy E
+123125
+Manager
+Bar Mill
+Mechanical
+
+I will understand the details and submit them for approval.
+`.trim();
+
+function getMainMenu(user) {
+  return `
+Welcome back, ${user.name || "User"} 👋
+
+LMMM Mechanical Maintenance AI Agent
+
+Select Maintenance Field:
+
+1️⃣ Log Book
+2️⃣ Breakdown / Delay Management
+3️⃣ Defect Management
+4️⃣ Maintenance Jobs / Work Orders
+5️⃣ Preventive Maintenance (PM)
+6️⃣ Inspection & Condition Monitoring
+7️⃣ CBM / Vibration Monitoring
+8️⃣ Equipment Master
+9️⃣ SAP Sub-Equipment
+🔟 Maintenance History
+1️⃣1️⃣ Spare Parts Management
+1️⃣2️⃣ Drawings & Technical Documents
+1️⃣3️⃣ SMP – Standard Maintenance Procedure
+1️⃣4️⃣ SOP – Standard Operating Procedure
+1️⃣5️⃣ Troubleshooting & Failure Analysis
+1️⃣6️⃣ RCM / Reliability Management
+1️⃣7️⃣ Shutdown Maintenance
+1️⃣8️⃣ Employee Attendance
+1️⃣9️⃣ Contract Worker Attendance
+2️⃣0️⃣ Manpower / Labour Management
+
+Reply with the Maintenance Field number.
+`.trim();
 }
 
-function isSuperAdmin(from) {
-  return SUPER_ADMIN_NUMBERS.includes(normalizeNumber(from));
-}
+/* =========================================================
+   WHATSAPP SEND
+========================================================= */
 
-async function getUser(wa) {
-  const r = await pool.query(
-    `SELECT * FROM users WHERE whatsapp_number=$1 LIMIT 1`,
-    [normalizeNumber(wa)]
-  );
-  return r.rows[0] || null;
-}
-
-async function sendWhatsAppText(to, body) {
-  const url = `https://graph.facebook.com/${META_GRAPH_VERSION}/${PHONE_NUMBER_ID}/messages`;
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${META_ACCESS_TOKEN}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      messaging_product: "whatsapp",
-      to: normalizeNumber(to),
-      type: "text",
-      text: { body }
-    })
-  });
-
-  const data = await response.json();
-  if (!response.ok) {
-    console.error("[WHATSAPP TEXT ERROR]", data);
-  }
-  return data;
-}
-
-async function sendInteractive(to, interactive) {
-  const url = `https://graph.facebook.com/${META_GRAPH_VERSION}/${PHONE_NUMBER_ID}/messages`;
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${META_ACCESS_TOKEN}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      messaging_product: "whatsapp",
-      to: normalizeNumber(to),
-      type: "interactive",
-      interactive
-    })
-  });
-
-  const data = await response.json();
-  if (!response.ok) {
-    console.error("[WHATSAPP INTERACTIVE ERROR]", data);
-  }
-  return data;
-}
-
-async function sendApprovalButtons(to, employeeNumber) {
-  return sendInteractive(to, {
-    type: "button",
-    body: {
-      text: `Employee: ${employeeNumber}\n\nSelect the required permissions above, then approve or reject this registration.`
-    },
-    action: {
-      buttons: [
-        {
-          type: "reply",
-          reply: { id: `approve:${employeeNumber}`, title: "Approve" }
-        },
-        {
-          type: "reply",
-          reply: { id: `reject:${employeeNumber}`, title: "Reject" }
-        }
-      ]
-    }
-  });
-}
-
-function permissionText(selected) {
-  return PERMISSIONS.map(([key, label]) =>
-    `${selected.includes(key) ? "☑️" : "☐"} ${label}`
-  ).join("\n") + `\n${selected.includes(FULL_ACCESS) ? "☑️" : "☐"} Full Access`;
-}
-
-async function sendAuthorityMenu(to, employeeNumber, selected = []) {
-  // WhatsApp interactive list supports selecting one item per message.
-  // We simulate checkbox selection by saving each selection and re-sending the list.
-  const rows = [
-    ...PERMISSIONS.map(([key, label]) => ({
-      id: `perm:${employeeNumber}:${key}`,
-      title: `${selected.includes(key) ? "☑️ " : "☐ "}${label}`.slice(0, 24)
-    })),
+async function sendWhatsAppText(to, message) {
+  const response = await fetch(
+    `https://graph.facebook.com/${GRAPH_API_VERSION}/${PHONE_NUMBER_ID}/messages`,
     {
-      id: `perm:${employeeNumber}:${FULL_ACCESS}`,
-      title: `${selected.includes(FULL_ACCESS) ? "☑️ " : "☐ "}Full Access`
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ACCESS_TOKEN}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        to,
+        type: "text",
+        text: { body: String(message).slice(0, 4000) }
+      })
     }
+  );
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    console.error("[WHATSAPP] Send error:", data);
+  }
+
+  return data;
+}
+
+
+async function sendWhatsAppApprovalButtons(to, employeeNumber) {
+  const response = await fetch(
+    `https://graph.facebook.com/${GRAPH_API_VERSION}/${PHONE_NUMBER_ID}/messages`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ACCESS_TOKEN}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        to,
+        type: "interactive",
+        interactive: {
+          type: "button",
+          body: {
+            text: "Registration pending approval. Please review and approve."
+          },
+          action: {
+            buttons: [
+              {
+                type: "reply",
+                reply: {
+                  id: `approve_${employeeNumber}`,
+                  title: "Approve"
+                }
+              },
+              {
+                type: "reply",
+                reply: {
+                  id: `reject_${employeeNumber}`,
+                  title: "Reject"
+                }
+              }
+            ]
+          }
+        }
+      })
+    }
+  );
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    console.error("[WHATSAPP] Approval button send error:", data);
+  }
+
+  return data;
+}
+
+/* =========================================================
+   HELPERS
+========================================================= */
+
+function normalizeText(text) {
+  return String(text || "")
+    .toLowerCase()
+    .replace(/[|,;]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isGreeting(text) {
+  return [
+    "hi", "hello", "hey", "hii", "hiii", "start", "hai"
+  ].includes(normalizeText(text));
+}
+
+function isResetCommand(text) {
+  const v = normalizeText(text);
+  return [
+    "reset registration",
+    "reset my registration",
+    "reset registration details",
+    "change registration",
+    "correct registration"
+  ].includes(v);
+}
+
+function cleanValue(value) {
+  return String(value || "")
+    .replace(/^[\s:.\-–—]+|[\s:.\-–—]+$/g, "")
+    .trim();
+}
+
+function normalizeArea(value) {
+  const v = normalizeText(value);
+
+  if (/^bar\s*mill$|^barmill$|^bar\s*mill\s*mechanical$/.test(v)) {
+    return "Bar Mill";
+  }
+
+  if (/^bdm$|^breakdown\s*mill$|^break\s*down\s*mill$|^breakdown\s*mill\s*mechanical$/.test(v)) {
+    return "BDM";
+  }
+
+  if (/^finishing$|^finishing\s*mill$|^finishing\s*mechanical$/.test(v)) {
+    return "Finishing";
+  }
+
+  if (/^hydraulics$|^hydraulics\s*mechanical$/.test(v)) {
+    return "Hydraulics";
+  }
+
+  if (/^cranes?\s*(and|&)\s*aux(iliary)?$|^cranes?\s*&\s*aux\s*mechanical$/.test(v)) {
+    return "Cranes & Auxiliary";
+  }
+
+  return cleanValue(value);
+}
+
+/* =========================================================
+   REGISTRATION EXTRACTION
+   ---------------------------------------------------------
+   AI mode is used when OPENAI_API_KEY is configured.
+   A deterministic fallback is retained so registration
+   does not silently fail when AI is unavailable.
+========================================================= */
+
+async function extractRegistrationWithAI(text) {
+  const apiKey = (process.env.OPENAI_API_KEY || "").trim();
+
+  if (!apiKey) {
+    return null;
+  }
+
+  const prompt = `
+Extract LMMM employee registration details from the user's message.
+
+Required fields:
+name
+employee_number
+designation
+area_of_working
+section_department
+
+Rules:
+- Return ONLY valid JSON.
+- Do not invent missing values.
+- Employee number should be digits only when clearly identifiable.
+- Understand common spelling variations such as "Barmill" = "Bar Mill".
+- Keep designation and section as stated unless the meaning is unambiguous.
+- If a required field is missing or ambiguous, return null for that field.
+- The WhatsApp number is NOT part of the user's message and must not be inferred.
+
+JSON schema:
+{
+  "name": string|null,
+  "employee_number": string|null,
+  "designation": string|null,
+  "area_of_working": string|null,
+  "section_department": string|null
+}
+
+User message:
+${text}
+`.trim();
+
+  try {
+    const response = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: process.env.OPENAI_MODEL || "gpt-5-mini",
+        input: prompt
+      })
+    });
+
+    if (!response.ok) {
+      console.error("[AI] Extraction HTTP error:", response.status);
+      return null;
+    }
+
+    const data = await response.json();
+    const output =
+      data.output_text ||
+      data.output?.flatMap(x => x.content || [])
+        ?.map(x => x.text || "")
+        ?.join("") ||
+      "";
+
+    const match = output.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+
+    const parsed = JSON.parse(match[0]);
+
+    return {
+      name: cleanValue(parsed.name),
+      employee_number: cleanValue(parsed.employee_number),
+      designation: cleanValue(parsed.designation),
+      area_of_working: normalizeArea(parsed.area_of_working),
+      section_department: cleanValue(parsed.section_department)
+    };
+  } catch (error) {
+    console.error("[AI] Extraction error:", error);
+    return null;
+  }
+}
+
+function extractRegistrationFallback(text) {
+  const lines = String(text)
+    .split(/\r?\n/)
+    .map(cleanValue)
+    .filter(Boolean);
+
+  const result = {
+    name: null,
+    employee_number: null,
+    designation: null,
+    area_of_working: null,
+    section_department: null
+  };
+
+  const employeeIndex = lines.findIndex(x => /^\d{3,}$/.test(x));
+  if (employeeIndex >= 0) {
+    result.employee_number = lines[employeeIndex];
+  }
+
+  const designationWords = [
+    "manager", "assistant manager", "deputy manager",
+    "senior manager", "agm", "dgm", "gm",
+    "executive", "technician", "engineer",
+    "assistant engineer", "deputy general manager"
   ];
 
-  const result = await sendInteractive(to, {
-    type: "list",
-    body: {
-      text:
-        `AUTHORITY SELECTION\n\nEmployee: ${employeeNumber}\n\n` +
-        `${permissionText(selected)}\n\nTap an option to select/unselect it.`
-    },
-    action: {
-      button: "Select Permission",
-      sections: [{ title: "Permissions", rows }]
-    }
+  const designationIndex = lines.findIndex(x =>
+    designationWords.some(d => normalizeText(x) === d)
+  );
+
+  if (designationIndex >= 0) {
+    result.designation = lines[designationIndex];
+  }
+
+  const areaIndex = lines.findIndex(x => {
+    const v = normalizeText(x);
+    return ["barmill", "bar mill", "bdm", "breakdown mill", "finishing",
+      "finishing mill", "hydraulics", "cranes & auxiliary",
+      "cranes and auxiliary"].includes(v);
   });
 
-  await sendApprovalButtons(to, employeeNumber);
+  if (areaIndex >= 0) {
+    result.area_of_working = normalizeArea(lines[areaIndex]);
+  }
+
+  if (lines.length >= 5) {
+    result.name = lines[0];
+    if (!result.employee_number && /^\d{3,}$/.test(lines[1])) {
+      result.employee_number = lines[1];
+    }
+    if (!result.designation) result.designation = lines[2];
+    if (!result.area_of_working) result.area_of_working = normalizeArea(lines[3]);
+    result.section_department = lines[4];
+  }
+
   return result;
 }
 
-async function submitRegistration(from, details) {
-  const wa = normalizeNumber(from);
+async function extractRegistration(text) {
+  const aiResult = await extractRegistrationWithAI(text);
+  const fallback = extractRegistrationFallback(text);
 
-  await pool.query(`
-    INSERT INTO users
-      (whatsapp_number,name,employee_number,designation,area_of_working,section_department,approval_status,role,permissions,updated_at)
-    VALUES ($1,$2,$3,$4,$5,$6,'pending','user','[]'::jsonb,NOW())
-    ON CONFLICT (whatsapp_number)
-    DO UPDATE SET
-      name=EXCLUDED.name,
-      employee_number=EXCLUDED.employee_number,
-      designation=EXCLUDED.designation,
-      area_of_working=EXCLUDED.area_of_working,
-      section_department=EXCLUDED.section_department,
-      approval_status='pending',
-      permissions='[]'::jsonb,
-      updated_at=NOW()
-  `, [
-    wa,
-    details.name,
-    details.employee_number,
-    details.designation,
-    details.area_of_working,
-    details.section_department
-  ]);
+  const merged = {
+    name: aiResult?.name || fallback.name,
+    employee_number: aiResult?.employee_number || fallback.employee_number,
+    designation: aiResult?.designation || fallback.designation,
+    area_of_working: aiResult?.area_of_working || fallback.area_of_working,
+    section_department: aiResult?.section_department || fallback.section_department
+  };
 
-  await sendWhatsAppText(
-    wa,
-    "Registration submitted successfully.\n*Status: Pending Approval ⏳*"
-  );
+  if (merged.area_of_working) {
+    merged.area_of_working = normalizeArea(merged.area_of_working);
+  }
 
-  for (const owner of SUPER_ADMIN_NUMBERS) {
-    if (owner === wa) continue;
+  return merged;
+}
 
+/* =========================================================
+   REGISTRATION VALIDATION / APPROVAL
+========================================================= */
+
+function missingRegistrationFields(data) {
+  const missing = [];
+
+  if (!data.name) missing.push("Name");
+  if (!data.employee_number) missing.push("Employee Number");
+  if (!data.designation) missing.push("Designation");
+  if (!data.area_of_working) missing.push("Area of Working");
+  if (!data.section_department) missing.push("Section / Department");
+
+  return missing;
+}
+
+function registrationSummary(data) {
+  return `
+Registration details received:
+
+👤 Name: ${data.name}
+🆔 Employee Number: ${data.employee_number}
+💼 Designation: ${data.designation}
+🏭 Area of Working: ${data.area_of_working}
+🔧 Section / Department: ${data.section_department}
+
+Status: Pending Approval ⏳
+`.trim();
+}
+
+async function submitRegistration(from, data) {
+  const missing = missingRegistrationFields(data);
+
+  if (missing.length) {
     await sendWhatsAppText(
-      owner,
-      `NEW REGISTRATION\n\nName: ${details.name}\nEmployee No: ${details.employee_number}\nDesignation: ${details.designation}\nArea of Working: ${details.area_of_working}\nSection / Department: ${details.section_department}`
+      from,
+      `I could not identify these required details:\n\n${missing.map(x => `• ${x}`).join("\n")}\n\nPlease send the missing details in one message.`
+    );
+    return;
+  }
+
+  if (!/^\d+$/.test(String(data.employee_number))) {
+    await sendWhatsAppText(
+      from,
+      "Employee Number must contain numbers only. Please correct it and send the registration details again."
+    );
+    return;
+  }
+
+  try {
+    const duplicate = await pool.query(
+      `SELECT whatsapp_number FROM users
+       WHERE employee_number = $1 AND whatsapp_number <> $2`,
+      [data.employee_number, from]
     );
 
-    await sendAuthorityMenu(owner, details.employee_number, []);
+    if (duplicate.rowCount > 0) {
+      await sendWhatsAppText(
+        from,
+        "This Employee Number is already registered with another WhatsApp number. Please contact the authorised administrator."
+      );
+      return;
+    }
+
+    await pool.query(
+      `
+      INSERT INTO users (
+        whatsapp_number, name, employee_number, designation,
+        area_of_working, section_department,
+        system_role, approval_status, updated_at
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,'pending','pending',CURRENT_TIMESTAMP)
+      ON CONFLICT (whatsapp_number)
+      DO UPDATE SET
+        name = EXCLUDED.name,
+        employee_number = EXCLUDED.employee_number,
+        designation = EXCLUDED.designation,
+        area_of_working = EXCLUDED.area_of_working,
+        section_department = EXCLUDED.section_department,
+        approval_status = 'pending',
+        updated_at = CURRENT_TIMESTAMP
+      `,
+      [
+        from,
+        data.name,
+        data.employee_number,
+        data.designation,
+        data.area_of_working,
+        data.section_department
+      ]
+    );
+
+    await pool.query(
+      `
+      INSERT INTO registration_requests (
+        whatsapp_number, name, employee_number, designation,
+        area_of_working, section_department, status
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,'pending')
+      `,
+      [
+        from,
+        data.name,
+        data.employee_number,
+        data.designation,
+        data.area_of_working,
+        data.section_department
+      ]
+    );
+
+    await sendWhatsAppText(
+      from,
+      "Registration submitted successfully. Status: Pending Approval ⏳"
+    );
+
+    await notifyOwners(data, from);
+
+  } catch (error) {
+    console.error("[REGISTRATION] Submit error:", error);
+
+    if (error.code === "23505") {
+      await sendWhatsAppText(
+        from,
+        "Employee Number already exists. Please verify the number or contact the authorised administrator."
+      );
+      return;
+    }
+
+    await sendWhatsAppText(
+      from,
+      "Unable to save the registration right now. Please try again."
+    );
   }
 }
 
-async function processRegistration(from, text) {
-  const lines = text.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
-
-  if (lines.length >= 5) {
-    await submitRegistration(from, {
-      name: lines[0],
-      employee_number: lines[1],
-      designation: lines[2],
-      area_of_working: lines[3],
-      section_department: lines[4]
-    });
-    return true;
+async function notifyOwners(data, from) {
+  if (!OWNER_NUMBERS.size) {
+    console.log("[APPROVAL] SUPER_ADMIN_NUMBERS not configured; owner notification skipped.");
+    return;
   }
 
-  return false;
+  const message = `
+🔔 NEW LMMM REGISTRATION
+
+Name: ${data.name}
+Employee No: ${data.employee_number}
+Designation: ${data.designation}
+Area: ${data.area_of_working}
+Section: ${data.section_department}
+WhatsApp: ${from}
+
+Status: PENDING APPROVAL
+
+To approve:
+APPROVE ${data.employee_number}
+
+To reject:
+REJECT ${data.employee_number}
+`.trim();
+
+  for (const owner of OWNER_NUMBERS) {
+    await sendWhatsAppText(owner, message);
+    await sendAuthorityAssignmentMenu(owner, data.employee_number, []);
+  }
 }
+
+/* =========================================================
+   RESET / CORRECTION
+========================================================= */
 
 async function resetRegistration(from) {
   await pool.query(
-    `DELETE FROM users WHERE whatsapp_number=$1`,
-    [normalizeNumber(from)]
+    `
+    UPDATE users
+    SET name = NULL,
+        employee_number = NULL,
+        designation = NULL,
+        area_of_working = NULL,
+        section_department = NULL,
+        approval_status = 'pending',
+        updated_at = CURRENT_TIMESTAMP
+    WHERE whatsapp_number = $1
+    `,
+    [from]
   );
-  await sendWhatsAppText(
-    from,
-    "Your registration details have been reset.\nPlease send all 5 details in one message:\n\nName\nEmployee Number\nDesignation\nArea of Working\nSection / Department"
+
+  await sendWhatsAppText(from, REGISTRATION_MESSAGE);
+}
+
+
+async function sendAuthorityAssignmentMenu(to, employeeNumber, selectedPermissions = []) {
+  const selected = new Set(Array.isArray(selectedPermissions) ? selectedPermissions : []);
+  const has = (key) => selected.has(key) ? " ✓" : "";
+
+  const rows = [
+    {
+      id: `perm_toggle_data_entry_${employeeNumber}`,
+      title: `Data Entry${has("data_entry")}`.slice(0, 24),
+      description: "Toggle Data Entry"
+    },
+    {
+      id: `perm_toggle_view_${employeeNumber}`,
+      title: `View${has("view")}`.slice(0, 24),
+      description: "Toggle View"
+    },
+    {
+      id: `perm_toggle_print_export_${employeeNumber}`,
+      title: `Print / Export${has("print_export")}`.slice(0, 24),
+      description: "Toggle PDF/Excel/Print"
+    },
+    {
+      id: `perm_toggle_master_modify_${employeeNumber}`,
+      title: `Master Data Modification${has("master_modify")}`.slice(0, 24),
+      description: "Toggle master-data changes"
+    },
+    {
+      id: `perm_toggle_full_${employeeNumber}`,
+      title: `Full Access${has("full_access")}`.slice(0, 24),
+      description: "Toggle all permissions"
+    }
+  ];
+
+  const response = await fetch(
+    `https://graph.facebook.com/${GRAPH_API_VERSION}/${PHONE_NUMBER_ID}/messages`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ACCESS_TOKEN}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        to,
+        type: "interactive",
+        interactive: {
+          type: "list",
+          body: {
+            text:
+              `Assign authorities for Employee ${employeeNumber}\\n\\n` +
+              "Select each option to toggle ✓. Then use Approve."
+          },
+          action: {
+            button: "Select Authority",
+            sections: [
+              {
+                title: "Permissions",
+                rows
+              }
+            ]
+          }
+        }
+      })
+    }
   );
+
+  const data = await response.json();
+  if (!response.ok) {
+    console.error("[WHATSAPP] Authority menu send error:", data);
+  }
+
+  await sendWhatsAppApprovalDecisionButtons(to, employeeNumber, selected);
+  return data;
+}
+
+async function sendWhatsAppApprovalDecisionButtons(to, employeeNumber, selectedPermissions = []) {
+  const selected = new Set(Array.isArray(selectedPermissions) ? selectedPermissions : []);
+  const labels = [
+    ["data_entry", "Data Entry"],
+    ["view", "View"],
+    ["print_export", "Print / Export"],
+    ["master_modify", "Master Data Modification"],
+    ["full_access", "Full Access"]
+  ];
+
+  const chosen = labels
+    .filter(([key]) => selected.has(key))
+    .map(([, label]) => `✓ ${label}`)
+    .join("\n") || "No authorities selected";
+
+  const response = await fetch(
+    `https://graph.facebook.com/${GRAPH_API_VERSION}/${PHONE_NUMBER_ID}/messages`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ACCESS_TOKEN}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        to,
+        type: "interactive",
+        interactive: {
+          type: "button",
+          body: {
+            text:
+              `Employee ${employeeNumber}\\n\\n` +
+              `Selected authorities:\\n${chosen}\\n\\n` +
+              "Select/toggle authorities above, then approve."
+          },
+          action: {
+            buttons: [
+              {
+                type: "reply",
+                reply: {
+                  id: `final_approve_${employeeNumber}`,
+                  title: "Approve"
+                }
+              },
+              {
+                type: "reply",
+                reply: {
+                  id: `final_reject_${employeeNumber}`,
+                  title: "Reject"
+                }
+              }
+            ]
+          }
+        }
+      })
+    }
+  );
+
+  const data = await response.json();
+  if (!response.ok) {
+    console.error("[WHATSAPP] Approval decision button error:", data);
+  }
+  return data;
 }
 
 async function processAuthorityAction(from, actionId) {
-  if (!isSuperAdmin(from)) {
-    await sendWhatsAppText(from, "You are not authorised to perform this action.");
+  const match = actionId.match(/^perm_toggle_(data_entry|view|print_export|master_modify|full)_(\d+)$/i);
+  if (!match) return false;
+
+  if (!OWNER_NUMBERS.has(from)) {
+    await sendWhatsAppText(from, "You are not authorised to assign permissions.");
     return true;
   }
 
-  const m = /^perm:(.+):(.+)$/.exec(actionId);
-  if (!m) return false;
+  const action = match[1].toLowerCase();
+  const employeeNumber = match[2];
 
-  const employeeNumber = m[1];
-  const permission = m[2];
-
-  const r = await pool.query(
-    `SELECT permissions FROM users WHERE employee_number=$1 LIMIT 1`,
+  const result = await pool.query(
+    `SELECT * FROM users WHERE employee_number=$1`,
     [employeeNumber]
   );
 
-  if (!r.rows.length) {
-    await sendWhatsAppText(from, "Employee registration not found.");
+  if (!result.rowCount) {
+    await sendWhatsAppText(from, `No user found for Employee Number ${employeeNumber}.`);
     return true;
   }
 
-  let selected = Array.isArray(r.rows[0].permissions)
-    ? r.rows[0].permissions
-    : [];
+  const user = result.rows[0];
+  let permissions = Array.isArray(user.permissions) ? [...user.permissions] : [];
 
-  if (permission === FULL_ACCESS) {
-    if (selected.includes(FULL_ACCESS)) {
-      selected = [];
-    } else {
-      selected = [FULL_ACCESS, ...PERMISSIONS.map(x => x[0])];
-    }
-  } else if (selected.includes(FULL_ACCESS)) {
-    // If Full Access was active and one individual permission is tapped,
-    // remove Full Access and leave all individual permissions selected except that one.
-    selected = PERMISSIONS.map(x => x[0]).filter(x => x !== permission);
-  } else if (selected.includes(permission)) {
-    selected = selected.filter(x => x !== permission);
+  if (action === "full") {
+    permissions = permissions.includes("full_access")
+      ? []
+      : ["full_access", "data_entry", "view", "print_export", "master_modify"];
   } else {
-    selected.push(permission);
+    const index = permissions.indexOf(action);
+
+    if (index >= 0) {
+      permissions.splice(index, 1);
+    } else {
+      permissions.push(action);
+    }
+
+    if (action === "data_entry" && permissions.includes("data_entry") && !permissions.includes("view")) {
+      permissions.push("view");
+    }
   }
 
   await pool.query(
-    `UPDATE users SET permissions=$1::jsonb, updated_at=NOW() WHERE employee_number=$2`,
-    [JSON.stringify(selected), employeeNumber]
+    `UPDATE users SET permissions=$1::jsonb, updated_at=CURRENT_TIMESTAMP WHERE employee_number=$2`,
+    [JSON.stringify(permissions), employeeNumber]
   );
 
-  await sendAuthorityMenu(from, employeeNumber, selected);
+  await sendAuthorityAssignmentMenu(from, employeeNumber, permissions);
   return true;
 }
 
-async function processApprovalAction(from, actionId) {
-  if (!isSuperAdmin(from)) {
-    await sendWhatsAppText(from, "You are not authorised to approve registrations.");
-    return true;
+/* =========================================================
+   OWNER APPROVAL
+========================================================= */
+
+async function processApprovalCommand(from, text) {
+  if (!OWNER_NUMBERS.has(from.replace(/\D/g, ""))) {
+    return false;
   }
 
-  const m = /^(approve|reject):(.+)$/.exec(actionId);
-  if (!m) return false;
+  const approve = text.match(/^approve\s+(\d+)$/i);
+  const reject = text.match(/^reject\s+(\d+)$/i);
 
-  const decision = m[1];
-  const employeeNumber = m[2];
+  if (!approve && !reject) return false;
 
-  const r = await pool.query(
-    `SELECT * FROM users WHERE employee_number=$1 LIMIT 1`,
+  const employeeNumber = (approve || reject)[1];
+  const action = approve ? "approve" : "reject";
+
+  return processApprovalAction(from, action, employeeNumber);
+}
+
+async function processApprovalAction(from, action, employeeNumber) {
+  const status = action === "approve" ? "approved" : "rejected";
+
+  const result = await pool.query(
+    `SELECT * FROM users WHERE employee_number = $1`,
     [employeeNumber]
   );
 
-  if (!r.rows.length) {
-    await sendWhatsAppText(from, "Employee registration not found.");
+  if (!result.rowCount) {
+    await sendWhatsAppText(from, `No registration found for Employee Number ${employeeNumber}.`);
     return true;
   }
 
-  const user = r.rows[0];
+  const user = result.rows[0];
 
-  if (decision === "reject") {
-    await pool.query(`
+  if (status === "approved") {
+    await pool.query(
+      `
       UPDATE users
-      SET approval_status='rejected', updated_at=NOW()
+      SET approval_status='approved',
+          system_role='pending',
+          updated_at=CURRENT_TIMESTAMP
       WHERE employee_number=$1
-    `, [employeeNumber]);
+      `,
+      [employeeNumber]
+    );
+  } else {
+    await pool.query(
+      `
+      UPDATE users
+      SET approval_status='rejected',
+          updated_at=CURRENT_TIMESTAMP
+      WHERE employee_number=$1
+      `,
+      [employeeNumber]
+    );
+  }
 
-    await sendWhatsAppText(from, `Registration rejected.\nEmployee: ${employeeNumber}`);
-    await sendWhatsAppText(user.whatsapp_number, "Your registration was rejected by Super Admin.");
+  await pool.query(
+    `
+    UPDATE registration_requests
+    SET status=$1, reviewed_at=CURRENT_TIMESTAMP, reviewed_by=$2
+    WHERE employee_number=$3 AND status='pending'
+    `,
+    [status, from, employeeNumber]
+  );
+
+  const userMessage =
+    status === "approved"
+      ? `Registration approved ✅\n\nWelcome to LMMM Maintenance AI Agent, ${user.name}.\n\nSend "Hi" to open the Maintenance Menu.`
+      : `Registration rejected ❌\n\nPlease contact the authorised administrator for correction.`;
+
+  await sendWhatsAppText(user.whatsapp_number, userMessage);
+  await sendWhatsAppText(from, `Employee ${employeeNumber}: ${status.toUpperCase()} successfully.`);
+
+  return true;
+}
+
+
+async function sendUserManagementMenu(to, employeeNumber) {
+  if (!OWNER_NUMBERS.has(to)) {
+    await sendWhatsAppText(to, "You are not authorised to modify user details.");
     return true;
   }
 
-  const permissions = Array.isArray(user.permissions) ? user.permissions : [];
+  const result = await pool.query(
+    `SELECT * FROM users WHERE employee_number=$1`,
+    [employeeNumber]
+  );
 
-  await pool.query(`
-    UPDATE users
-    SET approval_status='approved',
-        role='user',
-        permissions=$1::jsonb,
-        updated_at=NOW()
-    WHERE employee_number=$2
-  `, [JSON.stringify(permissions), employeeNumber]);
+  if (!result.rowCount) {
+    await sendWhatsAppText(to, `No user found for Employee Number ${employeeNumber}.`);
+    return true;
+  }
+
+  const user = result.rows[0];
+
+  const response = await fetch(
+    `https://graph.facebook.com/${GRAPH_API_VERSION}/${PHONE_NUMBER_ID}/messages`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ACCESS_TOKEN}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        to,
+        type: "interactive",
+        interactive: {
+          type: "list",
+          body: {
+            text:
+              `Manage Employee ${employeeNumber}\\n\\n` +
+              `Name: ${user.name || "-"}\\n` +
+              `Designation: ${user.designation || "-"}\\n` +
+              `Area: ${user.area_of_working || "-"}\\n` +
+              `Section: ${user.section_department || "-"}`
+          },
+          action: {
+            button: "Modify User",
+            sections: [
+              {
+                title: "User Details",
+                rows: [
+                  {
+                    id: `edit_designation_${employeeNumber}`,
+                    title: "Designation",
+                    description: "Change designation"
+                  },
+                  {
+                    id: `edit_area_${employeeNumber}`,
+                    title: "Area of Working",
+                    description: "Change working area"
+                  },
+                  {
+                    id: `edit_section_${employeeNumber}`,
+                    title: "Section / Department",
+                    description: "Change section/department"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      })
+    }
+  );
+
+  const data = await response.json();
+  if (!response.ok) console.error("[WHATSAPP] User management menu error:", data);
+  return true;
+}
+
+async function startUserEdit(from, actionId) {
+  const match = actionId.match(/^edit_(designation|area|section)_(\d+)$/i);
+  if (!match) return false;
+
+  if (!OWNER_NUMBERS.has(from)) {
+    await sendWhatsAppText(from, "You are not authorised to modify user details.");
+    return true;
+  }
+
+  const field = match[1].toLowerCase();
+  const employeeNumber = match[2];
 
   await sendWhatsAppText(
     from,
-    `Registration approved successfully.\nEmployee: ${employeeNumber}\n\nAssigned Permissions:\n${permissionText(permissions)}`
+    `Send the new ${field === "designation" ? "Designation" : field === "area" ? "Area of Working" : "Section / Department"} for Employee ${employeeNumber}.`
   );
+
+  // Store the edit request in the database so the next text message is unambiguous.
+  await pool.query(
+    `CREATE TABLE IF NOT EXISTS admin_edit_sessions (
+      whatsapp_number VARCHAR(20) PRIMARY KEY,
+      employee_number VARCHAR(50) NOT NULL,
+      field_name TEXT NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`
+  );
+
+  await pool.query(
+    `INSERT INTO admin_edit_sessions (whatsapp_number, employee_number, field_name)
+     VALUES ($1,$2,$3)
+     ON CONFLICT (whatsapp_number)
+     DO UPDATE SET employee_number=EXCLUDED.employee_number,
+                   field_name=EXCLUDED.field_name,
+                   created_at=CURRENT_TIMESTAMP`,
+    [from, employeeNumber, field]
+  );
+
+  return true;
+}
+
+async function processAdminEditText(from, text) {
+  if (!OWNER_NUMBERS.has(from)) return false;
+
+  const result = await pool.query(
+    `SELECT * FROM admin_edit_sessions WHERE whatsapp_number=$1`,
+    [from]
+  );
+
+  if (!result.rowCount) return false;
+
+  const session = result.rows[0];
+  const value = String(text || "").trim();
+
+  if (!value) {
+    await sendWhatsAppText(from, "Please enter a valid value.");
+    return true;
+  }
+
+  const userResult = await pool.query(
+    `SELECT * FROM users WHERE employee_number=$1`,
+    [session.employee_number]
+  );
+
+  if (!userResult.rowCount) {
+    await sendWhatsAppText(from, `No user found for Employee Number ${session.employee_number}.`);
+    await pool.query(`DELETE FROM admin_edit_sessions WHERE whatsapp_number=$1`, [from]);
+    return true;
+  }
+
+  const user = userResult.rows[0];
+
+  const columnMap = {
+    designation: "designation",
+    area: "area_of_working",
+    section: "section_department"
+  };
+
+  const column = columnMap[session.field_name];
+  const oldValue = user[column];
+
+  await pool.query(
+    `UPDATE users SET ${column}=$1, updated_at=CURRENT_TIMESTAMP WHERE employee_number=$2`,
+    [value, session.employee_number]
+  );
+
+  await pool.query(
+    `INSERT INTO user_change_audit
+      (whatsapp_number, employee_number, changed_by, field_name, old_value, new_value)
+     VALUES ($1,$2,$3,$4,$5,$6)`,
+    [user.whatsapp_number, session.employee_number, from, session.field_name, oldValue, value]
+  );
+
+  await pool.query(`DELETE FROM admin_edit_sessions WHERE whatsapp_number=$1`, [from]);
 
   await sendWhatsAppText(
-    user.whatsapp_number,
-    `Registration approved successfully. ✅\n\nAssigned Permissions:\n${permissionText(permissions)}`
+    from,
+    `Employee ${session.employee_number} updated successfully ✅\n${session.field_name}: ${value}`
   );
 
   return true;
 }
 
-async function processManageUser(from, text) {
-  if (!isSuperAdmin(from)) {
-    await sendWhatsAppText(from, "You are not authorised to manage users.");
-    return true;
-  }
+/* =========================================================
+   REGISTRATION FLOW
+========================================================= */
 
-  const m = /^MANAGE USER\s+(.+)$/i.exec(text.trim());
-  if (!m) return false;
-
-  const employeeNumber = m[1].trim();
-  const r = await pool.query(
-    `SELECT * FROM users WHERE employee_number=$1 LIMIT 1`,
-    [employeeNumber]
+async function processRegistration(from, text) {
+  const result = await pool.query(
+    `SELECT * FROM users WHERE whatsapp_number=$1`,
+    [from]
   );
 
-  if (!r.rows.length) {
-    await sendWhatsAppText(from, "Employee number not found.");
-    return true;
-  }
+  const user = result.rows[0];
 
-  const u = r.rows[0];
-
-  await sendInteractive(from, {
-    type: "list",
-    body: {
-      text:
-        `USER MANAGEMENT\n\nEmployee: ${u.employee_number}\n` +
-        `Name: ${u.name}\nDesignation: ${u.designation}\n` +
-        `Area: ${u.area_of_working}\nSection: ${u.section_department}`
-    },
-    action: {
-      button: "Modify User",
-      sections: [{
-        title: "Select Field",
-        rows: [
-          { id: `edit:${employeeNumber}:designation`, title: "Designation" },
-          { id: `edit:${employeeNumber}:area`, title: "Area of Working" },
-          { id: `edit:${employeeNumber}:section`, title: "Section / Department" }
-        ]
-      }]
-    }
-  });
-
-  return true;
-}
-
-async function processIncomingMessage(from, text, interactiveId = null) {
-  const wa = normalizeNumber(from);
-  const clean = String(text || "").trim();
-
-  console.log("[INCOMING]", wa, clean || interactiveId || "");
-
-  if (interactiveId) {
-    if (interactiveId.startsWith("perm:")) {
-      return processAuthorityAction(wa, interactiveId);
-    }
-    if (interactiveId.startsWith("approve:") || interactiveId.startsWith("reject:")) {
-      return processApprovalAction(wa, interactiveId);
-    }
-    if (interactiveId.startsWith("edit:")) {
-      if (!isSuperAdmin(wa)) {
-        await sendWhatsAppText(wa, "You are not authorised to modify users.");
-        return true;
-      }
-      const [, emp, field] = interactiveId.split(":");
-      await sendWhatsAppText(wa, `Enter the new value for ${field}.`);
-      return true;
-    }
-  }
-
-  if (/^RESET REGISTRATION$/i.test(clean)) {
-    await resetRegistration(wa);
-    return true;
-  }
-
-  if (/^MANAGE USER\s+/i.test(clean)) {
-    return processManageUser(wa, clean);
-  }
-
-  const existing = await getUser(wa);
-
-  if (!existing || existing.approval_status !== "approved") {
-    if (await processRegistration(wa, clean)) return true;
-
-    await sendWhatsAppText(
-      wa,
-      "Please send your registration details in one message:\n\nName\nEmployee Number\nDesignation\nArea of Working\nSection / Department"
+  if (!user) {
+    await pool.query(
+      `INSERT INTO users (whatsapp_number) VALUES ($1)`,
+      [from]
     );
-    return true;
+
+    await sendWhatsAppText(from, REGISTRATION_MESSAGE);
+    return;
   }
 
-  if (isSuperAdmin(wa)) {
-    if (/^APPROVE\s+/i.test(clean)) {
-      const emp = clean.replace(/^APPROVE\s+/i, "").trim();
-      return processApprovalAction(wa, `approve:${emp}`);
-    }
-    if (/^REJECT\s+/i.test(clean)) {
-      const emp = clean.replace(/^REJECT\s+/i, "").trim();
-      return processApprovalAction(wa, `reject:${emp}`);
-    }
+  const data = await extractRegistration(text);
+  const missing = missingRegistrationFields(data);
+
+  if (!missing.length) {
+    await submitRegistration(from, data);
+    return;
   }
 
-  await sendWhatsAppText(wa, "LMMM Maintenance AI Agent is ready.");
-  return true;
+  await sendWhatsAppText(
+    from,
+    `I need a little more information to complete registration.\n\nMissing:\n${missing.map(x => `• ${x}`).join("\n")}\n\nYou can send all details together in one message.`
+  );
 }
+
+/* =========================================================
+   MAINTENANCE FIELD
+========================================================= */
+
+async function processMaintenanceField(from, text, user) {
+  const n = Number(text.trim());
+
+  const names = {
+    1: "LOG BOOK",
+    2: "BREAKDOWN / DELAY MANAGEMENT",
+    3: "DEFECT MANAGEMENT",
+    4: "MAINTENANCE JOBS / WORK ORDERS",
+    5: "PREVENTIVE MAINTENANCE (PM)",
+    6: "INSPECTION & CONDITION MONITORING",
+    7: "CBM / VIBRATION MONITORING",
+    8: "EQUIPMENT MASTER",
+    9: "SAP SUB-EQUIPMENT",
+    10: "MAINTENANCE HISTORY",
+    11: "SPARE PARTS MANAGEMENT",
+    12: "DRAWINGS & TECHNICAL DOCUMENTS",
+    13: "SMP – STANDARD MAINTENANCE PROCEDURE",
+    14: "SOP – STANDARD OPERATING PROCEDURE",
+    15: "TROUBLESHOOTING & FAILURE ANALYSIS",
+    16: "RCM / RELIABILITY MANAGEMENT",
+    17: "SHUTDOWN MAINTENANCE",
+    18: "EMPLOYEE ATTENDANCE",
+    19: "CONTRACT WORKER ATTENDANCE",
+    20: "MANPOWER / LABOUR MANAGEMENT"
+  };
+
+  if (!Number.isInteger(n) || !names[n]) {
+    await sendWhatsAppText(from, getMainMenu(user));
+    return;
+  }
+
+  await sendWhatsAppText(
+    from,
+    `${names[n]}\n\nModule selected.\n\nThe module workflow will be connected to the LMMM maintenance data layer.`
+  );
+}
+
+/* =========================================================
+   INCOMING MESSAGE
+========================================================= */
+
+async function processIncomingMessage(message) {
+  if (!message) return;
+
+  const from = String(message.from || "").replace(/\D/g, "");
+  if (!from) return;
+
+  let text = "";
+  let interactiveAction = "";
+
+  if (message.type === "text") {
+    text = message.text?.body?.trim() || "";
+  } else if (message.type === "interactive") {
+    interactiveAction =
+      message.interactive?.button_reply?.id ||
+      message.interactive?.list_reply?.id ||
+      "";
+  } else {
+    return;
+  }
+
+  console.log("[INCOMING]", from, text || interactiveAction);
+
+  if (interactiveAction) {
+    if (await startUserEdit(from, interactiveAction)) {
+      return;
+    }
+
+    const finalMatch = interactiveAction.match(/^final_(approve|reject)_(\d+)$/i);
+
+    if (finalMatch) {
+      if (!OWNER_NUMBERS.has(from)) {
+        await sendWhatsAppText(from, "You are not authorised to approve or reject registrations.");
+        return;
+      }
+
+      const action = finalMatch[1].toLowerCase();
+      const employeeNumber = finalMatch[2];
+      const result = await pool.query(
+        `SELECT * FROM users WHERE employee_number=$1`,
+        [employeeNumber]
+      );
+
+      if (!result.rowCount) {
+        await sendWhatsAppText(from, `No user found for Employee Number ${employeeNumber}.`);
+        return;
+      }
+
+      if (action === "approve") {
+        await processApprovalAction(from, "approve", employeeNumber);
+      } else {
+        await processApprovalAction(from, "reject", employeeNumber);
+      }
+      return;
+    }
+
+    if (await processAuthorityAction(from, interactiveAction)) {
+      return;
+    }
+
+    const match = interactiveAction.match(/^(approve|reject)_(\d+)$/i);
+
+    if (match) {
+      const action = match[1].toLowerCase();
+      const employeeNumber = match[2];
+
+      if (!OWNER_NUMBERS.has(from)) {
+        await sendWhatsAppText(
+          from,
+          "You are not authorised to approve or reject registrations."
+        );
+        return;
+      }
+
+      await processApprovalAction(from, action, employeeNumber);
+      return;
+    }
+  }
+
+  if (text && await processApprovalCommand(from, text)) {
+    return;
+  }
+
+  if (text && await processAdminEditText(from, text)) {
+    return;
+  }
+
+  const manageMatch = text && text.match(/^MANAGE USER\s+(\d+)$/i);
+  if (manageMatch && OWNER_NUMBERS.has(from)) {
+    await sendUserManagementMenu(from, manageMatch[1]);
+    return;
+  }
+
+  if (isResetCommand(text)) {
+    await resetRegistration(from);
+    return;
+  }
+
+  const result = await pool.query(
+    `SELECT * FROM users WHERE whatsapp_number=$1`,
+    [from]
+  );
+
+  const user = result.rows[0];
+
+  if (!user) {
+    await processRegistration(from, text);
+    return;
+  }
+
+  const incomplete =
+    !user.name ||
+    !user.employee_number ||
+    !user.designation ||
+    !user.area_of_working ||
+    !user.section_department;
+
+  if (incomplete) {
+    await processRegistration(from, text);
+    return;
+  }
+
+  if (user.approval_status === "pending") {
+      await sendWhatsAppText(
+        from,
+        "Registration submitted successfully.\n*Status: Pending Approval ⏳*"
+      );
+    return;
+  }
+
+  if (user.approval_status === "rejected") {
+    await sendWhatsAppText(
+      from,
+      'Your registration was rejected. Send "RESET REGISTRATION" to enter corrected details.'
+    );
+    return;
+  }
+
+  if (user.approval_status === "approved") {
+    if (isGreeting(text)) {
+      await sendWhatsAppText(from, getMainMenu(user));
+      return;
+    }
+
+    await processMaintenanceField(from, text, user);
+    return;
+  }
+
+  await sendWhatsAppText(
+    from,
+    "Your account is not currently authorised. Please contact the authorised administrator."
+  );
+}
+
+/* =========================================================
+   WEBHOOK
+========================================================= */
 
 app.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];
-  const token = req.query["hub.verify_token"];
+  const token = String(req.query["hub.verify_token"] || "").trim();
   const challenge = req.query["hub.challenge"];
 
-  if (mode === "subscribe" && token === META_VERIFY_TOKEN) {
+  if (mode === "subscribe" && token === VERIFY_TOKEN) {
+    console.log("[WEBHOOK] Verification successful");
     return res.status(200).send(challenge);
   }
+
+  console.log("[WEBHOOK] Verification failed");
   return res.sendStatus(403);
 });
 
@@ -502,49 +1355,66 @@ app.post("/webhook", async (req, res) => {
   res.sendStatus(200);
 
   try {
-    const value = req.body?.entry?.[0]?.changes?.[0]?.value;
-    const messages = value?.messages || [];
+    const body = req.body;
 
-    for (const msg of messages) {
-      const from = msg.from;
-      let text = "";
-      let interactiveId = null;
+    if (body.object !== "whatsapp_business_account") return;
 
-      if (msg.type === "text") {
-        text = msg.text?.body || "";
-      } else if (msg.type === "interactive") {
-        interactiveId =
-          msg.interactive?.list_reply?.id ||
-          msg.interactive?.button_reply?.id ||
-          null;
-        text =
-          msg.interactive?.list_reply?.title ||
-          msg.interactive?.button_reply?.title ||
-          "";
-      }
+    for (const entry of body.entry || []) {
+      for (const change of entry.changes || []) {
+        const messages = change.value?.messages || [];
 
-      if (from) {
-        await processIncomingMessage(from, text, interactiveId);
+        for (const message of messages) {
+          try {
+            await processIncomingMessage(message);
+          } catch (error) {
+            console.error("[MESSAGE PROCESSING ERROR]", error);
+          }
+        }
       }
     }
-  } catch (err) {
-    console.error("[WEBHOOK ERROR]", err);
+  } catch (error) {
+    console.error("[WEBHOOK ERROR]", error);
   }
 });
 
-app.get("/", (req, res) => res.send("LMMM Maintenance AI Agent is running"));
-app.get("/health", (req, res) => res.json({ ok: true }));
+/* =========================================================
+   HEALTH
+========================================================= */
+
+app.get("/", (_req, res) => {
+  res.status(200).json({
+    ok: true,
+    service: "LMMM Mechanical Maintenance AI Agent",
+    status: "live"
+  });
+});
+
+app.get("/health", (_req, res) => {
+  res.status(200).json({
+    ok: true,
+    database_configured: Boolean(process.env.DATABASE_URL),
+    whatsapp_configured: Boolean(PHONE_NUMBER_ID && ACCESS_TOKEN),
+    ai_configured: Boolean(process.env.OPENAI_API_KEY),
+    owner_approval_configured: OWNER_NUMBERS.size > 0
+  });
+});
+
+/* =========================================================
+   START
+========================================================= */
 
 async function startServer() {
   try {
-    await initDb();
-    app.listen(PORT, () => {
+    await initializeDatabase();
+
+    app.listen(PORT, "0.0.0.0", () => {
       console.log(`LMMM AI Maintenance Agent listening on ${PORT}`);
     });
-  } catch (err) {
-    console.error("[START ERROR]", err);
+  } catch (error) {
+    console.error("[STARTUP ERROR]", error);
     process.exit(1);
   }
 }
 
 startServer();
+.
