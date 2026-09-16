@@ -50,6 +50,7 @@ async function initializeDatabase() {
       system_role TEXT DEFAULT 'pending',
       approval_status TEXT DEFAULT 'pending',
       permissions JSONB NOT NULL DEFAULT '[]'::jsonb,
+      access_scope JSONB NOT NULL DEFAULT '{}'::jsonb,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
@@ -58,6 +59,11 @@ async function initializeDatabase() {
   await pool.query(`
     ALTER TABLE users
     ADD COLUMN IF NOT EXISTS permissions JSONB NOT NULL DEFAULT '[]'::jsonb;
+  `);
+
+  await pool.query(`
+    ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS access_scope JSONB NOT NULL DEFAULT '{}'::jsonb;
   `);
 
   await pool.query(`
@@ -148,7 +154,9 @@ async function initializeDatabase() {
     ["maintenance_type", "TEXT"],
     ["resources_used", "TEXT"],
     ["downtime_minutes", "NUMERIC"],
-    ["condition_data", "JSONB"]
+    ["condition_data", "JSONB"],
+    ["data_area", "TEXT"],
+    ["data_section", "TEXT"]
   ];
 
   for (const [column, type] of maintenanceColumns) {
@@ -717,6 +725,7 @@ async function submitRegistration(from, data) {
         system_role = 'pending',
         approval_status = 'pending',
         permissions = '[]'::jsonb,
+        access_scope = '{}'::jsonb,
         updated_at = CURRENT_TIMESTAMP
       `,
       [
@@ -807,6 +816,7 @@ async function resetRegistration(from) {
         system_role = 'pending',
         approval_status = 'pending',
         permissions = '[]'::jsonb,
+        access_scope = '{}'::jsonb,
         updated_at = CURRENT_TIMESTAMP
     WHERE whatsapp_number = $1
     `,
@@ -825,15 +835,97 @@ async function resetRegistration(from) {
    AUTHORITY MANAGEMENT
 ========================================================= */
 
+function normalizeScopeValue(value) {
+  return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function isHOD(user) {
+  const d = normalizeScopeValue(user?.designation);
+  return /(^|\s)(hod|head of department)(\s|$)/i.test(d);
+}
+
+function isSectionIncharge(user) {
+  const d = normalizeScopeValue(user?.designation);
+  return /section\s*incharge|section\s*in-charge|section\s*head/i.test(d);
+}
+
+function isSuperAdminUser(user) {
+  return Boolean(user && OWNER_NUMBERS.has(String(user.whatsapp_number || "").replace(/\D/g, "")));
+}
+
+function sameArea(a, b) {
+  return normalizeScopeValue(a) === normalizeScopeValue(b);
+}
+
+function sameSection(a, b) {
+  return normalizeScopeValue(a) === normalizeScopeValue(b);
+}
+
+function canViewScope(actor, dataArea, dataSection) {
+  if (!actor || actor.approval_status !== "approved") return false;
+  if (isSuperAdminUser(actor)) return true;
+
+  // HOD: all sections inside the HOD's own area.
+  if (isHOD(actor)) {
+    return sameArea(actor.area_of_working, dataArea);
+  }
+
+  // Section Incharge: only the complete section they control.
+  if (isSectionIncharge(actor)) {
+    return sameArea(actor.area_of_working, dataArea) &&
+           sameSection(actor.section_department, dataSection);
+  }
+
+  // Normal user: own Area + own Section only.
+  return sameArea(actor.area_of_working, dataArea) &&
+         sameSection(actor.section_department, dataSection);
+}
+
+function canModifyScope(actor, dataArea, dataSection) {
+  return canViewScope(actor, dataArea, dataSection) && hasPermission(actor, "data_entry");
+}
+
+function canGrantAuthority(actor, target) {
+  if (!actor || !target || actor.approval_status !== "approved" || target.approval_status !== "approved") return false;
+  if (isSuperAdminUser(actor)) return true;
+
+  // HOD can grant authority only to users in the same Area.
+  if (isHOD(actor)) {
+    return sameArea(actor.area_of_working, target.area_of_working);
+  }
+
+  // Section Incharge can grant authority only inside the same Area + Section.
+  if (isSectionIncharge(actor)) {
+    return sameArea(actor.area_of_working, target.area_of_working) &&
+           sameSection(actor.section_department, target.section_department);
+  }
+
+  return false;
+}
+
 function hasPermission(user, permission) {
   const permissions = Array.isArray(user?.permissions)
     ? user.permissions
     : [];
 
   return (
+    isSuperAdminUser(user) ||
     permissions.includes("full_access") ||
     permissions.includes(permission)
   );
+}
+
+
+function scopeSqlWhere(actor, areaColumn = "data_area", sectionColumn = "data_section") {
+  if (isSuperAdminUser(actor)) return { sql: "TRUE", params: [] };
+  if (isHOD(actor)) return { sql: `${areaColumn}=$1`, params: [actor.area_of_working] };
+  return { sql: `${areaColumn}=$1 AND ${sectionColumn}=$2`, params: [actor.area_of_working, actor.section_department] };
+}
+
+function scopeLabel(user) {
+  if (isSuperAdminUser(user)) return "ALL AREAS / ALL SECTIONS";
+  if (isHOD(user)) return `${user.area_of_working || "-"} / ALL SECTIONS`;
+  return `${user.area_of_working || "-"} / ${user.section_department || "-"}`;
 }
 
 async function processAuthorityAction(from, actionId) {
@@ -863,16 +955,14 @@ async function processAuthorityAction(from, actionId) {
 
   if (!match) return false;
 
-  if (!isSuperAdmin(from)) {
-    await sendWhatsAppText(
-      from,
-      "Not authorised."
-    );
-    return true;
-  }
-
   const permission = match[1].toLowerCase();
   const employeeNumber = match[2];
+
+  const actorResult = await pool.query(
+    `SELECT * FROM users WHERE whatsapp_number=$1`,
+    [from]
+  );
+  const actor = actorResult.rows[0] || (isSuperAdmin(from) ? { whatsapp_number: from, approval_status: "approved" } : null);
 
   const result = await pool.query(
     `SELECT * FROM users WHERE employee_number=$1`,
@@ -888,6 +978,11 @@ async function processAuthorityAction(from, actionId) {
   }
 
   const user = result.rows[0];
+
+  if (!canGrantAuthority(actor, user)) {
+    await sendWhatsAppText(from, "Authority restricted to your scope.");
+    return true;
+  }
 
   if (user.approval_status !== "approved") {
     await sendWhatsAppText(
@@ -1017,10 +1112,11 @@ async function processApprovalAction(from, action, employeeNumber) {
       SET approval_status='approved',
           system_role='user',
           permissions=$1::jsonb,
+          access_scope=$2::jsonb,
           updated_at=CURRENT_TIMESTAMP
-      WHERE employee_number=$2
+      WHERE employee_number=$3
       `,
-      [JSON.stringify(DEFAULT_PERMISSIONS), employeeNumber]
+      [JSON.stringify(DEFAULT_PERMISSIONS), JSON.stringify({ area: user.area_of_working, section: user.section_department, level: "section" }), employeeNumber]
     );
   } else {
     await pool.query(
@@ -1028,6 +1124,7 @@ async function processApprovalAction(from, action, employeeNumber) {
       UPDATE users
       SET approval_status='rejected',
           system_role='pending',
+          access_scope='{}'::jsonb,
           updated_at=CURRENT_TIMESTAMP
       WHERE employee_number=$1
       `,
@@ -1094,10 +1191,8 @@ function additionalAuthorityLabels(permissions) {
 }
 
 async function sendAuthorityDetails(to, employeeNumber) {
-  if (!isSuperAdmin(to)) {
-    await sendWhatsAppText(to, "This information is available only to Super Admin.");
-    return true;
-  }
+  const actorResult = await pool.query(`SELECT * FROM users WHERE whatsapp_number=$1`, [to]);
+  const actor = actorResult.rows[0] || (isSuperAdmin(to) ? { whatsapp_number: to, approval_status: "approved" } : null);
 
   const result = await pool.query(
     `SELECT * FROM users WHERE employee_number=$1`,
@@ -1110,6 +1205,10 @@ async function sendAuthorityDetails(to, employeeNumber) {
   }
 
   const user = result.rows[0];
+  if (!canGrantAuthority(actor, user)) {
+    await sendWhatsAppText(to, "Access restricted.");
+    return true;
+  }
   const extra = additionalAuthorityLabels(user.permissions);
 
   await sendWhatsAppText(
@@ -1120,11 +1219,16 @@ async function sendAuthorityDetails(to, employeeNumber) {
     `Designation: ${user.designation || "-"}\n` +
     `Area: ${user.area_of_working || "-"}\n` +
     `Section: ${user.section_department || "-"}\n` +
+    `Scope: ${scopeLabel(user)}\n` +
     `Status: ${user.approval_status || "-"}\n\n` +
     `Default maintenance access: ENABLED\n` +
     `Additional authorities:\n` +
     (extra.length ? extra.map(x => `✓ ${x}`).join("\n") : "None")
   );
+
+  await sendAdditionalAuthorityMenu(to, employeeNumber, user.permissions, {
+    statusLine: `Authority: ${employeeNumber}`
+  });
 
   return true;
 }
@@ -1457,14 +1561,24 @@ async function saveMaintenanceSubmission({
   caption = null,
   mediaId = null,
   mimeType = null,
-  fileName = null
+  fileName = null,
+  dataArea = null,
+  dataSection = null
 }) {
+  dataArea = dataArea || user?.area_of_working || null;
+  dataSection = dataSection || user?.section_department || null;
+
+  if (!canModifyScope(user, dataArea, dataSection)) {
+    await sendWhatsAppText(from, "Access restricted.");
+    return false;
+  }
+
   const result = await pool.query(
     `
     INSERT INTO maintenance_submissions
       (message_id, whatsapp_number, employee_number, message_type,
-       text_content, caption, media_id, mime_type, file_name)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       text_content, caption, media_id, mime_type, file_name, data_area, data_section)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
     ON CONFLICT (message_id) DO NOTHING
     RETURNING id
     `,
@@ -1477,7 +1591,9 @@ async function saveMaintenanceSubmission({
       caption,
       mediaId,
       mimeType,
-      fileName
+      fileName,
+      dataArea,
+      dataSection
     ]
   );
 
@@ -1641,7 +1757,7 @@ async function processIncomingMessage(message) {
   const authorityDetailsMatch =
     text && text.match(/^AUTHORITY\s+(\d+)$/i);
 
-  if (authorityDetailsMatch && isSuperAdmin(from)) {
+  if (authorityDetailsMatch) {
     await sendAuthorityDetails(from, authorityDetailsMatch[1]);
     return;
   }
