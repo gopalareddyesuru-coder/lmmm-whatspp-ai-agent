@@ -1,4 +1,4 @@
-import "dotenv/config";
+mport "dotenv/config";
 import express from "express";
 import pg from "pg";
 
@@ -50,7 +50,19 @@ async function initDb() {
     )
   `);
 
+  // Existing LMMM databases may already have an older users table.
+  // Add every newer column safely before registration/approval queries use them.
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS name TEXT`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS employee_number TEXT`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS designation TEXT`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS area_of_working TEXT`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS section_department TEXT`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'user'`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS approval_status TEXT DEFAULT 'pending'`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS permissions JSONB NOT NULL DEFAULT '[]'::jsonb`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()`);
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS user_change_audit (
       id SERIAL PRIMARY KEY,
