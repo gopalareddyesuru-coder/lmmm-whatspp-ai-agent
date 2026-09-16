@@ -1827,10 +1827,6 @@ function searchMasterHistory(query, requestedArea) {
     }
 
     let records = sourceRecords.filter(x => !isHistoryHeaderRecord(String(x.text || "").trim()));
-      const source = String(x.source || "");
-      return /^(?:CH SIDE HISTORY\.xlsx|WBF HISTORY 10-20\.xlsx)\s*\//i.test(source);
-    });
-    records = records.filter(x => !isHistoryHeaderRecord(String(x.text || "").trim()));
 
     const q = normalizeHistoryQuery(query);
     if (!q) return records;
