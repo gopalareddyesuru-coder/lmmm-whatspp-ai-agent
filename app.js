@@ -53,10 +53,6 @@ async function initializeDatabase() {
     );
   `);
 
-  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS system_role TEXT DEFAULT 'pending'`);
-  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS approval_status TEXT DEFAULT 'pending'`);
-  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS permissions JSONB NOT NULL DEFAULT '[]'::jsonb`);
-
   await pool.query(`
     CREATE TABLE IF NOT EXISTS registration_requests (
       id BIGSERIAL PRIMARY KEY,
