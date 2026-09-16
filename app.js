@@ -774,20 +774,10 @@ async function processIncomingMessage(message) {
   }
 
   if (user.approval_status === "pending") {
-    await sendWhatsAppText(
-      from,
-      `
-Your registration is under approval ⏳
-
-Name: ${user.name}
-Employee No: ${user.employee_number}
-Designation: ${user.designation}
-Area: ${user.area_of_working}
-Section: ${user.section_department}
-
-Please wait for authorised administrator approval.
-`.trim()
-    );
+      await sendWhatsAppText(
+        from,
+        "Registration submitted successfully. Status: Pending Approval ⏳"
+      );
     return;
   }
 
