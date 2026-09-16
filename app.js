@@ -99,6 +99,7 @@ async function initializeDatabase() {
   `);
 
   console.log("[DATABASE] All required tables ready");
+  console.log("[AUTHORITY] Default maintenance access is internal and hidden from users");
 }
 
 /* =========================================================
@@ -802,7 +803,7 @@ async function processAuthorityAction(from, actionId) {
 
   if (!match) return false;
 
-  if (!OWNER_NUMBERS.has(from.replace(/\D/g, ""))) {
+  if (!isSuperAdmin(from)) {
     await sendWhatsAppText(
       from,
       "You are not authorised to assign additional authorities."
@@ -1030,6 +1031,97 @@ async function processApprovalAction(from, action, employeeNumber) {
     );
   }
 
+  return true;
+}
+
+/* =========================================================
+   SUPER ADMIN AUTHORITY VISIBILITY
+========================================================= */
+
+function isSuperAdmin(from) {
+  return OWNER_NUMBERS.has(String(from || "").replace(/\D/g, ""));
+}
+
+function additionalAuthorityLabels(permissions) {
+  const set = new Set(Array.isArray(permissions) ? permissions : []);
+  return ADDITIONAL_PERMISSIONS
+    .filter(([key]) => set.has(key))
+    .map(([, label]) => label);
+}
+
+async function sendAuthorityDetails(to, employeeNumber) {
+  if (!isSuperAdmin(to)) {
+    await sendWhatsAppText(to, "This information is available only to Super Admin.");
+    return true;
+  }
+
+  const result = await pool.query(
+    `SELECT * FROM users WHERE employee_number=$1`,
+    [employeeNumber]
+  );
+
+  if (!result.rowCount) {
+    await sendWhatsAppText(to, `No user found for Employee Number ${employeeNumber}.`);
+    return true;
+  }
+
+  const user = result.rows[0];
+  const extra = additionalAuthorityLabels(user.permissions);
+
+  await sendWhatsAppText(
+    to,
+    `USER AUTHORITY DETAILS\n\n` +
+    `Name: ${user.name || "-"}\n` +
+    `Employee No: ${user.employee_number || "-"}\n` +
+    `Designation: ${user.designation || "-"}\n` +
+    `Area: ${user.area_of_working || "-"}\n` +
+    `Section: ${user.section_department || "-"}\n` +
+    `Status: ${user.approval_status || "-"}\n\n` +
+    `Default maintenance access: ENABLED\n` +
+    `Additional authorities:\n` +
+    (extra.length ? extra.map(x => `✓ ${x}`).join("\n") : "None")
+  );
+
+  if (user.approval_status === "approved") {
+    await sendAdditionalAuthorityMenu(to, employeeNumber, user.permissions || []);
+  }
+
+  return true;
+}
+
+async function sendAllAuthorityDetails(to) {
+  if (!isSuperAdmin(to)) {
+    await sendWhatsAppText(to, "This information is available only to Super Admin.");
+    return true;
+  }
+
+  const result = await pool.query(
+    `SELECT name, employee_number, designation, area_of_working,
+            section_department, approval_status, permissions
+     FROM users
+     WHERE employee_number IS NOT NULL
+     ORDER BY employee_number`
+  );
+
+  if (!result.rowCount) {
+    await sendWhatsAppText(to, "No registered users found.");
+    return true;
+  }
+
+  const lines = ["ALL USER AUTHORITIES", ""];
+
+  for (const user of result.rows) {
+    const extra = additionalAuthorityLabels(user.permissions);
+    lines.push(
+      `${user.employee_number} - ${user.name || "-"}`,
+      `Status: ${user.approval_status || "-"}`,
+      `Default Maintenance Access: ${user.approval_status === "approved" ? "YES" : "NO"}`,
+      `Additional: ${extra.length ? extra.join(", ") : "None"}`,
+      ""
+    );
+  }
+
+  await sendWhatsAppText(to, lines.join("\n"));
   return true;
 }
 
@@ -1366,6 +1458,11 @@ async function processIncomingMessage(message) {
       message.interactive?.button_reply?.id ||
       message.interactive?.list_reply?.id ||
       "";
+  } else if (["image", "document", "audio", "video", "sticker"].includes(message.type)) {
+    // Media is accepted as a maintenance submission after approval.
+    // The actual media download/AI extraction layer will be connected to the
+    // maintenance data pipeline; registration still requires text fields.
+    text = `[${message.type.toUpperCase()} RECEIVED]`;
   } else {
     return;
   }
@@ -1422,10 +1519,23 @@ async function processIncomingMessage(message) {
     return;
   }
 
+  const authorityDetailsMatch =
+    text && text.match(/^AUTHORITY\s+(\d+)$/i);
+
+  if (authorityDetailsMatch && isSuperAdmin(from)) {
+    await sendAuthorityDetails(from, authorityDetailsMatch[1]);
+    return;
+  }
+
+  if (text && /^(AUTHORITY LIST|ALL AUTHORITIES|USER AUTHORITIES)$/i.test(text) && isSuperAdmin(from)) {
+    await sendAllAuthorityDetails(from);
+    return;
+  }
+
   const manageMatch =
     text && text.match(/^MANAGE USER\s+(\d+)$/i);
 
-  if (manageMatch && OWNER_NUMBERS.has(from)) {
+  if (manageMatch && isSuperAdmin(from)) {
     await sendUserManagementMenu(from, manageMatch[1]);
     return;
   }
@@ -1480,10 +1590,26 @@ async function processIncomingMessage(message) {
 
   if (user.approval_status === "approved") {
     if (isGreeting(text)) {
-      await sendWhatsAppText(from, getMainMenu(user));
+      await sendWhatsAppText(
+        from,
+        `Status: Approved ✅\n\n` +
+        `You can enter and submit your LMMM maintenance information now.\n\n` +
+        `You may send maintenance details by text, voice, image, document, or other supported file formats.\n\n` +
+        `Send the maintenance details directly.`
+      );
       return;
     }
 
+    if (/^\[(IMAGE|DOCUMENT|AUDIO|VIDEO|STICKER) RECEIVED\]$/.test(text)) {
+      await sendWhatsAppText(
+        from,
+        `Received successfully ✅\n\n` +
+        `Your maintenance file/media can be submitted for maintenance processing.`
+      );
+      return;
+    }
+
+    // No permission list is shown to the user.
     await processMaintenanceField(from, text, user);
     return;
   }
