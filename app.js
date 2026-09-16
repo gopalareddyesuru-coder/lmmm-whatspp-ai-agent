@@ -23,6 +23,7 @@ let MASTER_DATA_STATUS = {
 // History date-range sessions. WhatsApp user must select From/To dates
 // before any history records are returned.
 const historySessions = new Map();
+const historyPageSessions = new Map();
 
 async function loadMasterData() {
   try {
@@ -1735,30 +1736,55 @@ function formatHistoryRecord(x) {
   return `${x.source || "History"}\n${x.text || ""}`.trim();
 }
 
+function historySourceTable(source) {
+  const value = String(source || "");
+  const m = value.match(/\/\s*([^/]+)_Table\s*1$/i);
+  return m ? m[1].trim() : value;
+}
+
+function isHistoryHeaderRecord(text) {
+  const raw = String(text || "").trim();
+  const value = raw.toUpperCase().replace(/\s+/g, " ").trim();
+  if (!value) return true;
+  if (/^(SNO|SL NO|SLNO|EQPMT|EQPMNT|EQUMT)\s*\|/.test(value)) return true;
+  if (/^(BSY ROLLER TABLE|FURNACE APPROACH ROLLER TABLE|CHARGING GRIDS|BLOOM PUSHER GUIDE WHEEL CHANGING|CENTERSCREEN HISTORY|HISTORY OF LINTEL REPLACEMENT|DOOR SPROCKETS REPLACEMENT HISTORY|PULLEYS REPLACEMENT HISTORY|ECS TURBINES MAINTENANCE HISTORY|WALKING BEAM FURNACE GEARBOXES REPLACEMENT HISTORY)$/.test(value)) return true;
+  return false;
+}
+
 function searchMasterHistory(query, requestedArea) {
   if (!MASTER_DATA?.history || !Array.isArray(MASTER_DATA.history)) return [];
 
-  const q = normalizeText(query)
-    .replace(/\b(?:bdm|bar\s*mill|barmill|finishing|hydraulics|cranes?|auxiliary|history|historical|records?|show|give|tell|please)\b/g, " ")
-    .trim();
-
-  let records = MASTER_DATA.history;
-
-  // CH SIDE history is the source family for BDM charging-side history.
+  // BDM history is the complete combination of the two authorised
+  // BDM history source families. Never reduce BDM to CH SIDE only.
   if (requestedArea === "BDM") {
-    records = records.filter(x => /CH SIDE HISTORY/i.test(String(x.source || "")));
-  } else if (requestedArea === "Finishing" || requestedArea === "Bar Mill") {
-    // No trusted area mapping for these history sources is present in
-    // the imported master dataset; never guess a mapping.
-    return [];
+    const q = normalizeText(query)
+      .replace(/\b(?:bdm|bar\s*mill|barmill|finishing|hydraulics|cranes?|auxiliary|history|historical|records?|show|give|tell|please|all|jobs?)\b/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    let records = MASTER_DATA.history.filter(x => {
+      const source = String(x.source || "");
+      return /^(?:CH SIDE HISTORY\.xlsx|WBF HISTORY 10-20\.xlsx)\s*\//i.test(source);
+    });
+
+    // Remove header/blank rows from result sets. They remain in the source
+    // data but are not maintenance-history events.
+    records = records.filter(x => !isHistoryHeaderRecord(String(x.text || "").trim()));
+
+    if (q) {
+      records = records.filter(x => normalizeText(`${x.text || ""} ${x.source || ""}`).includes(q));
+    }
+
+    return records;
   }
 
-  if (q) {
-    records = records.filter(x => normalizeText(formatHistoryRecord(x)).includes(q));
-  }
+  // There is no trusted imported history-source mapping for Bar Mill or
+  // Finishing. Do not guess or leak another area's history.
+  if (requestedArea === "Finishing" || requestedArea === "Bar Mill") return [];
 
-  return records;
+  return [];
 }
+
 
 
 /* =========================================================
@@ -1766,9 +1792,14 @@ function searchMasterHistory(query, requestedArea) {
 ========================================================= */
 
 function parseHistoryDate(value) {
-  const text = String(value || "").trim();
+  let text = String(value || "").trim();
 
-  // ISO: YYYY-MM-DD
+  // Accept source cells such as "2016-05-06 00:00:00" and
+  // "08/08/2015(CR)" without altering the stored source text.
+  const token = text.match(/^\d{4}[-\/]\d{1,2}[-\/]\d{1,2}|^\d{1,2}[-\/.]\d{1,2}[-\/.]\d{4}/);
+  if (!token) return null;
+  text = token[0];
+
   let m = text.match(/^(\d{4})[-\/]?(\d{2})[-\/]?(\d{2})$/);
   if (m) {
     const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
@@ -1777,8 +1808,15 @@ function parseHistoryDate(value) {
         d.getUTCDate() === Number(m[3])) return d;
   }
 
-  // Indian/common: DD-MM-YYYY or DD/MM/YYYY
   m = text.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})$/);
+  if (m) {
+    const d = new Date(Date.UTC(Number(m[3]), Number(m[2]) - 1, Number(m[1])));
+    if (d.getUTCFullYear() === Number(m[3]) &&
+        d.getUTCMonth() === Number(m[2]) - 1 &&
+        d.getUTCDate() === Number(m[1])) return d;
+  }
+
+  m = text.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
   if (m) {
     const d = new Date(Date.UTC(Number(m[3]), Number(m[2]) - 1, Number(m[1])));
     if (d.getUTCFullYear() === Number(m[3]) &&
@@ -1789,29 +1827,48 @@ function parseHistoryDate(value) {
   return null;
 }
 
+
 function formatHistoryDate(date) {
   if (!date) return "—";
   return `${String(date.getUTCDate()).padStart(2, "0")}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${date.getUTCFullYear()}`;
 }
 
-function extractHistoryDate(record) {
+function extractHistoryDates(record) {
   const text = String(record?.text || "");
-
-  const iso = text.match(/\b\d{4}[-\/]\d{2}[-\/]\d{2}\b/);
-  if (iso) return parseHistoryDate(iso[0]);
-
-  const dmy = text.match(/\b\d{1,2}[-\/]\d{1,2}[-\/]\d{4}\b/);
-  if (dmy) return parseHistoryDate(dmy[0]);
-
-  return null;
+  const out = [];
+  const seen = new Set();
+  const patterns = [
+    /\b\d{4}[-\/]\d{1,2}[-\/]\d{1,2}\b/g,
+    /\b\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{4}\b/g,
+    /\b\d{1,2}\/\d{1,2}\/\d{4}\b/g
+  ];
+  for (const re of patterns) {
+    for (const m of text.matchAll(re)) {
+      const parsed = parseHistoryDate(m[0]);
+      if (parsed) {
+        const key = parsed.toISOString().slice(0, 10);
+        if (!seen.has(key)) {
+          seen.add(key);
+          out.push(parsed);
+        }
+      }
+    }
+  }
+  return out.sort((a, b) => a.getTime() - b.getTime());
 }
 
-function startHistoryDateSession(from, area) {
+function extractHistoryDate(record) {
+  return extractHistoryDates(record)[0] || null;
+}
+
+
+function startHistoryDateSession(from, area, query = "") {
   historySessions.set(from, {
     area,
     step: "FROM_DATE",
     fromDate: null,
-    toDate: null
+    toDate: null,
+    query
   });
 }
 
@@ -1855,17 +1912,119 @@ async function processHistoryDateSession(from, text, user) {
     `Searching ${session.area} history...\n${formatHistoryDate(session.fromDate)} → ${formatHistoryDate(session.toDate)}`
   );
 
-  return await sendHistoryDateRange(from, session.area, session.fromDate, session.toDate, user);
+  return await sendHistoryDateRange(from, session.area, session.fromDate, session.toDate, user, session.query);
 }
 
-async function sendHistoryDateRange(from, area, fromDate, toDate, user) {
-  const allRecords = searchMasterHistory(area, area);
+function historyDateMatches(record, fromDate, toDate) {
+  return extractHistoryDates(record).some(d => d >= fromDate && d <= toDate);
+}
 
+function historyRowsForDisplay(records, offset = 0, pageSize = 20) {
+  return historyTableRows(records.slice(offset, offset + pageSize));
+}
+
+async function sendHistoryResults(from, area, records, user, options = {}) {
+  const { fromDate = null, toDate = null, queryLabel = "ALL BDM EQUIPMENT" } = options;
+  const pageSize = 20;
+  historyPageSessions.set(from, { area, records, offset: 0, pageSize, fromDate, toDate, queryLabel });
+
+  const rows = historyRowsForDisplay(records, 0, pageSize);
+  const lines = [
+    `MAINTENANCE HISTORY – ${area}`,
+    fromDate && toDate ? `${formatHistoryDate(fromDate)} → ${formatHistoryDate(toDate)}` : "All available records",
+    "",
+    `${queryLabel}`,
+    "",
+    `Showing 1–${Math.min(pageSize, records.length)} of ${records.length} records`,
+    ""
+  ];
+
+  for (const r of rows) {
+    const id = r.equipmentNo || r.itemNo || "—";
+    lines.push(`${r.no} | ${id} | ${r.equipment} | ${r.date}`);
+    lines.push(`   ${r.description}${r.remarks !== "-" ? ` | ${r.remarks}` : ""}`);
+  }
+
+  if (records.length > pageSize) {
+    lines.push("", `Reply MORE for next ${pageSize}.`);
+  }
+  lines.push("", `Total Records: ${records.length}`);
+
+  // Send the WhatsApp page first; PDF generation must never delay the main answer.
+  await sendWhatsAppText(from, lines.join("\n"));
+
+  if (isSuperAdmin(from) || hasPermission(user, "print_export")) {
+    setImmediate(async () => {
+      try {
+        const pdf = buildHistoryTablePdf(
+          `LMMM ${area} Maintenance History`,
+          fromDate,
+          toDate,
+          records
+        );
+        const safeFrom = fromDate ? formatHistoryDate(fromDate) : "ALL";
+        const safeTo = toDate ? formatHistoryDate(toDate) : "ALL";
+        const filename = `LMMM_${area.replace(/[^A-Za-z0-9]+/g, "_")}_History_${safeFrom}_to_${safeTo}.pdf`;
+        const sent = await uploadWhatsAppPdf(
+          from,
+          pdf,
+          filename,
+          `Full ${area} history – ${queryLabel}`
+        );
+        if (!sent) console.error("[PDF] Could not send history PDF");
+      } catch (error) {
+        console.error("[PDF] History background generation failed:", error);
+      }
+    });
+  }
+
+  return true;
+}
+
+async function sendNextHistoryPage(from) {
+  const session = historyPageSessions.get(from);
+  if (!session) return false;
+
+  const nextOffset = session.offset + session.pageSize;
+  if (nextOffset >= session.records.length) {
+    await sendWhatsAppText(from, "No more history records.");
+    return true;
+  }
+
+  session.offset = nextOffset;
+  const rows = historyRowsForDisplay(session.records, nextOffset, session.pageSize);
+  const lines = [
+    `MAINTENANCE HISTORY – ${session.area}`,
+    session.fromDate && session.toDate
+      ? `${formatHistoryDate(session.fromDate)} → ${formatHistoryDate(session.toDate)}`
+      : "All available records",
+    "",
+    `Showing ${nextOffset + 1}–${Math.min(nextOffset + session.pageSize, session.records.length)} of ${session.records.length} records`,
+    ""
+  ];
+
+  for (const r of rows) {
+    const id = r.equipmentNo || r.itemNo || "—";
+    lines.push(`${nextOffset + r.no} | ${id} | ${r.equipment} | ${r.date}`);
+    lines.push(`   ${r.description}${r.remarks !== "-" ? ` | ${r.remarks}` : ""}`);
+  }
+  if (nextOffset + session.pageSize < session.records.length) lines.push("", "Reply MORE for next 20.");
+  else lines.push("", "End of history.");
+  await sendWhatsAppText(from, lines.join("\n"));
+  return true;
+}
+
+async function sendHistoryDateRange(from, area, fromDate, toDate, user, query = "") {
+  const allRecords = searchMasterHistory(query, area);
   const filtered = allRecords
-    .map(record => ({ record, date: extractHistoryDate(record) }))
-    .filter(x => x.date && x.date >= fromDate && x.date <= toDate)
-    .sort((a, b) => b.date.getTime() - a.date.getTime())
-    .map(x => x.record);
+    .filter(record => historyDateMatches(record, fromDate, toDate))
+    .sort((a, b) => {
+      const ad = extractHistoryDates(a).filter(d => d >= fromDate && d <= toDate);
+      const bd = extractHistoryDates(b).filter(d => d >= fromDate && d <= toDate);
+      const aLast = ad.length ? Math.max(...ad.map(d => d.getTime())) : 0;
+      const bLast = bd.length ? Math.max(...bd.map(d => d.getTime())) : 0;
+      return bLast - aLast;
+    });
 
   if (!filtered.length) {
     await sendWhatsAppText(
@@ -1875,55 +2034,13 @@ async function sendHistoryDateRange(from, area, fromDate, toDate, user) {
     return true;
   }
 
-  // WhatsApp: latest 10 only.
-  const latest10 = filtered.slice(0, 10);
-  const rows = historyTableRows(latest10);
-
-  const lines = [
-    `MAINTENANCE HISTORY – ${area}`,
-    `${formatHistoryDate(fromDate)} → ${formatHistoryDate(toDate)}`,
-    "",
-    "Latest 10 Jobs:",
-    ""
-  ];
-
-  for (const r of rows) {
-    const exactId = r.equipmentNo || r.itemNo || r.sapNo || "—";
-    const job = [r.description, r.action !== "-" ? r.action : ""]
-      .filter(Boolean)
-      .join(" | ")
-      .replace(/\s+/g, " ")
-      .trim();
-    lines.push(`${r.no} | ${exactId} | ${r.equipment} | ${r.date} | ${job}`);
-  }
-
-  lines.push("", `Total Records: ${filtered.length}`);
-
-  await sendWhatsAppText(from, lines.join("\n"));
-
-  // PDF: complete date-range result, subject to export permission.
-  if (isSuperAdmin(from) || hasPermission(user, "print_export")) {
-    const pdf = buildHistoryTablePdf(
-      `LMMM ${area} Maintenance History`,
-      fromDate,
-      toDate,
-      filtered
-    );
-
-    const filename = `LMMM_${area.replace(/[^A-Za-z0-9]+/g, "_")}_History_${formatHistoryDate(fromDate)}_to_${formatHistoryDate(toDate)}.pdf`;
-
-    const sent = await uploadWhatsAppPdf(
-      from,
-      pdf,
-      filename,
-      `Full ${area} history: ${formatHistoryDate(fromDate)} to ${formatHistoryDate(toDate)}`
-    );
-
-    if (!sent) console.error("[PDF] Could not send date-range history PDF");
-  }
-
-  return true;
+  return await sendHistoryResults(from, area, filtered, user, {
+    fromDate,
+    toDate,
+    queryLabel: query ? `Equipment filter: ${query}` : "ALL BDM EQUIPMENT"
+  });
 }
+
 
 /* =========================================================
    PDF / TABLE OUTPUT
@@ -1975,34 +2092,97 @@ function historyTableRows(records) {
   return records.map((x, index) => {
     const text = String(x.text || "").replace(/\s+/g, " ").trim();
     const source = String(x.source || "History").replace(/\s+/g, " ").trim();
-    const ids = extractExplicitIdentifiers(text);
-    const date = text.match(/\b\d{4}[-\/]\d{2}[-\/]\d{2}\b/)?.[0] || "-";
-    const equipment =
-      text.match(/(?:equipment|eqpmt|equipment name)\s*[:|-]\s*([^|;]+)/i)?.[1]?.trim() ||
-      (text.match(/(?:charging grid[- ]?\d+|wbf[- ]?\d+|ecs[- ]?\d+|fart|bloom pusher|elevator)/i)?.[0] || "-");
+    const table = historySourceTable(source);
     const parts = text.split("|").map(v => v.trim()).filter(Boolean);
+    const dates = extractHistoryDates(x).map(formatHistoryDate);
+    const date = dates.length ? dates.join(", ") : "-";
+
+    let equipment = "-";
     let description = text;
-    let action = "-";
     let remarks = "-";
-    if (parts.length >= 4) {
-      description = parts[2] || parts[1] || text;
-      action = parts[3] || "-";
-      remarks = parts[4] || "-";
+    let exactNo = null;
+
+    // Parse the well-defined job-history sheets by their source column order.
+    if (/^(WBF-1|WBF-2|ECS-1|ECS-2|BRAKE|CENTER SCREEN|GBOX|LINTEL|SPROCKET)_Table 1$/i.test(`${table}_Table 1`)) {
+      const dateIndex = parts.findIndex(v => parseHistoryDate(v));
+      const before = dateIndex >= 0 ? parts.slice(0, dateIndex) : parts;
+      const after = dateIndex >= 0 ? parts.slice(dateIndex + 1) : [];
+      if (before.length && /^\d+$/.test(before[0])) before.shift();
+      equipment = before[0] || "-";
+      exactNo = equipment !== "-" && /^(WBF-\d|ECS-\d)$/i.test(equipment) ? equipment : null;
+      description = after[0] || before[1] || "-";
+      remarks = after.slice(1).filter(v => !parseHistoryDate(v)).join(" | ") || "-";
+    } else if (/^ECS PUMP_Table 1$/i.test(`${table}_Table 1`)) {
+      const dateIndex = parts.findIndex(v => parseHistoryDate(v));
+      const before = dateIndex >= 0 ? parts.slice(0, dateIndex) : parts;
+      const after = dateIndex >= 0 ? parts.slice(dateIndex + 1) : [];
+      if (before.length && /^\d+$/.test(before[0])) before.shift();
+      equipment = before[0] || "-";
+      exactNo = /^(ECS-\d)$/i.test(equipment) ? equipment : null;
+      description = before[1] || "-";
+      remarks = after.filter(v => !parseHistoryDate(v)).join(" | ") || "-";
+    } else if (/^(WHEEL|PULLEY|RECUIPRATOR)_Table 1$/i.test(`${table}_Table 1`)) {
+      const dateIndex = parts.findIndex(v => parseHistoryDate(v));
+      const before = dateIndex >= 0 ? parts.slice(0, dateIndex) : parts;
+      const after = dateIndex >= 0 ? parts.slice(dateIndex + 1) : [];
+      if (before.length && /^\d+$/.test(before[0])) before.shift();
+      equipment = before[0] || "-";
+      exactNo = /^(WBF-\d|ECS-\d)$/i.test(equipment) ? equipment : null;
+      description = before.slice(1).join(" | ") || "-";
+      remarks = after.filter(v => !parseHistoryDate(v)).join(" | ") || "-";
+    } else if (/^ECS VALVES_Table 1$/i.test(`${table}_Table 1`)) {
+      const dateIndex = parts.findIndex(v => parseHistoryDate(v));
+      const before = dateIndex >= 0 ? parts.slice(0, dateIndex) : parts;
+      const after = dateIndex >= 0 ? parts.slice(dateIndex + 1) : [];
+      if (before.length && /^\d+$/.test(before[0])) before.shift();
+      equipment = before[0] || "-";
+      exactNo = /^(ECS-\d)$/i.test(equipment) ? equipment : null;
+      description = before.slice(1).join(" | ") || "-";
+      remarks = after.filter(v => !parseHistoryDate(v)).join(" | ") || "-";
+    } else if (/^CH SIDE EQPMT_Table 1$/i.test(`${table}_Table 1`)) {
+      const dateIndex = parts.findIndex(v => parseHistoryDate(v));
+      const before = dateIndex >= 0 ? parts.slice(0, dateIndex) : parts;
+      const after = dateIndex >= 0 ? parts.slice(dateIndex + 1) : [];
+      if (before.length && /^\d+$/.test(before[0])) before.shift();
+      equipment = "CHARGING GRIDS";
+      description = after[0] || before.join(" | ") || "-";
+      remarks = after.slice(1).filter(v => !parseHistoryDate(v)).join(" | ") || "-";
+    } else if (/^ELEVATORS_Table 1$/i.test(`${table}_Table 1`)) {
+      equipment = parts[0] || "-";
+      exactNo = equipment;
+      description = parts[1] || "-";
+      remarks = parts.slice(2).filter(v => !parseHistoryDate(v)).join(" | ") || "-";
+    } else if (/^BTD_Table 1$/i.test(`${table}_Table 1`)) {
+      equipment = parts[0] || "-";
+      exactNo = equipment;
+      description = parts[1] || "-";
+      remarks = parts.slice(2).filter(v => !parseHistoryDate(v)).join(" | ") || "-";
     } else {
-      const actionMatch = text.match(/(?:action(?: taken)?|new|replaced|fixed|attended|rectified)\s*[:|-]?\s*(.*)$/i);
-      if (actionMatch && actionMatch[1]) action = actionMatch[1].trim();
+      // For multi-column sheets (BSY/FART/LTP/BP/CH GRIDS), preserve the
+      // source record rather than inventing a job/action mapping.
+      const nonDates = parts.filter(v => !parseHistoryDate(v));
+      equipment = nonDates[0] || "-";
+      description = nonDates.slice(1).join(" | ") || "Source record";
+      remarks = "-";
     }
+
     return {
       no: index + 1,
-      equipmentNo: ids.equipmentNo,
-      itemNo: ids.itemNo,
-      sapNo: ids.sapNo,
-      catNo: ids.catNo,
-      drawingNo: ids.drawingNo,
-      date, equipment, description, action, remarks, source
+      equipmentNo: exactNo,
+      itemNo: null,
+      sapNo: null,
+      catNo: null,
+      drawingNo: null,
+      equipment,
+      date,
+      description,
+      action: "-",
+      remarks,
+      source
     };
   });
 }
+
 
 function buildHistoryTableText(records) {
   const rows = historyTableRows(records);
@@ -2103,7 +2283,7 @@ function buildHistoryTablePdf(title, fromDate, toDate, records) {
     if (pageIndex === 0) {
       content.push(`BT /F2 14 Tf ${left} ${y} Td (${safePdfText(title)}) Tj ET`);
       y -= 18;
-      content.push(`BT /F1 8 Tf ${left} ${y} Td (${safePdfText(`Period: ${formatHistoryDate(fromDate)} to ${formatHistoryDate(toDate)} | Total Records: ${rows.length}`)}) Tj ET`);
+      content.push(`BT /F1 8 Tf ${left} ${y} Td (${safePdfText(`${fromDate && toDate ? `Period: ${formatHistoryDate(fromDate)} to ${formatHistoryDate(toDate)}` : "Period: All available records"} | Total Records: ${rows.length}`)}) Tj ET`);
       y -= 18;
     }
 
@@ -2313,6 +2493,10 @@ async function processMasterDataQuery(from, text, user) {
   const lower = normalizeText(value);
   if (!MASTER_DATA) return false;
 
+  if (/^more$/i.test(value) && historyPageSessions.has(from)) {
+    return await sendNextHistoryPage(from);
+  }
+
   // Date-range history flow always takes priority over generic text handling.
   if (historySessions.has(from)) {
     return await processHistoryDateSession(from, value, user);
@@ -2337,9 +2521,33 @@ async function processMasterDataQuery(from, text, user) {
       return true;
     }
 
-    startHistoryDateSession(from, area);
-    await sendWhatsAppText(from, historyDatePrompt(historySessions.get(from)));
-    return true;
+    // A plain "BDM history" means the complete BDM history across all
+    // authorised BDM equipment. A specific equipment name filters only that
+    // equipment. Date range remains available through option 10 or by
+    // explicitly sending two dates.
+    const cleanedQuery = value
+      .replace(/\b(history|historical|records?|show|give|tell|please|all|jobs?)\b/gi, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    const dateMatches = [...value.matchAll(/\b(?:\d{4}[-\/]\d{1,2}[-\/]\d{1,2}|\d{1,2}[-\/.]\d{1,2}[-\/.]\d{4})\b/g)]
+      .map(m => parseHistoryDate(m[0])).filter(Boolean);
+
+    if (dateMatches.length >= 2) {
+      const fromDate = dateMatches[0] <= dateMatches[1] ? dateMatches[0] : dateMatches[1];
+      const toDate = dateMatches[0] <= dateMatches[1] ? dateMatches[1] : dateMatches[0];
+      return await sendHistoryDateRange(from, area, fromDate, toDate, user, cleanedQuery);
+    }
+
+    const records = searchMasterHistory(cleanedQuery, area);
+    if (!records.length) {
+      await sendWhatsAppText(from, cleanedQuery ? "Equipment/history match ledu." : "Maintenance history data ledu / confirm cheyyalenu.");
+      return true;
+    }
+
+    return await sendHistoryResults(from, area, records, user, {
+      queryLabel: cleanedQuery ? `Equipment filter: ${cleanedQuery}` : "ALL BDM EQUIPMENT"
+    });
   }
 
   if (/\b(defects?|failure|failures)\b/i.test(value)) {
