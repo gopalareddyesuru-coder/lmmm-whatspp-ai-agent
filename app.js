@@ -36,6 +36,7 @@ app.get('/health', (_req, res) => {
   });
 });
 
+// Meta webhook verification
 app.get('/webhook', (req, res) => {
   const mode = req.query['hub.mode'];
   const token = String(req.query['hub.verify_token'] ?? '').trim();
@@ -57,7 +58,46 @@ app.get('/webhook', (req, res) => {
   return res.status(403).send('Forbidden');
 });
 
+// Send WhatsApp text message
+async function sendWhatsAppText(to, text) {
+  if (!PHONE_NUMBER_ID || !ACCESS_TOKEN) {
+    console.error('[WHATSAPP SEND] Missing META_PHONE_NUMBER_ID or META_ACCESS_TOKEN');
+    return;
+  }
+
+  const url =
+    `https://graph.facebook.com/${GRAPH_VERSION}/${PHONE_NUMBER_ID}/messages`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${ACCESS_TOKEN}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to,
+      type: 'text',
+      text: {
+        body: text
+      }
+    })
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    console.error('[WHATSAPP SEND ERROR]', data);
+    return;
+  }
+
+  console.log('[WHATSAPP SENT]', JSON.stringify(data));
+}
+
+// Incoming WhatsApp messages
 app.post('/webhook', (req, res) => {
+  // Respond to Meta immediately
   res.sendStatus(200);
 
   try {
@@ -72,13 +112,26 @@ app.post('/webhook', (req, res) => {
       return;
     }
 
+    const from = message.from;
+    const type = message.type;
+    const text = message.text?.body || '';
+
     console.log('[MESSAGE]', {
-      from: message.from,
-      type: message.type,
-      text: message.text?.body || ''
+      from,
+      type,
+      text
     });
 
-    // AI/data-processing layer will be connected after webhook verification.
+    // First test reply only
+    if (type === 'text') {
+      sendWhatsAppText(
+        from,
+        'LMMM Maintenance AI Agent active. Mee maintenance query pampandi.'
+      ).catch(err => {
+        console.error('[SEND ERROR]', err);
+      });
+    }
+
   } catch (err) {
     console.error('[WEBHOOK ERROR]', err);
   }
@@ -88,7 +141,7 @@ app.get('/api/status', (_req, res) => {
   res.status(200).json({
     status: 'ready',
     webhook: '/webhook',
-    next: 'Verify Meta webhook and subscribe to messages.'
+    whatsapp_reply: 'enabled'
   });
 });
 
