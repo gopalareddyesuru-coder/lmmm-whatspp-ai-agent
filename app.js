@@ -278,19 +278,13 @@ const OWNER_NUMBERS = new Set(
 
 const REGISTRATION_MESSAGE = `LMMM Maintenance AI 👋
 
-Register in one message:
+Please send your registration details in one message:
+
 Name
 Employee No
 Designation
 Area
-Section
-
-Example:
-Gopala Reddy E
-123125
-Manager
-Bar Mill
-Mechanical`.trim();
+Section`.trim();
 
 function getMainMenu(user) {
   return `
@@ -1801,7 +1795,38 @@ function searchMasterHistory(query, requestedArea) {
   if (!MASTER_DATA?.history || !Array.isArray(MASTER_DATA.history)) return [];
 
   if (requestedArea === "BDM") {
-    let records = MASTER_DATA.history.filter(x => {
+    // Resolve grouped-sheet parent equipment BEFORE removing header rows.
+    // BP and CH GRIDS contain section headers (BP 1/BP 2 and GRID 1/2/3)
+    // whose context applies to following rows. The previous implementation
+    // removed headers first, so BP-1/BP-2 searches could not resolve.
+    const sourceRecords = MASTER_DATA.history.filter(x => {
+      const source = String(x.source || "");
+      return /^(?:CH SIDE HISTORY\.xlsx|WBF HISTORY 10-20\.xlsx)\s*\//i.test(source);
+    });
+
+    let bpContext = null;
+    let gridContext = null;
+    for (const record of sourceRecords) {
+      const text = String(record.text || "").replace(/\s+/g, " ").trim();
+      const upper = text.toUpperCase();
+      const bp = upper.match(/^BP\s*([12])\s*\|/);
+      if (bp) bpContext = `BP-${bp[1]}`;
+      const grid = upper.match(/^CHAR\.?\s*GRID\s*([123])\b/);
+      if (grid) gridContext = `CHARGING GRID-${grid[1]}`;
+
+      const table = historySourceTable(String(record.source || "")).toUpperCase();
+      if (table === "BP" && !isHistoryHeaderRecord(text) && !canonicalHistoryEquipment(record).match(/^BP-[12]$/)) {
+        record.__equipment = bpContext || "NA";
+      } else if (table === "BP") {
+        record.__equipment = bpContext || canonicalHistoryEquipment(record);
+      } else if (table === "CH GRIDS") {
+        record.__equipment = gridContext || canonicalHistoryEquipment(record);
+      } else {
+        record.__equipment = canonicalHistoryEquipment(record);
+      }
+    }
+
+    let records = sourceRecords.filter(x => !isHistoryHeaderRecord(String(x.text || "").trim()));
       const source = String(x.source || "");
       return /^(?:CH SIDE HISTORY\.xlsx|WBF HISTORY 10-20\.xlsx)\s*\//i.test(source);
     });
@@ -1814,8 +1839,8 @@ function searchMasterHistory(query, requestedArea) {
     // Elevator-1, Charging Grid-1, etc.). If it matches, return that complete
     // equipment history — not just rows whose text happens to contain the alias.
     const aliases = historyQueryAliases(q);
-    const equipmentFiltered = records.filter((x, idx) => {
-      const eq = normalizeHistoryEquipmentToken(canonicalHistoryEquipmentFromRecords(records, idx));
+    const equipmentFiltered = records.filter((x) => {
+      const eq = normalizeHistoryEquipmentToken(x.__equipment || canonicalHistoryEquipment(x));
       return aliases.some(a => a === eq || a === eq.replace(/\s+/g, " "));
     });
     if (equipmentFiltered.length) return equipmentFiltered;
@@ -1993,7 +2018,9 @@ async function sendHistoryResults(from, area, records, user, options = {}) {
   for (const r of rows) {
     const id = r.equipmentNo || r.itemNo || "NA";
     lines.push(`${r.no} | ${id} | ${r.equipment} | ${r.date}`);
-    lines.push(`   ${r.description}${r.remarks !== "-" ? ` | ${r.remarks}` : ""}`);
+    lines.push(`   Job: ${r.description}`);
+    if (r.remarks !== "-") lines.push(`   Remarks: ${r.remarks}`);
+    if (r.source) lines.push(`   Source: ${r.source}`);
   }
 
   if (records.length > pageSize) {
@@ -2158,6 +2185,7 @@ function normalizeHistoryEquipmentToken(value) {
  * shown only when the source record explicitly contains one.
  */
 function canonicalHistoryEquipment(record) {
+  if (record?.__equipment) return record.__equipment;
   const text = String(record?.text || "").replace(/\s+/g, " ").trim();
   const source = String(record?.source || "");
   const table = historySourceTable(source).toUpperCase();
@@ -2291,7 +2319,7 @@ function historyTableRows(records) {
     const table = historySourceTable(source).toUpperCase();
     const dates = extractHistoryDates(x).map(formatHistoryDate);
     const date = dates.length ? dates.join(", ") : "-";
-    const equipment = canonicalHistoryEquipmentFromRecords(records, index);
+    const equipment = x.__equipment || canonicalHistoryEquipmentFromRecords(records, index);
     let description = text || "-";
     let remarks = "-";
     let identifier = historyExplicitIdentifier(text);
@@ -2729,7 +2757,7 @@ async function processMasterDataQuery(from, text, user) {
 
     const records = searchMasterHistory(cleanedQuery, area);
     if (!records.length) {
-      await sendWhatsAppText(from, cleanedQuery ? "Equipment/history match ledu." : "Maintenance history data ledu / confirm cheyyalenu.");
+      await sendWhatsAppText(from, cleanedQuery ? "No matching maintenance history found." : "Maintenance history data is not available / cannot be confirmed.");
       return true;
     }
 
