@@ -709,7 +709,22 @@ async function processIncomingMessage(message) {
   }
 
   console.log("[INCOMING]", from, text);
+if (text.toLowerCase() === "reset registration") {
+  await pool.query(`
+    UPDATE users
+    SET name = NULL,
+        employee_number = NULL,
+        designation = NULL,
+        area_of_working = NULL,
+        section_department = NULL,
+        approval_status = 'pending',
+        updated_at = CURRENT_TIMESTAMP
+    WHERE whatsapp_number = $1
+  `, [from]);
 
+  await sendWhatsAppText(from, REGISTRATION_MESSAGE);
+  return;
+}
   let result;
 
   try {
