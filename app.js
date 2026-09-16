@@ -1772,7 +1772,15 @@ function searchMasterHistory(query, requestedArea) {
     records = records.filter(x => !isHistoryHeaderRecord(String(x.text || "").trim()));
 
     if (q) {
-      records = records.filter(x => normalizeText(`${x.text || ""} ${x.source || ""}`).includes(q));
+      const equipmentQuery = q;
+      const equipmentFiltered = records.filter(x => historyEquipmentMatchesQuery(x, equipmentQuery));
+      // If the query is an equipment alias/name, use canonical equipment mapping.
+      // Otherwise retain the source-text search for future history terms.
+      if (equipmentFiltered.length) {
+        records = equipmentFiltered;
+      } else {
+        records = records.filter(x => normalizeText(`${x.text || ""} ${x.source || ""}`).includes(q));
+      }
     }
 
     return records;
@@ -1940,7 +1948,7 @@ async function sendHistoryResults(from, area, records, user, options = {}) {
   ];
 
   for (const r of rows) {
-    const id = r.equipmentNo || r.itemNo || "—";
+    const id = r.equipmentNo || r.itemNo || "NA";
     lines.push(`${r.no} | ${id} | ${r.equipment} | ${r.date}`);
     lines.push(`   ${r.description}${r.remarks !== "-" ? ` | ${r.remarks}` : ""}`);
   }
@@ -2004,7 +2012,7 @@ async function sendNextHistoryPage(from) {
   ];
 
   for (const r of rows) {
-    const id = r.equipmentNo || r.itemNo || "—";
+    const id = r.equipmentNo || r.itemNo || "NA";
     lines.push(`${nextOffset + r.no} | ${id} | ${r.equipment} | ${r.date}`);
     lines.push(`   ${r.description}${r.remarks !== "-" ? ` | ${r.remarks}` : ""}`);
   }
@@ -2088,87 +2096,199 @@ function extractExplicitIdentifiers(text) {
   return { equipmentNo, itemNo, sapNo, catNo, drawingNo };
 }
 
+function normalizeHistoryEquipmentToken(value) {
+  return normalizeText(String(value || ""))
+    .replace(/[–—]/g, "-")
+    .replace(/\s*[-/]\s*/g, "-")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/*
+ * BDM HISTORY EQUIPMENT MAPPING
+ * -----------------------------
+ * Equipment column = equipment only. Sub-equipment / part names stay inside
+ * the job description. Specific names are used only when the source itself
+ * identifies the equipment (e.g. CHARGING GRID-1, BP-1, WBF-1).
+ *
+ * IMPORTANT: this mapping does NOT invent Equipment No / Item No. Those are
+ * shown only when the source record explicitly contains one.
+ */
+function canonicalHistoryEquipment(record) {
+  const text = String(record?.text || "").replace(/\s+/g, " ").trim();
+  const source = String(record?.source || "");
+  const table = historySourceTable(source).toUpperCase();
+  const upper = text.toUpperCase();
+
+  // Prefer the source table's equipment family before scanning the job text.
+  // This prevents a WBF/ECS reference mentioned inside a job description from
+  // changing the parent equipment incorrectly.
+  if (table === "WBF-1") return "WBF-1";
+  if (table === "WBF-2") return "WBF-2";
+  if (table === "ECS-1") return "ECS-1";
+  if (table === "ECS-2") return "ECS-2";
+
+  // Explicit equipment labels in other history sources.
+  const wbf = upper.match(/\bWBF\s*[- ]\s*([12])\b/);
+  if (wbf) return `WBF-${wbf[1]}`;
+  const ecs = upper.match(/\bECS\s*[- ]\s*([12])\b/);
+  if (ecs) return `ECS-${ecs[1]}`;
+
+  // CH SIDE equipment history: preserve the actual numbered equipment.
+  let m = upper.match(/\bCHARGING\s*GRID\s*[- ]?([123])\b/);
+  if (m) return `CHARGING GRID-${m[1]}`;
+  m = upper.match(/\b(?:CHAR\.?\s*GRID|CHARING\s*GRID)\s*[- ]?([123])\b/);
+  if (m) return `CHARGING GRID-${m[1]}`;
+  m = upper.match(/\bELEVATOR\s*[- ]?([12])\b/);
+  if (m) return `ELEVATOR-${m[1]}`;
+  m = upper.match(/\bLTP\s*[- ]?([12])\b/);
+  if (m) return `LTP-${m[1]}`;
+  m = upper.match(/\bBTD\s*[- ]?([12])\b/);
+  if (m) return `BTD-${m[1]}`;
+  m = upper.match(/\bBP\s*[- ]?([12])\b/);
+  if (m) return `BP-${m[1]}`;
+
+  // Source table establishes the equipment family where the row itself does
+  // not contain a part-level label. Never put the part/sub-equipment in the
+  // Equipment column.
+  if (table === "CH SIDE EQPMT") {
+    if (/F\/C\s*APPROACH\s*R\/?T|FURNACE\s*APPROACH\s*ROLLER\s*TABLE/.test(upper)) return "FART";
+    if (/BSY\s*ROLLER\s*TABLE/.test(upper)) return "BSY RT";
+    if (/BLOOM\s+TAKE\s+OFF\s+DEVICE/.test(upper)) return "BTD";
+    if (/MAJOR\s+PROBLEMS\s+IN\s+CHARGING/.test(upper)) return "NA";
+  }
+
+  if (table === "CH GRIDS") {
+    m = upper.match(/CHAR\.?\s*GRID\s*([123])\b/);
+    if (m) return `CHARGING GRID-${m[1]}`;
+    return "NA";
+  }
+
+  if (table === "BSY RT") return "BSY RT";
+  if (table === "ELEVATORS") return m = upper.match(/ELEVATOR\s*[- ]?([12])/)
+    ? `ELEVATOR-${m[1]}` : "NA";
+  if (table === "LTP") return m = upper.match(/LTP\s*[- ]?([12])/)
+    ? `LTP-${m[1]}` : "NA";
+  if (table === "BTD") return m = upper.match(/BTD\s*[- ]?([12])/)
+    ? `BTD-${m[1]}` : "NA";
+  if (table === "BP") return m = upper.match(/BP\s*[- ]?([12])/)
+    ? `BP-${m[1]}` : "NA";
+  if (table === "FART" || table === "FART AMR") return "FART";
+
+  if (["WHEEL", "PULLEY", "GBOX", "SPROCKET", "LINTEL", "SKIDS", "RECUIPRATOR", "CENTER SCREEN", "BRAKE"].includes(table)) {
+    if (wbf) return `WBF-${wbf[1]}`;
+    const wb = upper.match(/WALKING\s+BEAM\s+FURNACE\s*[- ]?([12])/);
+    if (wb) return `WBF-${wb[1]}`;
+    return "NA";
+  }
+
+  if (["TURBINE", "ECS PUMP", "ECS VALVES", "GAS LINE"].includes(table)) {
+    if (ecs) return `ECS-${ecs[1]}`;
+    return "NA";
+  }
+
+  return "NA";
+}
+
+function historyEquipmentMatchesQuery(record, query) {
+  const q = normalizeHistoryEquipmentToken(query);
+  if (!q) return true;
+  const equipment = normalizeHistoryEquipmentToken(canonicalHistoryEquipment(record));
+  const aliases = new Set([
+    q,
+    q.replace(/^ch[- ]?grid[- ]?/, "charging grid-"),
+    q.replace(/^cg[- ]?/, "charging grid-"),
+    q.replace(/^bp[- ]?/, "bp-"),
+    q.replace(/^elev[- ]?/, "elevator-"),
+    q.replace(/^bsyrt$/, "bsy rt"),
+    q.replace(/^fart$/, "fart")
+  ]);
+  if (aliases.has(equipment)) return true;
+  return aliases.some(a => equipment.includes(a));
+}
+
+function historyExplicitIdentifier(text) {
+  const ids = extractExplicitIdentifiers(text);
+  return ids.equipmentNo || ids.itemNo || null;
+}
+
+function parseHistoryParts(record) {
+  const text = String(record?.text || "").replace(/\s+/g, " ").trim();
+  const parts = text.split("|").map(v => v.trim());
+  const nonEmpty = parts.filter(Boolean);
+  return { text, parts, nonEmpty };
+}
+
 function historyTableRows(records) {
   return records.map((x, index) => {
-    const text = String(x.text || "").replace(/\s+/g, " ").trim();
+    const { text, parts, nonEmpty } = parseHistoryParts(x);
     const source = String(x.source || "History").replace(/\s+/g, " ").trim();
-    const table = historySourceTable(source);
-    const parts = text.split("|").map(v => v.trim()).filter(Boolean);
+    const table = historySourceTable(source).toUpperCase();
     const dates = extractHistoryDates(x).map(formatHistoryDate);
     const date = dates.length ? dates.join(", ") : "-";
-
-    let equipment = "-";
-    let description = text;
+    const equipment = canonicalHistoryEquipment(x);
+    let description = text || "-";
     let remarks = "-";
-    let exactNo = null;
+    let identifier = historyExplicitIdentifier(text);
 
-    // Parse the well-defined job-history sheets by their source column order.
-    if (/^(WBF-1|WBF-2|ECS-1|ECS-2|BRAKE|CENTER SCREEN|GBOX|LINTEL|SPROCKET)_Table 1$/i.test(`${table}_Table 1`)) {
+    // Standard job-history sheets: preserve source column meaning.
+    if (["WBF-1", "WBF-2", "BRAKE", "CENTER SCREEN", "GBOX", "LINTEL", "SPROCKET", "TURBINE"].includes(table)) {
       const dateIndex = parts.findIndex(v => parseHistoryDate(v));
-      const before = dateIndex >= 0 ? parts.slice(0, dateIndex) : parts;
       const after = dateIndex >= 0 ? parts.slice(dateIndex + 1) : [];
-      if (before.length && /^\d+$/.test(before[0])) before.shift();
-      equipment = before[0] || "-";
-      exactNo = equipment !== "-" && /^(WBF-\d|ECS-\d)$/i.test(equipment) ? equipment : null;
-      description = after[0] || before[1] || "-";
-      remarks = after.slice(1).filter(v => !parseHistoryDate(v)).join(" | ") || "-";
-    } else if (/^ECS PUMP_Table 1$/i.test(`${table}_Table 1`)) {
+      // WBF/WHEEL-style source rows are SNO | DATE | EQPT | JOB | REMARKS | TAG
+      description = after[1] || after[0] || "-";
+      remarks = after.slice(2).filter(v => !parseHistoryDate(v)).join(" | ") || "-";
+    } else if (["ECS-1", "ECS-2"].includes(table)) {
       const dateIndex = parts.findIndex(v => parseHistoryDate(v));
-      const before = dateIndex >= 0 ? parts.slice(0, dateIndex) : parts;
       const after = dateIndex >= 0 ? parts.slice(dateIndex + 1) : [];
-      if (before.length && /^\d+$/.test(before[0])) before.shift();
-      equipment = before[0] || "-";
-      exactNo = /^(ECS-\d)$/i.test(equipment) ? equipment : null;
-      description = before[1] || "-";
+      // ECS rows use SNO | DATE | EQPT | JOB | REMARKS | TAG.
+      description = after[1] || after[0] || "-";
+      remarks = after.slice(2).filter(v => !parseHistoryDate(v)).join(" | ") || "-";
+    } else if (["ECS PUMP", "ECS VALVES"].includes(table)) {
+      const dateIndex = parts.findIndex(v => parseHistoryDate(v));
+      const before = dateIndex >= 0 ? parts.slice(0, dateIndex) : parts.slice();
+      const after = dateIndex >= 0 ? parts.slice(dateIndex + 1) : [];
+      // These sources use SNO | EQPT | JOB | DATE | REMARKS | TAG.
+      description = before[2] || before[1] || "-";
       remarks = after.filter(v => !parseHistoryDate(v)).join(" | ") || "-";
-    } else if (/^(WHEEL|PULLEY|RECUIPRATOR)_Table 1$/i.test(`${table}_Table 1`)) {
+    } else if (table === "GAS LINE") {
       const dateIndex = parts.findIndex(v => parseHistoryDate(v));
-      const before = dateIndex >= 0 ? parts.slice(0, dateIndex) : parts;
+      const before = dateIndex >= 0 ? parts.slice(0, dateIndex) : parts.slice();
+      description = before[2] || before[1] || "-";
+      remarks = before.slice(3).filter(v => !parseHistoryDate(v)).join(" | ") || "-";
+    } else if (["WHEEL", "PULLEY", "RECUIPRATOR", "SKIDS"].includes(table)) {
+      const dateIndex = parts.findIndex(v => parseHistoryDate(v));
+      const before = dateIndex >= 0 ? parts.slice(0, dateIndex) : parts.slice();
       const after = dateIndex >= 0 ? parts.slice(dateIndex + 1) : [];
       if (before.length && /^\d+$/.test(before[0])) before.shift();
-      equipment = before[0] || "-";
-      exactNo = /^(WBF-\d|ECS-\d)$/i.test(equipment) ? equipment : null;
       description = before.slice(1).join(" | ") || "-";
       remarks = after.filter(v => !parseHistoryDate(v)).join(" | ") || "-";
-    } else if (/^ECS VALVES_Table 1$/i.test(`${table}_Table 1`)) {
+    } else if (table === "CH SIDE EQPMT") {
       const dateIndex = parts.findIndex(v => parseHistoryDate(v));
-      const before = dateIndex >= 0 ? parts.slice(0, dateIndex) : parts;
       const after = dateIndex >= 0 ? parts.slice(dateIndex + 1) : [];
+      const before = dateIndex >= 0 ? parts.slice(0, dateIndex) : parts.slice();
       if (before.length && /^\d+$/.test(before[0])) before.shift();
-      equipment = before[0] || "-";
-      exactNo = /^(ECS-\d)$/i.test(equipment) ? equipment : null;
-      description = before.slice(1).join(" | ") || "-";
-      remarks = after.filter(v => !parseHistoryDate(v)).join(" | ") || "-";
-    } else if (/^CH SIDE EQPMT_Table 1$/i.test(`${table}_Table 1`)) {
-      const dateIndex = parts.findIndex(v => parseHistoryDate(v));
-      const before = dateIndex >= 0 ? parts.slice(0, dateIndex) : parts;
-      const after = dateIndex >= 0 ? parts.slice(dateIndex + 1) : [];
-      if (before.length && /^\d+$/.test(before[0])) before.shift();
-      equipment = "CHARGING GRIDS";
-      description = after[0] || before.join(" | ") || "-";
+      description = before.slice(1).join(" | ") || after[0] || before.join(" | ") || "-";
       remarks = after.slice(1).filter(v => !parseHistoryDate(v)).join(" | ") || "-";
-    } else if (/^ELEVATORS_Table 1$/i.test(`${table}_Table 1`)) {
-      equipment = parts[0] || "-";
-      exactNo = equipment;
-      description = parts[1] || "-";
-      remarks = parts.slice(2).filter(v => !parseHistoryDate(v)).join(" | ") || "-";
-    } else if (/^BTD_Table 1$/i.test(`${table}_Table 1`)) {
-      equipment = parts[0] || "-";
-      exactNo = equipment;
-      description = parts[1] || "-";
-      remarks = parts.slice(2).filter(v => !parseHistoryDate(v)).join(" | ") || "-";
+    } else if (["ELEVATORS", "BTD", "LTP", "BP"].includes(table)) {
+      description = nonEmpty.slice(1).filter(v => !parseHistoryDate(v)).join(" | ") || "Source record";
+    } else if (table === "CH GRIDS") {
+      description = nonEmpty.filter(v => !/^CHAR\.?\s*GRID\s*[123]$/i.test(v)).join(" | ") || "Source record";
+    } else if (table === "BSY RT") {
+      description = nonEmpty.filter(v => !/^\d+$/.test(v) && !parseHistoryDate(v)).join(" | ") || "Source record";
+    } else if (table === "FART" || table === "FART AMR") {
+      description = nonEmpty.filter(v => !/^\d+$/.test(v) && !parseHistoryDate(v)).join(" | ") || "Source record";
     } else {
-      // For multi-column sheets (BSY/FART/LTP/BP/CH GRIDS), preserve the
-      // source record rather than inventing a job/action mapping.
-      const nonDates = parts.filter(v => !parseHistoryDate(v));
-      equipment = nonDates[0] || "-";
-      description = nonDates.slice(1).join(" | ") || "Source record";
-      remarks = "-";
+      description = nonEmpty.filter(v => !parseHistoryDate(v)).join(" | ") || "Source record";
     }
+
+
+    // Explicit identifiers only. No source number => NA.
+    if (!identifier) identifier = null;
 
     return {
       no: index + 1,
-      equipmentNo: exactNo,
+      equipmentNo: identifier,
       itemNo: null,
       sapNo: null,
       catNo: null,
@@ -2193,7 +2313,7 @@ function buildHistoryTableText(records) {
     "─────┼──────────────┼──────────────────┼────────────┼────────────────────────"
   ];
   for (const r of rows) {
-    const exactNo = r.equipmentNo || r.itemNo || r.sapNo || "—";
+    const exactNo = r.equipmentNo || r.itemNo || r.sapNo || "NA";
     const desc = `${r.description}${r.action && r.action !== "-" ? ` | ${r.action}` : ""}`;
     out.push(`${String(r.no).padEnd(4)} | ${String(exactNo).slice(0,12).padEnd(12)} | ${String(r.equipment).slice(0,16).padEnd(16)} | ${String(r.date).padEnd(10)} | ${desc.slice(0,48)}`);
   }
@@ -2526,7 +2646,7 @@ async function processMasterDataQuery(from, text, user) {
     // equipment. Date range remains available through option 10 or by
     // explicitly sending two dates.
     const cleanedQuery = value
-      .replace(/\b(history|historical|records?|show|give|tell|please|all|jobs?)\b/gi, " ")
+      .replace(/\b(history|historical|records?|show|give|tell|please|all|jobs?|bdm)\b/gi, " ")
       .replace(/\s+/g, " ")
       .trim();
 
