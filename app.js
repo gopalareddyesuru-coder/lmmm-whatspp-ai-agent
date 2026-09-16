@@ -1,6 +1,37 @@
 import express from 'express';
 import 'dotenv/config';
+import pg from 'pg';
+const { Pool } = pg;
 
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: {
+    rejectUnauthorized: false
+  }
+});
+async function initializeDatabase() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id BIGSERIAL PRIMARY KEY,
+      whatsapp_number VARCHAR(20) UNIQUE NOT NULL,
+      name TEXT,
+      employee_number VARCHAR(50) UNIQUE,
+      designation TEXT,
+      area_of_working TEXT,
+      section_department TEXT,
+      system_role TEXT DEFAULT 'pending',
+      approval_status TEXT DEFAULT 'pending',
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+
+  console.log('[DATABASE] Users table ready');
+}
+
+initializeDatabase().catch(err => {
+  console.error('[DATABASE ERROR]', err);
+});
 const app = express();
 app.use(express.json({ limit: '20mb' }));
 
