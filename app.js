@@ -217,7 +217,10 @@ async function initializeDatabase() {
   `);
 
   // Safe migrations for an already-created maintenance_submissions table.
+  // These columns are required by the scope-aware submission layer.
   const maintenanceColumns = [
+    ["user_area", "TEXT"],
+    ["user_section", "TEXT"],
     ["module_hint", "TEXT"],
     ["equipment_name", "TEXT"],
     ["sub_equipment", "TEXT"],
