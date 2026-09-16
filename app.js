@@ -2147,8 +2147,16 @@ async function processIncomingMessage(message) {
 
   if (user.approval_status === "approved") {
     if (isGreeting(text)) {
-      await sendWhatsAppText(from, `Approved ✓\nSend maintenance details directly.`);;
+      await sendWhatsAppText(from, `Approved ✓\nSend maintenance details directly.`);
       return;
+    }
+
+    // Search the imported LMMM master data BEFORE falling back to generic
+    // maintenance submission. This ensures queries such as "BDM history"
+    // are answered from source data instead of being saved as a new entry.
+    if (message.type === "text") {
+      const handledByMasterData = await processMasterDataQuery(from, text, user);
+      if (handledByMasterData) return;
     }
 
     const media = message[message.type] || {};
@@ -2266,10 +2274,4 @@ async function startServer() {
         console.error("[MASTER DATA] Unexpected load error:", error);
       });
     });
-  } catch (error) {
-    console.error("[STARTUP ERROR]", error);
-    process.exit(1);
-  }
-}
-
-startServer();
+  } catch (err
