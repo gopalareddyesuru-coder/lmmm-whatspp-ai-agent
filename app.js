@@ -1751,48 +1751,91 @@ function isHistoryHeaderRecord(text) {
   return false;
 }
 
+function normalizeHistoryQuery(value) {
+  return normalizeHistoryEquipmentToken(String(value || ""))
+    .replace(/\b(?:history|historical|records?|show|give|tell|please|all|jobs?)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function historyQueryAliases(query) {
+  const q = normalizeHistoryEquipmentToken(query);
+  const aliases = new Set([q]);
+  const add = (v) => { if (v) aliases.add(normalizeHistoryEquipmentToken(v)); };
+
+  // Equipment shortcuts and full names. These are aliases only; they never
+  // create or change an authenticated Equipment No / Item No.
+  if (/^(?:bp|bloom\s*pusher)(?:\s*[- ]?([12]))?$/.test(q)) {
+    const n = q.match(/([12])$/)?.[1];
+    if (n) { add(`BP-${n}`); add(`bloom pusher-${n}`); }
+    else { add("bp-1"); add("bp-2"); add("bloom pusher"); }
+  }
+  if (/^(?:elev|elevator)(?:\s*[- ]?([12]))?$/.test(q)) {
+    const n = q.match(/([12])$/)?.[1];
+    if (n) { add(`ELEVATOR-${n}`); add(`inclined elevator ${n}`); }
+    else { add("elevator-1"); add("elevator-2"); }
+  }
+  if (/^(?:cg|ch\s*grid|char\.?\s*grid|charing\s*grid|charging\s*grid)(?:\s*[- ]?([123]))?$/.test(q)) {
+    const n = q.match(/([123])$/)?.[1];
+    if (n) { add(`CHARGING GRID-${n}`); add(`char. grid ${n}`); add(`charing grid ${n}`); }
+    else { add("charging grid-1"); add("charging grid-2"); add("charging grid-3"); }
+  }
+  if (/^bsy(?:\s*rt|\s*roller\s*table)?$/.test(q)) { add("bsy rt"); add("bsy roller table"); }
+  if (/^(?:fart|furnace\s*approach\s*roller\s*table)$/.test(q)) { add("fart"); add("furnace approach roller table"); }
+  if (/^(?:wbf|walking\s*beam\s*furnace)(?:\s*[- ]?([12]))?$/.test(q)) {
+    const n = q.match(/([12])$/)?.[1];
+    if (n) add(`wbf-${n}`); else { add("wbf-1"); add("wbf-2"); }
+  }
+  if (/^(?:ecs|evaporative\s*cooling\s*system)(?:\s*[- ]?([12]))?$/.test(q)) {
+    const n = q.match(/([12])$/)?.[1];
+    if (n) add(`ecs-${n}`); else { add("ecs-1"); add("ecs-2"); }
+  }
+  return [...aliases].filter(Boolean);
+}
+
+function historyRecordSearchText(record) {
+  return normalizeText(`${record?.text || ""} ${record?.source || ""}`);
+}
+
 function searchMasterHistory(query, requestedArea) {
   if (!MASTER_DATA?.history || !Array.isArray(MASTER_DATA.history)) return [];
 
-  // BDM history is the complete combination of the two authorised
-  // BDM history source families. Never reduce BDM to CH SIDE only.
   if (requestedArea === "BDM") {
-    const q = normalizeText(query)
-      .replace(/\b(?:bdm|bar\s*mill|barmill|finishing|hydraulics|cranes?|auxiliary|history|historical|records?|show|give|tell|please|all|jobs?)\b/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-
     let records = MASTER_DATA.history.filter(x => {
       const source = String(x.source || "");
       return /^(?:CH SIDE HISTORY\.xlsx|WBF HISTORY 10-20\.xlsx)\s*\//i.test(source);
     });
-
-    // Remove header/blank rows from result sets. They remain in the source
-    // data but are not maintenance-history events.
     records = records.filter(x => !isHistoryHeaderRecord(String(x.text || "").trim()));
 
-    if (q) {
-      const equipmentQuery = q;
-      const equipmentFiltered = records.filter(x => historyEquipmentMatchesQuery(x, equipmentQuery));
-      // If the query is an equipment alias/name, use canonical equipment mapping.
-      // Otherwise retain the source-text search for future history terms.
-      if (equipmentFiltered.length) {
-        records = equipmentFiltered;
-      } else {
-        records = records.filter(x => normalizeText(`${x.text || ""} ${x.source || ""}`).includes(q));
-      }
-    }
+    const q = normalizeHistoryQuery(query);
+    if (!q) return records;
 
-    return records;
+    // First try canonical equipment matching (BP-1, Bloom Pusher-1,
+    // Elevator-1, Charging Grid-1, etc.). If it matches, return that complete
+    // equipment history — not just rows whose text happens to contain the alias.
+    const aliases = historyQueryAliases(q);
+    const equipmentFiltered = records.filter((x, idx) => {
+      const eq = normalizeHistoryEquipmentToken(canonicalHistoryEquipmentFromRecords(records, idx));
+      return aliases.some(a => a === eq || a === eq.replace(/\s+/g, " "));
+    });
+    if (equipmentFiltered.length) return equipmentFiltered;
+
+    // Otherwise treat the user's input as a maintenance keyword/search phrase.
+    // ALL terms must be present, so "gearbox damage" finds records containing
+    // both words. This searches job/action/remarks/source without truncating
+    // the underlying source record.
+    const terms = q.split(/\s+/).filter(Boolean);
+    return records.filter(x => {
+      const haystack = historyRecordSearchText(x);
+      return terms.every(term => haystack.includes(term));
+    });
   }
 
   // There is no trusted imported history-source mapping for Bar Mill or
   // Finishing. Do not guess or leak another area's history.
   if (requestedArea === "Finishing" || requestedArea === "Bar Mill") return [];
-
   return [];
 }
-
 
 
 /* =========================================================
@@ -2190,21 +2233,43 @@ function canonicalHistoryEquipment(record) {
   return "NA";
 }
 
+function canonicalHistoryEquipmentFromRecords(records, index) {
+  const record = records[index];
+  const table = historySourceTable(String(record?.source || "")).toUpperCase();
+
+  // BP source is a grouped sheet: "BP 1 | ..." starts a section and the
+  // following rows belong to that BP until "BP 2 | ..." starts.
+  if (table === "BP") {
+    let current = null;
+    for (let i = 0; i <= index; i++) {
+      const text = String(records[i]?.text || "").replace(/\s+/g, " ").trim();
+      const m = text.toUpperCase().match(/^BP\s*([12])\s*\|/);
+      if (m) current = `BP-${m[1]}`;
+    }
+    return current || canonicalHistoryEquipment(record);
+  }
+
+  // CH GRIDS is also a grouped source: after CHAR. GRID 1/2/3, the following
+  // date/part rows belong to that grid until the next grid heading appears.
+  if (table === "CH GRIDS") {
+    let current = null;
+    for (let i = 0; i <= index; i++) {
+      const text = String(records[i]?.text || "").replace(/\s+/g, " ").trim();
+      const m = text.toUpperCase().match(/^CHAR\.?\s*GRID\s*([123])\b/);
+      if (m) current = `CHARGING GRID-${m[1]}`;
+    }
+    return current || canonicalHistoryEquipment(record);
+  }
+
+  return canonicalHistoryEquipment(record);
+}
+
 function historyEquipmentMatchesQuery(record, query) {
   const q = normalizeHistoryEquipmentToken(query);
   if (!q) return true;
   const equipment = normalizeHistoryEquipmentToken(canonicalHistoryEquipment(record));
-  const aliases = new Set([
-    q,
-    q.replace(/^ch[- ]?grid[- ]?/, "charging grid-"),
-    q.replace(/^cg[- ]?/, "charging grid-"),
-    q.replace(/^bp[- ]?/, "bp-"),
-    q.replace(/^elev[- ]?/, "elevator-"),
-    q.replace(/^bsyrt$/, "bsy rt"),
-    q.replace(/^fart$/, "fart")
-  ]);
-  if (aliases.has(equipment)) return true;
-  return aliases.some(a => equipment.includes(a));
+  const aliases = historyQueryAliases(q);
+  return aliases.some(a => a === equipment || equipment.includes(a) || a.includes(equipment));
 }
 
 function historyExplicitIdentifier(text) {
@@ -2226,7 +2291,7 @@ function historyTableRows(records) {
     const table = historySourceTable(source).toUpperCase();
     const dates = extractHistoryDates(x).map(formatHistoryDate);
     const date = dates.length ? dates.join(", ") : "-";
-    const equipment = canonicalHistoryEquipment(x);
+    const equipment = canonicalHistoryEquipmentFromRecords(records, index);
     let description = text || "-";
     let remarks = "-";
     let identifier = historyExplicitIdentifier(text);
@@ -2271,7 +2336,10 @@ function historyTableRows(records) {
       description = before.slice(1).join(" | ") || after[0] || before.join(" | ") || "-";
       remarks = after.slice(1).filter(v => !parseHistoryDate(v)).join(" | ") || "-";
     } else if (["ELEVATORS", "BTD", "LTP", "BP"].includes(table)) {
-      description = nonEmpty.slice(1).filter(v => !parseHistoryDate(v)).join(" | ") || "Source record";
+      // These sheets are grouped equipment/sub-equipment history tables.
+      // Keep the complete source row as description; never promote SUB/PART
+      // values into the Equipment column.
+      description = nonEmpty.filter(v => !parseHistoryDate(v)).join(" | ") || "Source record";
     } else if (table === "CH GRIDS") {
       description = nonEmpty.filter(v => !/^CHAR\.?\s*GRID\s*[123]$/i.test(v)).join(" | ") || "Source record";
     } else if (table === "BSY RT") {
