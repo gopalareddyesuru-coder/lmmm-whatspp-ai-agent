@@ -133,7 +133,6 @@ async function sendWhatsAppText(to, text) {
 const REGISTRATION_MESSAGE = `
 Welcome to LMMM Maintenance AI Agent 👋
 
-Welcome to the LMMM Mechanical Maintenance digital assistant.
 
 To get started, please enter your details:
 
@@ -142,10 +141,6 @@ To get started, please enter your details:
 3. Designation
 4. Area of Working
 5. Section / Department
-
-Your WhatsApp number will be captured automatically.
-
-Please enter your Name to continue.
 `.trim();
 
 // Main menu - authority based menu will be added later
