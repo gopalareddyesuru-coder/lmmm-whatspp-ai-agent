@@ -20,6 +20,10 @@ let MASTER_DATA_STATUS = {
   error: null
 };
 
+// History date-range sessions. WhatsApp user must select From/To dates
+// before any history records are returned.
+const historySessions = new Map();
+
 async function loadMasterData() {
   try {
     const raw = await fs.readFile(MASTER_DATA_PATH, "utf8");
@@ -1753,9 +1757,173 @@ function searchMasterHistory(query, requestedArea) {
     records = records.filter(x => normalizeText(formatHistoryRecord(x)).includes(q));
   }
 
-  return records.slice(0, 12);
+  return records;
 }
 
+
+/* =========================================================
+   HISTORY DATE RANGE
+========================================================= */
+
+function parseHistoryDate(value) {
+  const text = String(value || "").trim();
+
+  // ISO: YYYY-MM-DD
+  let m = text.match(/^(\d{4})[-\/]?(\d{2})[-\/]?(\d{2})$/);
+  if (m) {
+    const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+    if (d.getUTCFullYear() === Number(m[1]) &&
+        d.getUTCMonth() === Number(m[2]) - 1 &&
+        d.getUTCDate() === Number(m[3])) return d;
+  }
+
+  // Indian/common: DD-MM-YYYY or DD/MM/YYYY
+  m = text.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})$/);
+  if (m) {
+    const d = new Date(Date.UTC(Number(m[3]), Number(m[2]) - 1, Number(m[1])));
+    if (d.getUTCFullYear() === Number(m[3]) &&
+        d.getUTCMonth() === Number(m[2]) - 1 &&
+        d.getUTCDate() === Number(m[1])) return d;
+  }
+
+  return null;
+}
+
+function formatHistoryDate(date) {
+  if (!date) return "—";
+  return `${String(date.getUTCDate()).padStart(2, "0")}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${date.getUTCFullYear()}`;
+}
+
+function extractHistoryDate(record) {
+  const text = String(record?.text || "");
+
+  const iso = text.match(/\b\d{4}[-\/]\d{2}[-\/]\d{2}\b/);
+  if (iso) return parseHistoryDate(iso[0]);
+
+  const dmy = text.match(/\b\d{1,2}[-\/]\d{1,2}[-\/]\d{4}\b/);
+  if (dmy) return parseHistoryDate(dmy[0]);
+
+  return null;
+}
+
+function startHistoryDateSession(from, area) {
+  historySessions.set(from, {
+    area,
+    step: "FROM_DATE",
+    fromDate: null,
+    toDate: null
+  });
+}
+
+function historyDatePrompt(session) {
+  if (session.step === "FROM_DATE") {
+    return `MAINTENANCE HISTORY – ${session.area}\n\nFrom date:\nDD-MM-YYYY`;
+  }
+
+  return `MAINTENANCE HISTORY – ${session.area}\n\nFrom date: ${formatHistoryDate(session.fromDate)} ✓\n\nTo date:\nDD-MM-YYYY`;
+}
+
+async function processHistoryDateSession(from, text, user) {
+  const session = historySessions.get(from);
+  if (!session) return false;
+
+  const value = String(text || "").trim();
+  const parsed = parseHistoryDate(value);
+
+  if (!parsed) {
+    await sendWhatsAppText(from, "Invalid date.\n\nPlease use DD-MM-YYYY.");
+    return true;
+  }
+
+  if (session.step === "FROM_DATE") {
+    session.fromDate = parsed;
+    session.step = "TO_DATE";
+    await sendWhatsAppText(from, historyDatePrompt(session));
+    return true;
+  }
+
+  if (parsed < session.fromDate) {
+    await sendWhatsAppText(from, "To date cannot be before From date.");
+    return true;
+  }
+
+  session.toDate = parsed;
+  historySessions.delete(from);
+
+  await sendWhatsAppText(
+    from,
+    `Searching ${session.area} history...\n${formatHistoryDate(session.fromDate)} → ${formatHistoryDate(session.toDate)}`
+  );
+
+  return await sendHistoryDateRange(from, session.area, session.fromDate, session.toDate, user);
+}
+
+async function sendHistoryDateRange(from, area, fromDate, toDate, user) {
+  const allRecords = searchMasterHistory(area, area);
+
+  const filtered = allRecords
+    .map(record => ({ record, date: extractHistoryDate(record) }))
+    .filter(x => x.date && x.date >= fromDate && x.date <= toDate)
+    .sort((a, b) => b.date.getTime() - a.date.getTime())
+    .map(x => x.record);
+
+  if (!filtered.length) {
+    await sendWhatsAppText(
+      from,
+      `MAINTENANCE HISTORY – ${area}\n\n${formatHistoryDate(fromDate)} → ${formatHistoryDate(toDate)}\n\nNo maintenance history found for the selected date range.`
+    );
+    return true;
+  }
+
+  // WhatsApp: latest 10 only.
+  const latest10 = filtered.slice(0, 10);
+  const rows = historyTableRows(latest10);
+
+  const lines = [
+    `MAINTENANCE HISTORY – ${area}`,
+    `${formatHistoryDate(fromDate)} → ${formatHistoryDate(toDate)}`,
+    "",
+    "Latest 10 Jobs:",
+    ""
+  ];
+
+  for (const r of rows) {
+    const exactId = r.equipmentNo || r.itemNo || r.sapNo || "—";
+    const job = [r.description, r.action !== "-" ? r.action : ""]
+      .filter(Boolean)
+      .join(" | ")
+      .replace(/\s+/g, " ")
+      .trim();
+    lines.push(`${r.no} | ${exactId} | ${r.equipment} | ${r.date} | ${job}`);
+  }
+
+  lines.push("", `Total Records: ${filtered.length}`);
+
+  await sendWhatsAppText(from, lines.join("\n"));
+
+  // PDF: complete date-range result, subject to export permission.
+  if (isSuperAdmin(from) || hasPermission(user, "print_export")) {
+    const pdf = buildHistoryTablePdf(
+      `LMMM ${area} Maintenance History`,
+      fromDate,
+      toDate,
+      filtered
+    );
+
+    const filename = `LMMM_${area.replace(/[^A-Za-z0-9]+/g, "_")}_History_${formatHistoryDate(fromDate)}_to_${formatHistoryDate(toDate)}.pdf`;
+
+    const sent = await uploadWhatsAppPdf(
+      from,
+      pdf,
+      filename,
+      `Full ${area} history: ${formatHistoryDate(fromDate)} to ${formatHistoryDate(toDate)}`
+    );
+
+    if (!sent) console.error("[PDF] Could not send date-range history PDF");
+  }
+
+  return true;
+}
 
 /* =========================================================
    PDF / TABLE OUTPUT
@@ -1852,6 +2020,150 @@ function buildHistoryTableText(records) {
   out.push("", `Showing ${rows.length} record(s).`);
   out.push("Identifier rule: numbers shown only from authorised source records; no AI-generated numbering.");
   return out.join("\n");
+}
+
+function buildHistoryTablePdf(title, fromDate, toDate, records) {
+  const rows = historyTableRows(records);
+  const pageWidth = 842;
+  const pageHeight = 595;
+  const left = 24;
+  const right = 24;
+  const top = 548;
+  const bottom = 28;
+  const headerH = 28;
+  const lineH = 9;
+  const fontSize = 6.2;
+
+  const columns = [
+    ["S.No", 30],
+    ["Equipment No / Item No", 92],
+    ["Equipment", 105],
+    ["Date", 62],
+    ["Job Description / Action", 315],
+    ["Remarks", 135],
+    ["Source", 75]
+  ];
+
+  const usableWidth = pageWidth - left - right;
+  const totalWidth = columns.reduce((a, c) => a + c[1], 0);
+  const scale = usableWidth / totalWidth;
+  columns.forEach(c => c[1] = Math.floor(c[1] * scale));
+
+  function wrap(text, chars) {
+    const words = String(text ?? "—").split(/\s+/).filter(Boolean);
+    const out = [];
+    let line = "";
+    for (const word of words) {
+      const next = line ? `${line} ${word}` : word;
+      if (next.length > chars && line) {
+        out.push(line);
+        line = word;
+      } else line = next;
+    }
+    if (line || !out.length) out.push(line || "—");
+    return out;
+  }
+
+  function rowLines(r) {
+    const exactId = r.equipmentNo || r.itemNo || r.sapNo || "Not available in source";
+    const job = [r.description, r.action !== "-" ? r.action : ""]
+      .filter(Boolean).join(" | ");
+    const vals = [r.no, exactId, r.equipment, r.date, job, r.remarks, r.source];
+    return vals.map((v, i) => wrap(v, Math.max(8, Math.floor(columns[i][1] / 3.2))));
+  }
+
+  const pages = [];
+  let pageRows = [];
+  let used = headerH;
+  const maxBody = top - bottom;
+
+  for (const r of rows) {
+    const cells = rowLines(r);
+    const h = Math.max(...cells.map(x => x.length)) * lineH + 6;
+    if (used + h > maxBody && pageRows.length) {
+      pages.push(pageRows);
+      pageRows = [];
+      used = headerH;
+    }
+    pageRows.push({ r, cells, h });
+    used += h;
+  }
+  if (pageRows.length || !pages.length) pages.push(pageRows);
+
+  const objects = [];
+  const fontRegular = objects.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
+  const fontBold = objects.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>");
+
+  const pageObjectNumbers = [];
+
+  for (let pageIndex = 0; pageIndex < pages.length; pageIndex++) {
+    const content = [];
+    let y = top;
+
+    if (pageIndex === 0) {
+      content.push(`BT /F2 14 Tf ${left} ${y} Td (${safePdfText(title)}) Tj ET`);
+      y -= 18;
+      content.push(`BT /F1 8 Tf ${left} ${y} Td (${safePdfText(`Period: ${formatHistoryDate(fromDate)} to ${formatHistoryDate(toDate)} | Total Records: ${rows.length}`)}) Tj ET`);
+      y -= 18;
+    }
+
+    // Header
+    let x = left;
+    columns.forEach(([label, width]) => {
+      content.push(`q 0.85 G ${x} ${y-headerH+4} ${width} ${headerH} re S Q`);
+      content.push(`BT /F2 6.2 Tf ${x+3} ${y-10} Td (${safePdfText(label)}) Tj ET`);
+      x += width;
+    });
+    y -= headerH;
+
+    for (const item of pages[pageIndex]) {
+      let x0 = left;
+      const rowY = y - item.h;
+      for (let i = 0; i < columns.length; i++) {
+        const width = columns[i][1];
+        content.push(`q 0.85 G ${x0} ${rowY} ${width} ${item.h} re S Q`);
+        const lines = item.cells[i];
+        let ly = y - 10;
+        for (const line of lines) {
+          content.push(`BT /F1 ${fontSize} Tf ${x0+3} ${ly} Td (${safePdfText(line)}) Tj ET`);
+          ly -= lineH;
+        }
+        x0 += width;
+      }
+      y = rowY;
+    }
+
+    const stream = content.join("\n");
+    const contentObject = objects.length + 1;
+    objects.push(`<< /Length ${Buffer.byteLength(stream, "latin1")} >>\nstream\n${stream}\nendstream`);
+    const pageObject = objects.length + 1;
+    objects.push(`<< /Type /Page /MediaBox [0 0 ${pageWidth} ${pageHeight}] /Resources << /Font << /F1 ${fontRegular} 0 R /F2 ${fontBold} 0 R >> >> /Contents ${contentObject} 0 R >>`);
+    pageObjectNumbers.push(pageObject);
+  }
+
+  const pagesObject = objects.length + 1;
+  objects.push(`<< /Type /Pages /Kids [${pageObjectNumbers.map(n => `${n} 0 R`).join(" ")}] /Count ${pageObjectNumbers.length} >>`);
+  const catalogObject = objects.length + 1;
+  objects.push(`<< /Type /Catalog /Pages ${pagesObject} 0 R >>`);
+
+  for (const pageNo of pageObjectNumbers) {
+    const idx = pageNo - 1;
+    objects[idx] = objects[idx].replace("/Type /Page", `/Type /Page /Parent ${pagesObject} 0 R`);
+  }
+
+  let pdf = "%PDF-1.4\n%âãÏÓ\n";
+  const offsets = [0];
+  for (let i = 0; i < objects.length; i++) {
+    offsets.push(Buffer.byteLength(pdf, "latin1"));
+    pdf += `${i + 1} 0 obj\n${objects[i]}\nendobj\n`;
+  }
+  const xrefOffset = Buffer.byteLength(pdf, "latin1");
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  for (let i = 1; i <= objects.length; i++) {
+    pdf += `${String(offsets[i]).padStart(10, "0")} 00000 n \n`;
+  }
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root ${catalogObject} 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
+  return Buffer.from(pdf, "latin1");
 }
 
 function buildSimplePdf(title, records) {
@@ -2001,6 +2313,11 @@ async function processMasterDataQuery(from, text, user) {
   const lower = normalizeText(value);
   if (!MASTER_DATA) return false;
 
+  // Date-range history flow always takes priority over generic text handling.
+  if (historySessions.has(from)) {
+    return await processHistoryDateSession(from, value, user);
+  }
+
   const looksLikeQuery = /\b(history|historical|records?|defects?|spares?|equipment|sub[- ]?equipment|smp|sop|troubleshoot|knowledge)\b/i.test(value);
   if (!looksLikeQuery) return false;
 
@@ -2014,29 +2331,14 @@ async function processMasterDataQuery(from, text, user) {
 
   if (/\b(history|historical|records?)\b/i.test(value)) {
     const area = requestedArea || user.area_of_working;
-    const records = searchMasterHistory(value, area);
 
-    if (!records.length) {
-      await sendWhatsAppText(from, "Data ledu / confirm cheyyalenu.");
+    if (!area) {
+      await sendWhatsAppText(from, "Area confirm cheyyandi.");
       return true;
     }
 
-    await sendWhatsAppText(from, buildHistoryTableText(records));
-
-    // PDF is an export operation, so it follows the same permission boundary.
-    if (isSuperAdmin(from) || hasPermission(user, "print_export")) {
-      const pdf = buildSimplePdf("LMMM Maintenance History", records);
-      const filename = `LMMM_Maintenance_History_${new Date().toISOString().slice(0,10)}.pdf`;
-      const sent = await uploadWhatsAppPdf(
-        from,
-        pdf,
-        filename,
-        "LMMM Maintenance History PDF"
-      );
-      if (!sent) {
-        console.error("[PDF] Could not send history PDF");
-      }
-    }
+    startHistoryDateSession(from, area);
+    await sendWhatsAppText(from, historyDatePrompt(historySessions.get(from)));
     return true;
   }
 
@@ -2204,6 +2506,17 @@ async function processMaintenanceField(from, text, user, context = {}) {
     19: "Contract Worker Attendance",
     20: "Manpower / Labour Management"
   };
+
+  // Numeric 10 opens the History date-range workflow.
+  if (n === 10 && /^10$/.test(value)) {
+    if (!hasPermission(user, "view")) {
+      await sendWhatsAppText(from, "Access restricted.");
+      return;
+    }
+    startHistoryDateSession(from, user.area_of_working || "BDM");
+    await sendWhatsAppText(from, historyDatePrompt(historySessions.get(from)));
+    return;
+  }
 
   // Numeric input remains available as an optional shortcut.
   if (/^\d+$/.test(value) && names[n]) {
