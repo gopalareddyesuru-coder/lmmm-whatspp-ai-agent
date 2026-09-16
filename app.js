@@ -278,13 +278,19 @@ const OWNER_NUMBERS = new Set(
 
 const REGISTRATION_MESSAGE = `LMMM Maintenance AI 👋
 
-Please send your registration details in one message:
-
+Register in one message:
 Name
 Employee No
 Designation
 Area
-Section`.trim();
+Section
+
+Example:
+Gopala Reddy E
+123125
+Manager
+Bar Mill
+Mechanical`.trim();
 
 function getMainMenu(user) {
   return `
@@ -1757,34 +1763,133 @@ function historyQueryAliases(query) {
   const aliases = new Set([q]);
   const add = (v) => { if (v) aliases.add(normalizeHistoryEquipmentToken(v)); };
 
-  // Equipment shortcuts and full names. These are aliases only; they never
+  // Common maintenance shorthand / typo-tolerant aliases. Aliases never
   // create or change an authenticated Equipment No / Item No.
-  if (/^(?:bp|bloom\s*pusher)(?:\s*[- ]?([12]))?$/.test(q)) {
+  if (/^(?:bp|pb|bloom\s*pusher)(?:\s*[- ]?([12]))?$/.test(q)) {
     const n = q.match(/([12])$/)?.[1];
-    if (n) { add(`BP-${n}`); add(`bloom pusher-${n}`); }
-    else { add("bp-1"); add("bp-2"); add("bloom pusher"); }
+    if (n) {
+      add(`BP-${n}`); add(`PB-${n}`); add(`BP ${n}`); add(`PB ${n}`);
+      add(`bloom pusher-${n}`); add(`bloom pusher ${n}`);
+    } else {
+      add("bp-1"); add("bp-2"); add("pb-1"); add("pb-2");
+      add("bloom pusher-1"); add("bloom pusher-2");
+    }
   }
-  if (/^(?:elev|elevator)(?:\s*[- ]?([12]))?$/.test(q)) {
+  if (/^(?:elev|elevator|lift|inclined\s*elevator)(?:\s*[- ]?([12]))?$/.test(q)) {
     const n = q.match(/([12])$/)?.[1];
-    if (n) { add(`ELEVATOR-${n}`); add(`inclined elevator ${n}`); }
+    if (n) { add(`ELEVATOR-${n}`); add(`elev-${n}`); add(`inclined elevator ${n}`); }
     else { add("elevator-1"); add("elevator-2"); }
   }
-  if (/^(?:cg|ch\s*grid|char\.?\s*grid|charing\s*grid|charging\s*grid)(?:\s*[- ]?([123]))?$/.test(q)) {
+  if (/^(?:cg|ch\s*grid|char\.?\s*grid|charing\s*grid|charging\s*grid|charging\s*grids?)(?:\s*[- ]?([123]))?$/.test(q)) {
     const n = q.match(/([123])$/)?.[1];
-    if (n) { add(`CHARGING GRID-${n}`); add(`char. grid ${n}`); add(`charing grid ${n}`); }
+    if (n) { add(`CHARGING GRID-${n}`); add(`char. grid ${n}`); add(`charing grid ${n}`); add(`cg-${n}`); }
     else { add("charging grid-1"); add("charging grid-2"); add("charging grid-3"); }
   }
-  if (/^bsy(?:\s*rt|\s*roller\s*table)?$/.test(q)) { add("bsy rt"); add("bsy roller table"); }
+  if (/^bsy(?:\s*rt|\s*roller\s*table)?$/.test(q)) { add("bsy rt"); add("bsy roller table"); add("bsyrt"); }
   if (/^(?:fart|furnace\s*approach\s*roller\s*table)$/.test(q)) { add("fart"); add("furnace approach roller table"); }
   if (/^(?:wbf|walking\s*beam\s*furnace)(?:\s*[- ]?([12]))?$/.test(q)) {
     const n = q.match(/([12])$/)?.[1];
-    if (n) add(`wbf-${n}`); else { add("wbf-1"); add("wbf-2"); }
+    if (n) { add(`wbf-${n}`); add(`walking beam furnace ${n}`); }
+    else { add("wbf-1"); add("wbf-2"); }
   }
   if (/^(?:ecs|evaporative\s*cooling\s*system)(?:\s*[- ]?([12]))?$/.test(q)) {
     const n = q.match(/([12])$/)?.[1];
-    if (n) add(`ecs-${n}`); else { add("ecs-1"); add("ecs-2"); }
+    if (n) { add(`ecs-${n}`); add(`evaporative cooling system ${n}`); }
+    else { add("ecs-1"); add("ecs-2"); }
   }
+  if (/^(?:flying\s*shear|fs)$/.test(q)) { add("flying shear"); add("fs"); }
   return [...aliases].filter(Boolean);
+}
+
+function compactHistoryToken(value) {
+  return normalizeHistoryEquipmentToken(value).replace(/[^a-z0-9]/g, "");
+}
+
+function historyEditDistance(a, b) {
+  const x = compactHistoryToken(a), y = compactHistoryToken(b);
+  if (x === y) return 0;
+  if (!x || !y) return 999;
+  const prev = Array.from({ length: y.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= x.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= y.length; j++) {
+      cur[j] = Math.min(
+        cur[j - 1] + 1,
+        prev[j] + 1,
+        prev[j - 1] + (x[i - 1] === y[j - 1] ? 0 : 1)
+      );
+      // Adjacent transposition: PB1 <-> BP1, etc.
+      if (i > 1 && j > 1 && x[i - 1] === y[j - 2] && x[i - 2] === y[j - 1]) {
+        cur[j] = Math.min(cur[j], (i > 2 ? prev[j - 2] : 0) + 1);
+      }
+    }
+    prev.splice(0, prev.length, ...cur);
+  }
+  return prev[y.length];
+}
+
+function fuzzyHistoryEquipmentMatch(query, equipment, aliases = []) {
+  const eq = normalizeHistoryEquipmentToken(equipment);
+  const target = compactHistoryToken(eq);
+  if (!target || target === "na") return false;
+
+  const equipmentNames = [eq];
+  const m = eq.match(/^(BP|ELEVATOR|LTP|BTD|WBF|ECS|CHARGING GRID)-(\d+)$/i);
+  if (m) {
+    const family = m[1].toUpperCase();
+    const n = m[2];
+    if (family === "BP") equipmentNames.push(`bloom pusher ${n}`, `bp ${n}`, `pb ${n}`);
+    if (family === "ELEVATOR") equipmentNames.push(`elevator ${n}`, `elev ${n}`, `inclined elevator ${n}`);
+    if (family === "LTP") equipmentNames.push(`ltp ${n}`);
+    if (family === "BTD") equipmentNames.push(`btd ${n}`, `bloom take off device ${n}`);
+    if (family === "WBF") equipmentNames.push(`walking beam furnace ${n}`, `wbf ${n}`);
+    if (family === "ECS") equipmentNames.push(`evaporative cooling system ${n}`, `ecs ${n}`);
+    if (family === "CHARGING GRID") equipmentNames.push(`charging grid ${n}`, `charing grid ${n}`, `char grid ${n}`, `cg ${n}`);
+  } else if (eq === "BSY RT") {
+    equipmentNames.push("bsy roller table", "bsy rt");
+  } else if (eq === "FART") {
+    equipmentNames.push("furnace approach roller table", "fart");
+  }
+
+  const candidates = [query, ...aliases].filter(Boolean);
+  for (const c of candidates) {
+    const cc = compactHistoryToken(c);
+    if (!cc) continue;
+    for (const name of equipmentNames) {
+      const nn = compactHistoryToken(name);
+      if (cc === nn || cc.includes(nn) || nn.includes(cc)) return true;
+      const d = historyEditDistance(cc, nn);
+      const threshold = nn.length <= 5 ? 1 : nn.length <= 10 ? 2 : nn.length <= 16 ? 3 : 4;
+      if (d <= threshold) return true;
+    }
+  }
+  return false;
+}
+
+function buildHistoryEquipmentIndex(records) {
+  const labels = new Map();
+  let bp = null;
+  let grid = null;
+  for (const record of records) {
+    const table = historySourceTable(String(record?.source || "")).toUpperCase();
+    const text = String(record?.text || "").replace(/\s+/g, " ").trim();
+    const upper = text.toUpperCase();
+
+    if (table === "BP") {
+      const m = upper.match(/^BP\s*[- ]?([12])\b/);
+      if (m) bp = `BP-${m[1]}`;
+      labels.set(record, bp || canonicalHistoryEquipment(record));
+      continue;
+    }
+    if (table === "CH GRIDS") {
+      const m = upper.match(/^CHAR\.?\s*GRID\s*[- ]?([123])\b/);
+      if (m) grid = `CHARGING GRID-${m[1]}`;
+      labels.set(record, grid || canonicalHistoryEquipment(record));
+      continue;
+    }
+    labels.set(record, canonicalHistoryEquipment(record));
+  }
+  return labels;
 }
 
 function historyRecordSearchText(record) {
@@ -1795,69 +1900,41 @@ function searchMasterHistory(query, requestedArea) {
   if (!MASTER_DATA?.history || !Array.isArray(MASTER_DATA.history)) return [];
 
   if (requestedArea === "BDM") {
-    // Resolve grouped-sheet parent equipment BEFORE removing header rows.
-    // BP and CH GRIDS contain section headers (BP 1/BP 2 and GRID 1/2/3)
-    // whose context applies to following rows. The previous implementation
-    // removed headers first, so BP-1/BP-2 searches could not resolve.
-    const sourceRecords = MASTER_DATA.history.filter(x => {
+    let records = MASTER_DATA.history.filter(x => {
       const source = String(x.source || "");
       return /^(?:CH SIDE HISTORY\.xlsx|WBF HISTORY 10-20\.xlsx)\s*\//i.test(source);
     });
+    records = records.filter(x => !isHistoryHeaderRecord(String(x.text || "").trim()));
 
-    let bpContext = null;
-    let gridContext = null;
-    for (const record of sourceRecords) {
-      const text = String(record.text || "").replace(/\s+/g, " ").trim();
-      const upper = text.toUpperCase();
-      const bp = upper.match(/^BP\s*([12])\s*\|/);
-      if (bp) bpContext = `BP-${bp[1]}`;
-      const grid = upper.match(/^CHAR\.?\s*GRID\s*([123])\b/);
-      if (grid) gridContext = `CHARGING GRID-${grid[1]}`;
-
-      const table = historySourceTable(String(record.source || "")).toUpperCase();
-      if (table === "BP" && !isHistoryHeaderRecord(text) && !canonicalHistoryEquipment(record).match(/^BP-[12]$/)) {
-        record.__equipment = bpContext || "NA";
-      } else if (table === "BP") {
-        record.__equipment = bpContext || canonicalHistoryEquipment(record);
-      } else if (table === "CH GRIDS") {
-        record.__equipment = gridContext || canonicalHistoryEquipment(record);
-      } else {
-        record.__equipment = canonicalHistoryEquipment(record);
-      }
-    }
-
-    let records = sourceRecords.filter(x => !isHistoryHeaderRecord(String(x.text || "").trim()));
+    const equipmentIndex = buildHistoryEquipmentIndex(records);
+    for (const record of records) record.__historyEquipment = equipmentIndex.get(record) || "NA";
 
     const q = normalizeHistoryQuery(query);
     if (!q) return records;
 
-    // First try canonical equipment matching (BP-1, Bloom Pusher-1,
-    // Elevator-1, Charging Grid-1, etc.). If it matches, return that complete
-    // equipment history — not just rows whose text happens to contain the alias.
+    // First identify a specific equipment. Exact aliases are preferred, then
+    // controlled fuzzy matching handles PB1/BP1, BP 1/BP-1, small typos, etc.
     const aliases = historyQueryAliases(q);
-    const equipmentFiltered = records.filter((x) => {
-      const eq = normalizeHistoryEquipmentToken(x.__equipment || canonicalHistoryEquipment(x));
-      return aliases.some(a => a === eq || a === eq.replace(/\s+/g, " "));
+    const equipmentFiltered = records.filter(record => {
+      const eq = record.__historyEquipment || "NA";
+      return aliases.some(a => normalizeHistoryEquipmentToken(a) === normalizeHistoryEquipmentToken(eq))
+        || fuzzyHistoryEquipmentMatch(q, eq, aliases);
     });
     if (equipmentFiltered.length) return equipmentFiltered;
 
-    // Otherwise treat the user's input as a maintenance keyword/search phrase.
-    // ALL terms must be present, so "gearbox damage" finds records containing
-    // both words. This searches job/action/remarks/source without truncating
-    // the underlying source record.
+    // Otherwise this is a maintenance-content search. Search the complete
+    // record text so words appearing in job/action/remarks are all searchable.
     const terms = q.split(/\s+/).filter(Boolean);
     return records.filter(x => {
       const haystack = historyRecordSearchText(x);
-      return terms.every(term => haystack.includes(term));
+      return terms.every(term => haystack.includes(normalizeText(term)));
     });
   }
 
-  // There is no trusted imported history-source mapping for Bar Mill or
-  // Finishing. Do not guess or leak another area's history.
+  // No trusted imported history-source mapping exists for Bar Mill/Finishing.
   if (requestedArea === "Finishing" || requestedArea === "Bar Mill") return [];
   return [];
 }
-
 
 /* =========================================================
    HISTORY DATE RANGE
@@ -2014,9 +2091,7 @@ async function sendHistoryResults(from, area, records, user, options = {}) {
   for (const r of rows) {
     const id = r.equipmentNo || r.itemNo || "NA";
     lines.push(`${r.no} | ${id} | ${r.equipment} | ${r.date}`);
-    lines.push(`   Job: ${r.description}`);
-    if (r.remarks !== "-") lines.push(`   Remarks: ${r.remarks}`);
-    if (r.source) lines.push(`   Source: ${r.source}`);
+    lines.push(`   ${r.description}${r.remarks !== "-" ? ` | ${r.remarks}` : ""}`);
   }
 
   if (records.length > pageSize) {
@@ -2181,7 +2256,6 @@ function normalizeHistoryEquipmentToken(value) {
  * shown only when the source record explicitly contains one.
  */
 function canonicalHistoryEquipment(record) {
-  if (record?.__equipment) return record.__equipment;
   const text = String(record?.text || "").replace(/\s+/g, " ").trim();
   const source = String(record?.source || "");
   const table = historySourceTable(source).toUpperCase();
@@ -2315,7 +2389,7 @@ function historyTableRows(records) {
     const table = historySourceTable(source).toUpperCase();
     const dates = extractHistoryDates(x).map(formatHistoryDate);
     const date = dates.length ? dates.join(", ") : "-";
-    const equipment = x.__equipment || canonicalHistoryEquipmentFromRecords(records, index);
+    const equipment = x.__historyEquipment || canonicalHistoryEquipmentFromRecords(records, index);
     let description = text || "-";
     let remarks = "-";
     let identifier = historyExplicitIdentifier(text);
@@ -2390,6 +2464,8 @@ function historyTableRows(records) {
       description,
       action: "-",
       remarks,
+      inspectedBy: x.inspectedBy || x.inspected_by || null,
+      solvedBy: x.solvedBy || x.solved_by || null,
       source
     };
   });
@@ -2416,94 +2492,93 @@ function buildHistoryTableText(records) {
 
 function buildHistoryTablePdf(title, fromDate, toDate, records) {
   const rows = historyTableRows(records);
-  const pageWidth = 842;
-  const pageHeight = 595;
-  const left = 24;
-  const right = 24;
-  const top = 548;
-  const bottom = 28;
-  const headerH = 28;
-  const lineH = 9;
-  const fontSize = 6.2;
+  // A4 PORTRAIT — printable maintenance-history register.
+  const pageWidth = 595;
+  const pageHeight = 842;
+  const left = 18;
+  const right = 18;
+  const top = 805;
+  const bottom = 34;
+  const headerH = 34;
+  const lineH = 8;
+  const fontSize = 5.6;
 
+  // Source column intentionally removed. Inspector/Solver are shown only when
+  // present in source data; otherwise NA. No identifiers are invented.
   const columns = [
-    ["S.No", 30],
-    ["Equipment No / Item No", 92],
-    ["Equipment", 105],
-    ["Date", 62],
-    ["Job Description / Action", 315],
-    ["Remarks", 135],
-    ["Source", 75]
+    ["S.No", 25],
+    ["Equipment No / Item No", 68],
+    ["Equipment", 68],
+    ["Date", 55],
+    ["Job Description / Action", 160],
+    ["Remarks", 88],
+    ["Inspected By", 47],
+    ["Solved By", 48]
   ];
 
   const usableWidth = pageWidth - left - right;
   const totalWidth = columns.reduce((a, c) => a + c[1], 0);
   const scale = usableWidth / totalWidth;
   columns.forEach(c => c[1] = Math.floor(c[1] * scale));
+  columns[columns.length - 1][1] += usableWidth - columns.reduce((a, c) => a + c[1], 0);
 
   function wrap(text, chars) {
-    const words = String(text ?? "—").split(/\s+/).filter(Boolean);
+    const value = String(text ?? "NA").trim() || "NA";
+    const words = value.split(/\s+/).filter(Boolean);
     const out = [];
     let line = "";
     for (const word of words) {
       const next = line ? `${line} ${word}` : word;
-      if (next.length > chars && line) {
-        out.push(line);
-        line = word;
-      } else line = next;
+      if (next.length > chars && line) { out.push(line); line = word; }
+      else line = next;
     }
-    if (line || !out.length) out.push(line || "—");
+    if (line || !out.length) out.push(line || "NA");
     return out;
   }
 
   function rowLines(r) {
-    const exactId = r.equipmentNo || r.itemNo || r.sapNo || "Not available in source";
-    const job = [r.description, r.action !== "-" ? r.action : ""]
-      .filter(Boolean).join(" | ");
-    const vals = [r.no, exactId, r.equipment, r.date, job, r.remarks, r.source];
-    return vals.map((v, i) => wrap(v, Math.max(8, Math.floor(columns[i][1] / 3.2))));
+    const exactId = r.equipmentNo || r.itemNo || r.sapNo || "NA";
+    const job = [r.description, r.action !== "-" ? r.action : ""].filter(Boolean).join(" | ") || "NA";
+    const vals = [r.no, exactId, r.equipment || "NA", r.date || "NA", job, r.remarks || "NA", r.inspectedBy || "NA", r.solvedBy || "NA"];
+    return vals.map((v, i) => wrap(v, Math.max(7, Math.floor(columns[i][1] / 3.0))));
   }
 
   const pages = [];
   let pageRows = [];
-  let used = headerH;
+  let used = headerH + 22;
   const maxBody = top - bottom;
-
   for (const r of rows) {
     const cells = rowLines(r);
-    const h = Math.max(...cells.map(x => x.length)) * lineH + 6;
+    const h = Math.max(...cells.map(x => x.length)) * lineH + 7;
     if (used + h > maxBody && pageRows.length) {
-      pages.push(pageRows);
-      pageRows = [];
-      used = headerH;
+      pages.push(pageRows); pageRows = []; used = headerH;
     }
-    pageRows.push({ r, cells, h });
-    used += h;
+    pageRows.push({ r, cells, h }); used += h;
   }
   if (pageRows.length || !pages.length) pages.push(pageRows);
 
   const objects = [];
   const fontRegular = objects.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
   const fontBold = objects.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>");
-
   const pageObjectNumbers = [];
 
   for (let pageIndex = 0; pageIndex < pages.length; pageIndex++) {
     const content = [];
     let y = top;
-
     if (pageIndex === 0) {
-      content.push(`BT /F2 14 Tf ${left} ${y} Td (${safePdfText(title)}) Tj ET`);
-      y -= 18;
-      content.push(`BT /F1 8 Tf ${left} ${y} Td (${safePdfText(`${fromDate && toDate ? `Period: ${formatHistoryDate(fromDate)} to ${formatHistoryDate(toDate)}` : "Period: All available records"} | Total Records: ${rows.length}`)}) Tj ET`);
-      y -= 18;
+      content.push(`BT /F2 13 Tf ${left} ${y} Td (${safePdfText(title)}) Tj ET`); y -= 16;
+      const period = `${fromDate && toDate ? `Period: ${formatHistoryDate(fromDate)} to ${formatHistoryDate(toDate)}` : "Period: All available records"} | Total Records: ${rows.length}`;
+      content.push(`BT /F1 7.5 Tf ${left} ${y} Td (${safePdfText(period)}) Tj ET`); y -= 18;
     }
 
-    // Header
     let x = left;
     columns.forEach(([label, width]) => {
-      content.push(`q 0.85 G ${x} ${y-headerH+4} ${width} ${headerH} re S Q`);
-      content.push(`BT /F2 6.2 Tf ${x+3} ${y-10} Td (${safePdfText(label)}) Tj ET`);
+      content.push(`q 0.75 G ${x} ${y-headerH+4} ${width} ${headerH} re S Q`);
+      const headerLines = wrap(label, Math.max(7, Math.floor(width / 3.1)));
+      let hy = y - 10;
+      for (const line of headerLines.slice(0, 3)) {
+        content.push(`BT /F2 5.5 Tf ${x+2} ${hy} Td (${safePdfText(line)}) Tj ET`); hy -= 7;
+      }
       x += width;
     });
     y -= headerH;
@@ -2513,11 +2588,10 @@ function buildHistoryTablePdf(title, fromDate, toDate, records) {
       const rowY = y - item.h;
       for (let i = 0; i < columns.length; i++) {
         const width = columns[i][1];
-        content.push(`q 0.85 G ${x0} ${rowY} ${width} ${item.h} re S Q`);
-        const lines = item.cells[i];
-        let ly = y - 10;
-        for (const line of lines) {
-          content.push(`BT /F1 ${fontSize} Tf ${x0+3} ${ly} Td (${safePdfText(line)}) Tj ET`);
+        content.push(`q 0.8 G ${x0} ${rowY} ${width} ${item.h} re S Q`);
+        let ly = y - 9;
+        for (const line of item.cells[i]) {
+          content.push(`BT /F1 ${fontSize} Tf ${x0+2} ${ly} Td (${safePdfText(line)}) Tj ET`);
           ly -= lineH;
         }
         x0 += width;
@@ -2537,7 +2611,6 @@ function buildHistoryTablePdf(title, fromDate, toDate, records) {
   objects.push(`<< /Type /Pages /Kids [${pageObjectNumbers.map(n => `${n} 0 R`).join(" ")}] /Count ${pageObjectNumbers.length} >>`);
   const catalogObject = objects.length + 1;
   objects.push(`<< /Type /Catalog /Pages ${pagesObject} 0 R >>`);
-
   for (const pageNo of pageObjectNumbers) {
     const idx = pageNo - 1;
     objects[idx] = objects[idx].replace("/Type /Page", `/Type /Page /Parent ${pagesObject} 0 R`);
@@ -2551,9 +2624,7 @@ function buildHistoryTablePdf(title, fromDate, toDate, records) {
   }
   const xrefOffset = Buffer.byteLength(pdf, "latin1");
   pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
-  for (let i = 1; i <= objects.length; i++) {
-    pdf += `${String(offsets[i]).padStart(10, "0")} 00000 n \n`;
-  }
+  for (let i = 1; i <= objects.length; i++) pdf += `${String(offsets[i]).padStart(10, "0")} 00000 n \n`;
   pdf += `trailer\n<< /Size ${objects.length + 1} /Root ${catalogObject} 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
   return Buffer.from(pdf, "latin1");
 }
@@ -2753,7 +2824,7 @@ async function processMasterDataQuery(from, text, user) {
 
     const records = searchMasterHistory(cleanedQuery, area);
     if (!records.length) {
-      await sendWhatsAppText(from, cleanedQuery ? "No matching maintenance history found." : "Maintenance history data is not available / cannot be confirmed.");
+      await sendWhatsAppText(from, cleanedQuery ? "Equipment/history match ledu." : "Maintenance history data ledu / confirm cheyyalenu.");
       return true;
     }
 
