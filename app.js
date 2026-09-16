@@ -2274,4 +2274,10 @@ async function startServer() {
         console.error("[MASTER DATA] Unexpected load error:", error);
       });
     });
-  } catch (err
+  } catch (error) {
+    console.error("[STARTUP ERROR]", error);
+    process.exit(1);
+  }
+}
+
+startServer();
