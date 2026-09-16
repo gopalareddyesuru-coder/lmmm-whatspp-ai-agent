@@ -1700,6 +1700,137 @@ function getShortMaintenanceAck(text) {
 }
 
 /* =========================================================
+   MASTER DATA QUERY + SCOPE GATE
+   Natural-language maintenance queries are handled here before
+   they can fall through to the generic "save submission" path.
+========================================================= */
+
+const AREA_ALIASES = [
+  ["BDM", /\b(?:bdm|breakdown\s*mill|break\s*down\s*mill)\b/i],
+  ["Bar Mill", /\b(?:bar\s*mill|barmill|bm)\b/i],
+  ["Finishing", /\b(?:finishing|finishing\s*mill)\b/i],
+  ["Hydraulics", /\bhydraulics\b/i],
+  ["Cranes & Auxiliary", /\b(?:cranes?\s*(?:&|and)\s*aux(?:iliary)?)\b/i]
+];
+
+function detectRequestedArea(text) {
+  const value = String(text || "");
+  for (const [area, re] of AREA_ALIASES) {
+    if (re.test(value)) return area;
+  }
+  return null;
+}
+
+function scopeAreaMatches(user, requestedArea) {
+  if (!requestedArea) return true;
+  if (isSuperAdmin(user?.whatsapp_number)) return true;
+  return cleanScopeValue(user?.area_of_working) === cleanScopeValue(requestedArea);
+}
+
+function formatHistoryRecord(x) {
+  return `${x.source || "History"}\n${x.text || ""}`.trim();
+}
+
+function searchMasterHistory(query, requestedArea) {
+  if (!MASTER_DATA?.history || !Array.isArray(MASTER_DATA.history)) return [];
+
+  const q = normalizeText(query)
+    .replace(/\b(?:bdm|bar\s*mill|barmill|finishing|hydraulics|cranes?|auxiliary|history|historical|records?|show|give|tell|please)\b/g, " ")
+    .trim();
+
+  let records = MASTER_DATA.history;
+
+  // CH SIDE history is the source family for BDM charging-side history.
+  if (requestedArea === "BDM") {
+    records = records.filter(x => /CH SIDE HISTORY/i.test(String(x.source || "")));
+  } else if (requestedArea === "Finishing" || requestedArea === "Bar Mill") {
+    // No trusted area mapping for these history sources is present in
+    // the imported master dataset; never guess a mapping.
+    return [];
+  }
+
+  if (q) {
+    records = records.filter(x => normalizeText(formatHistoryRecord(x)).includes(q));
+  }
+
+  return records.slice(0, 12);
+}
+
+async function processMasterDataQuery(from, text, user) {
+  const value = String(text || "").trim();
+  const lower = normalizeText(value);
+  if (!MASTER_DATA) return false;
+
+  const looksLikeQuery = /\b(history|historical|records?|defects?|spares?|equipment|sub[- ]?equipment|smp|sop|troubleshoot|knowledge)\b/i.test(value);
+  if (!looksLikeQuery) return false;
+
+  const requestedArea = detectRequestedArea(value);
+
+  // Backend scope gate: requested area must be inside the user's scope.
+  if (requestedArea && !scopeAreaMatches(user, requestedArea)) {
+    await sendWhatsAppText(from, "Access restricted.");
+    return true;
+  }
+
+  if (/\b(history|historical|records?)\b/i.test(value)) {
+    const area = requestedArea || user.area_of_working;
+    const records = searchMasterHistory(value, area);
+
+    if (!records.length) {
+      await sendWhatsAppText(from, "Data ledu / confirm cheyyalenu.");
+      return true;
+    }
+
+    const lines = ["Maintenance History", ""];
+    records.forEach((r, i) => {
+      lines.push(`${i + 1}. ${formatHistoryRecord(r)}`);
+    });
+    await sendWhatsAppText(from, lines.join("\n\n").slice(0, 4000));
+    return true;
+  }
+
+  if (/\b(equipment|sub[- ]?equipment)\b/i.test(value)) {
+    if (!Array.isArray(MASTER_DATA.equipment)) {
+      await sendWhatsAppText(from, "Data ledu / confirm cheyyalenu.");
+      return true;
+    }
+
+    const requested = normalizeText(value)
+      .replace(/\b(?:equipment|sub[- ]?equipment|search|find|show|give|please)\b/g, " ")
+      .replace(/\b(?:bdm|bar\s*mill|barmill|finishing|hydraulics|cranes?|auxiliary)\b/g, " ")
+      .trim();
+
+    let rows = MASTER_DATA.equipment;
+    if (requestedArea) {
+      rows = rows.filter(x => cleanScopeValue(x.area) === cleanScopeValue(requestedArea));
+    } else {
+      rows = rows.filter(x => cleanScopeValue(x.area) === cleanScopeValue(user.area_of_working));
+    }
+
+    if (requested) {
+      rows = rows.filter(x => normalizeText(`${x.name || ""} ${x.location || ""} ${x.sub_area || ""}`).includes(requested));
+    }
+
+    if (!rows.length) {
+      await sendWhatsAppText(from, "Equipment match ledu.");
+      return true;
+    }
+
+    const lines = ["Equipment", ""];
+    rows.slice(0, 12).forEach((x, i) => {
+      lines.push(`${i + 1}. ${x.name || "-"}`);
+      lines.push(`Area: ${x.area || "-"}`);
+      lines.push(`Sub-area: ${x.sub_area || "-"}`);
+      lines.push(`Location: ${x.location || "-"}`);
+    });
+    await sendWhatsAppText(from, lines.join("\n").slice(0, 4000));
+    return true;
+  }
+
+  return false;
+}
+
+/* =========================================================
    MAINTENANCE FIELD
 ========================================================= */
 
@@ -1806,6 +1937,11 @@ async function processMaintenanceField(from, text, user, context = {}) {
       `Send the maintenance details directly.\n` +
       `Text, voice, image or document are supported.`
     );
+    return;
+  }
+
+  // Handle natural-language data retrieval before treating text as a new submission.
+  if (await processMasterDataQuery(from, value, user)) {
     return;
   }
 
