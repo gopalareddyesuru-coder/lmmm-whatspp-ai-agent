@@ -187,27 +187,21 @@ const OWNER_NUMBERS = new Set(
    MESSAGES
 ========================================================= */
 
-const REGISTRATION_MESSAGE = `
-Welcome to LMMM Maintenance AI Agent 👋
+const REGISTRATION_MESSAGE = `LMMM Maintenance AI 👋
 
-You can register in ONE message.
-
-Please send:
-• Name
-• Employee Number
-• Designation
-• Area of Working
-• Section / Department
+Register in one message:
+Name
+Employee No
+Designation
+Area
+Section
 
 Example:
 Gopala Reddy E
 123125
 Manager
 Bar Mill
-Mechanical
-
-I will understand the details and submit them for approval.
-`.trim();
+Mechanical`.trim();
 
 function getMainMenu(user) {
   return `
@@ -277,14 +271,12 @@ async function sendApprovalButtons(to, data) {
   const employeeNumber = data.employee_number;
 
   const body =
-    `NEW LMMM REGISTRATION\\n\\n` +
-    `Name: ${data.name}\\n` +
-    `Employee No: ${data.employee_number}\\n` +
-    `Designation: ${data.designation}\\n` +
-    `Area: ${data.area_of_working}\\n` +
-    `Section: ${data.section_department}\\n\\n` +
-    `Status: PENDING APPROVAL\\n\\n` +
-    `Approve first. Additional authorities can be assigned after approval.`;
+    `NEW USER REGISTRATION\n\n` +
+    `👤 ${data.name}\n` +
+    `🆔 ${data.employee_number}\n` +
+    `💼 ${data.designation} | ${data.area_of_working}\n` +
+    `🔧 ${data.section_department}\n\n` +
+    `Pending Approval ⏳`;
 
   const response = await fetch(
     `https://graph.facebook.com/${GRAPH_API_VERSION}/${PHONE_NUMBER_ID}/messages`,
@@ -359,17 +351,11 @@ async function sendAdditionalAuthorityMenu(to, employeeNumber, permissions = [],
   });
 
   const body =
-    `${statusLine}\n\n` +
+    `${statusLine}\n` +
     `Employee ${employeeNumber}\n\n` +
-    `Default access (hidden from user):\n` +
-    `✓ Data Entry\n` +
-    `✓ View\n` +
-    `✓ Log Book Entry\n` +
-    `✓ Shutdown Jobs Entry\n` +
-    `✓ Jobs Entry\n` +
-    `✓ Vibration Readings Entry\n\n` +
-    `Additional authorities assigned:\n${selectedText}\n\n` +
-    `Select an additional authority to assign/remove it.`;
+    `Default: Data Entry + View + Maintenance Entry\n` +
+    `Additional: ${selectedText}\n\n` +
+    `Select access to assign/remove.`;
 
   const response = await fetch(
     `https://graph.facebook.com/${GRAPH_API_VERSION}/${PHONE_NUMBER_ID}/messages`,
@@ -676,9 +662,7 @@ async function submitRegistration(from, data) {
   if (missing.length) {
     await sendWhatsAppText(
       from,
-      `I could not identify these required details:\n\n` +
-      `${missing.map(x => `• ${x}`).join("\n")}\n\n` +
-      "Please send the missing details in one message."
+      `Missing: ${missing.join(", ")}.`
     );
     return;
   }
@@ -686,7 +670,7 @@ async function submitRegistration(from, data) {
   if (!/^\d+$/.test(String(data.employee_number))) {
     await sendWhatsAppText(
       from,
-      "Employee Number must contain numbers only. Please correct it and send the registration details again."
+      "Employee No must contain numbers only."
     );
     return;
   }
@@ -701,7 +685,7 @@ async function submitRegistration(from, data) {
     if (duplicate.rowCount > 0) {
       await sendWhatsAppText(
         from,
-        "This Employee Number is already registered with another WhatsApp number. Please contact the authorised administrator."
+        "Employee No already registered. Please contact Admin."
       );
       return;
     }
@@ -770,7 +754,7 @@ async function submitRegistration(from, data) {
 
     await sendWhatsAppText(
       from,
-      "Registration submitted successfully.\n*Status: Pending Approval ⏳*"
+      "Submitted ✓\nPending Approval ⏳"
     );
 
     await notifyOwners(data, from);
@@ -781,14 +765,14 @@ async function submitRegistration(from, data) {
     if (error.code === "23505") {
       await sendWhatsAppText(
         from,
-        "Employee Number already exists. Please verify the number or contact the authorised administrator."
+        "Employee No already exists."
       );
       return;
     }
 
     await sendWhatsAppText(
       from,
-      "Unable to save the registration right now. Please try again."
+      "Could not save. Please try again."
     );
   }
 }
@@ -882,7 +866,7 @@ async function processAuthorityAction(from, actionId) {
   if (!isSuperAdmin(from)) {
     await sendWhatsAppText(
       from,
-      "You are not authorised to assign additional authorities."
+      "Not authorised."
     );
     return true;
   }
@@ -908,7 +892,7 @@ async function processAuthorityAction(from, actionId) {
   if (user.approval_status !== "approved") {
     await sendWhatsAppText(
       from,
-      `Employee ${employeeNumber} must be approved before assigning additional authorities.`
+      `Approve Employee ${employeeNumber} first.`
     );
     return true;
   }
@@ -1000,7 +984,7 @@ async function processApprovalAction(from, action, employeeNumber) {
   if (!OWNER_NUMBERS.has(from.replace(/\D/g, ""))) {
     await sendWhatsAppText(
       from,
-      "You are not authorised to approve or reject registrations."
+      "Not authorised."
     );
     return true;
   }
@@ -1066,9 +1050,9 @@ async function processApprovalAction(from, action, employeeNumber) {
   if (status === "approved") {
     await sendWhatsAppText(
       user.whatsapp_number,
-      `Status: Approved ✓\n\n` +
-      `Welcome to LMMM Maintenance AI Agent, ${user.name}.\n\n` +
-      `You can now submit LMMM maintenance information directly by text, voice, image, document, or supported file.`
+      `Approved ✓\n` +
+      `Welcome, ${user.name}.\n\n` +
+      `Send maintenance details directly.`
     );
 
     // One clean Super Admin authority-management message after approval.
@@ -1082,13 +1066,12 @@ async function processApprovalAction(from, action, employeeNumber) {
   } else {
     await sendWhatsAppText(
       user.whatsapp_number,
-      `Registration rejected ❌\n\n` +
-      `Please contact the authorised administrator for correction.`
+      `Rejected ❌\nPlease contact Admin.`
     );
 
     await sendWhatsAppText(
       from,
-      `Employee ${employeeNumber}: REJECTED successfully.`
+      `Rejected ✓\nEmployee ${employeeNumber}`
     );
   }
 
@@ -1443,12 +1426,22 @@ async function processRegistration(from, text) {
     return;
   }
 
-  await sendWhatsAppText(
-    from,
-    `I need a little more information to complete registration.\n\n` +
-    `Missing:\n${missing.map(x => `• ${x}`).join("\n")}\n\n` +
-    "You can send all details together in one message."
-  );
+  await sendWhatsAppText(from, `Missing: ${missing.join(", ")}.`);
+}
+
+function getReplyLanguage(text) {
+  const value = String(text || "");
+  if (/[\u0C00-\u0C7F]/.test(value)) return "te";
+  const lower = value.toLowerCase();
+  if (lower.includes("telugu lo") || lower.includes("telugu language")) return "te";
+  return "en";
+}
+
+function getShortMaintenanceAck(text) {
+  if (getReplyLanguage(text) === "te") {
+    return "సేవ్ చేశాను ✓\nమెయింటెనెన్స్ వివరాలు నమోదు అయ్యాయి.";
+  }
+  return "Saved ✓\nMaintenance details recorded.";
 }
 
 /* =========================================================
@@ -1548,9 +1541,7 @@ async function processMaintenanceField(from, text, user, context = {}) {
 
   await sendWhatsAppText(
     from,
-    `Received ✓\n\n` +
-    `Your LMMM maintenance information has been recorded.\n` +
-    `Equipment, sub-equipment, defect/failure, maintenance action, condition/CBM, downtime and supporting evidence can be linked during processing.`
+    getShortMaintenanceAck(value)
   );
 }
 
@@ -1703,7 +1694,7 @@ async function processIncomingMessage(message) {
   if (user.approval_status === "pending") {
     await sendWhatsAppText(
       from,
-      "Registration submitted successfully.\n*Status: Pending Approval ⏳*"
+      "Submitted ✓\nPending Approval ⏳"
     );
     return;
   }
@@ -1711,20 +1702,14 @@ async function processIncomingMessage(message) {
   if (user.approval_status === "rejected") {
     await sendWhatsAppText(
       from,
-      'Your registration was rejected. Send "RESET REGISTRATION" to enter corrected details.'
+      'Rejected ❌\nSend "RESET REGISTRATION" to correct details.'
     );
     return;
   }
 
   if (user.approval_status === "approved") {
     if (isGreeting(text)) {
-      await sendWhatsAppText(
-        from,
-        `Status: Approved ✅\n\n` +
-        `You can enter and submit your LMMM maintenance information now.\n\n` +
-        `You may send maintenance details by text, voice, image, document, or other supported file formats.\n\n` +
-        `Send the maintenance details directly.`
-      );
+      await sendWhatsAppText(from, `Approved ✓\nSend maintenance details directly.`);;
       return;
     }
 
