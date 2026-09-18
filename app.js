@@ -256,6 +256,9 @@ async function initDB() {
     )
   `);
   await pool.query(`ALTER TABLE section_event_log ADD COLUMN IF NOT EXISTS equipment_name TEXT`);
+  await pool.query(`ALTER TABLE section_event_log ADD COLUMN IF NOT EXISTS source_media_ingestion_id BIGINT`);
+  await pool.query(`ALTER TABLE production_shift_logs ADD COLUMN IF NOT EXISTS source_media_ingestion_id BIGINT`);
+  await pool.query(`ALTER TABLE production_delays ADD COLUMN IF NOT EXISTS source_media_ingestion_id BIGINT`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_section_event_date ON section_event_log(event_date,section,area,event_type)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_section_event_equipment ON section_event_log(equipment_name,event_date)`);
 
@@ -772,13 +775,13 @@ async function currentShiftContext(u){
   if(resp.includes('general shift'))return {shift:'GENERAL',source:'responsibility'};
   return {shift:inferredPlantShift(n.minutes),source:'entry_time'};
 }
-async function saveSectionEvent(u,from,type,text,eventDate=null,eventShift=null,timingSource='entry_context',equipmentName=null){
+async function saveSectionEvent(u,from,type,text,eventDate=null,eventShift=null,timingSource='entry_context',equipmentName=null,sourceMediaIngestionId=null){
   const n=plantNow(),ctx=await currentShiftContext(u),resp=await responsibilityName(u.employee_number);
   const d=eventDate||n.date,sh=eventShift||ctx.shift;
   const r=await pool.query(`INSERT INTO section_event_log(
-    event_type,event_text,employee_number,employee_name,section,area,responsibility,event_date,event_shift,event_time,entered_by,timing_source,equipment_name)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
-    [type,text,u.employee_number,u.name,u.section_department,u.area_of_working,resp,d,sh,eventDate?null:n.time,from,timingSource,equipmentName]);
+    event_type,event_text,employee_number,employee_name,section,area,responsibility,event_date,event_shift,event_time,entered_by,timing_source,equipment_name,source_media_ingestion_id)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
+    [type,text,u.employee_number,u.name,u.section_department,u.area_of_working,resp,d,sh,eventDate?null:n.time,from,timingSource,equipmentName,sourceMediaIngestionId]);
   return r.rows[0].id;
 }
 function looksLateOrUnclear(text=''){
@@ -867,14 +870,20 @@ async function stageMedia(u,from,msg){
  else {obj={language:'en',uncertain:true,needs_event_time:false,summary:'File received. This file type is not parsed automatically yet.',entries:[]};}
  const lang=obj.language||languageOf(raw);
  const entries=Array.isArray(obj.entries)?obj.entries:[];
- const clearAudio=type==='audio' && !obj.uncertain && !obj.needs_event_time && entries.length>0 &&
-   entries.every(e=>e && e.type && (e.type==='production' || (e.text && String(e.text).trim())));
- const status=clearAudio?'auto_processing':'pending_confirmation';
+ const supportedTypes=new Set(['production','delay','inspection','defect','job_action','logbook_note']);
+ const clearMedia=!obj.uncertain && !obj.needs_event_time && entries.length>0 &&
+   entries.every(e=>{
+     if(!e || !supportedTypes.has(e.type))return false;
+     if(e.type==='production')return Number.isInteger(e.blooms_rolled) && e.blooms_rolled>=0;
+     if(e.type==='delay')return Number.isInteger(e.delay_minutes) && e.delay_minutes>=0 && !!String(e.delay_section||'').trim() && !!String(e.reason||e.text||'').trim();
+     return !!String(e.text||'').trim();
+   });
+ const status=clearMedia?'auto_processing':'pending_confirmation';
  const q=await pool.query(`INSERT INTO media_ingestion(employee_number,media_id,media_type,mime_type,filename,detected_language,extracted_text,extraction_json,status,entered_by)
  VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
  [u.employee_number,n.id,type,mime,name,lang,raw,obj,status,from]);
 
- if(clearAudio){
+ if(clearMedia){
    const p={media_ingestion_id:q.rows[0].id,proposed_json:obj};
    const saved=await commitMedia(u,from,p,'auto_confirmed','media_auto_confirmed');
    const lines=saved.map(x=>`Saved. ${x.equipment?x.equipment+' – ':''}${x.text}`).join('\n');
@@ -892,15 +901,34 @@ async function stageMedia(u,from,msg){
 }
 async function commitMedia(u,from,p,status='confirmed',timingSource='media_confirmed'){
  const o=p.proposed_json,ctx=await currentShiftContext(u),n=plantNow(),saved=[];
+ const mediaId=p.media_ingestion_id;
+ const productionByKey=new Map();
  for(const e of (o.entries||[])){
   const d=e.event_date||n.date,sh=e.event_shift||ctx.shift;
   if(e.type==='production' && Number.isInteger(e.blooms_rolled)){
-   const q=await pool.query(`INSERT INTO production_shift_logs(production_date,shift,area,blooms_rolled,operations_shift_incharge,remarks,entered_by)
-   VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id`,[d,sh||'Not found',u.area_of_working,e.blooms_rolled,u.name,`Media: ${e.text||''}`,from]);
+   const q=await pool.query(`INSERT INTO production_shift_logs(production_date,shift,area,blooms_rolled,operations_shift_incharge,remarks,entered_by,source_media_ingestion_id)
+   VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,[d,sh||'Not found',u.area_of_working,e.blooms_rolled,u.name,`Media: ${e.text||''}`,from,mediaId]);
+   productionByKey.set(`${d}|${sh||'Not found'}|${String(u.area_of_working).toLowerCase()}`,q.rows[0].id);
    saved.push({type:'production',id:q.rows[0].id,text:`${e.blooms_rolled} blooms`,equipment:e.equipment||null});
   }else if(['inspection','defect','job_action','logbook_note'].includes(e.type)){
-   const id=await saveSectionEvent(u,from,e.type,e.text||'',d,sh,timingSource,e.equipment||null);
+   const id=await saveSectionEvent(u,from,e.type,e.text||'',d,sh,timingSource,e.equipment||null,mediaId);
    saved.push({type:e.type,id,text:e.text||'',equipment:e.equipment||null});
+  }else if(e.type==='delay' && Number.isInteger(e.delay_minutes)){
+   const key=`${d}|${sh||'Not found'}|${String(u.area_of_working).toLowerCase()}`;
+   let productionLogId=productionByKey.get(key);
+   if(!productionLogId){
+    const rows=(await pool.query(`SELECT id FROM production_shift_logs WHERE production_date=$1 AND shift=$2 AND LOWER(area)=LOWER($3) ORDER BY id DESC LIMIT 2`,[d,sh||'Not found',u.area_of_working])).rows;
+    if(rows.length===1)productionLogId=rows[0].id;
+   }
+   if(productionLogId){
+    const reason=String(e.reason||e.text||'').trim();
+    const q=await pool.query(`INSERT INTO production_delays(production_log_id,delay_section,delay_minutes,reason,job_action,entered_by,source_media_ingestion_id)
+      VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id`,[productionLogId,e.delay_section,e.delay_minutes,reason,null,from,mediaId]);
+    saved.push({type:'delay',id:q.rows[0].id,text:`${e.delay_section}: ${e.delay_minutes} min - ${reason}`,equipment:e.equipment||null});
+   }else{
+    const id=await saveSectionEvent(u,from,'logbook_note',`Delay not linked to production log: ${e.delay_section} - ${e.delay_minutes} min - ${e.reason||e.text||''}`,d,sh,timingSource,e.equipment||null,mediaId);
+    saved.push({type:'logbook_note',id,text:`Delay captured for review: ${e.delay_section} - ${e.delay_minutes} min`,equipment:e.equipment||null});
+   }
   }
  }
  await pool.query(`UPDATE media_ingestion SET status=$2 WHERE id=$1`,[p.media_ingestion_id,status]);
