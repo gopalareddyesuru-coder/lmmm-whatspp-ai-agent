@@ -209,6 +209,40 @@ async function sendButtons(to, body, buttons) {
   return d;
 }
 
+
+async function sendList(to, body, buttonText, rows, sectionTitle='Select') {
+  const r = await fetch(
+    `https://graph.facebook.com/${GRAPH_VERSION}/${PHONE_NUMBER_ID}/messages`,
+    {
+      method:'POST',
+      headers:{ Authorization:`Bearer ${ACCESS_TOKEN}`, 'Content-Type':'application/json' },
+      body:JSON.stringify({
+        messaging_product:'whatsapp',
+        to,
+        type:'interactive',
+        interactive:{
+          type:'list',
+          body:{text:body},
+          action:{
+            button:buttonText,
+            sections:[{
+              title:sectionTitle,
+              rows:(rows||[]).slice(0,10).map(x=>({
+                id:String(x.id).slice(0,200),
+                title:String(x.title).slice(0,24),
+                ...(x.description?{description:String(x.description).slice(0,72)}:{})
+              }))
+            }]
+          }
+        }
+      })
+    }
+  );
+  const d=await r.json();
+  if(!r.ok){ console.error('[WHATSAPP LIST ERROR]',r.status,d); throw new Error('interactive list send failed'); }
+  return d;
+}
+
 function parseReg(text) {
   const raw = String(text || '').trim();
   const p = (raw.includes('/') ? raw.split('/') : raw.split(/\r?\n/))
@@ -407,11 +441,109 @@ async function effectiveAuthority(employeeNumber) {
   };
 }
 
+
+const RESPONSIBILITY_OPTIONS = [
+  ['HOD','HOD'],
+  ['SECTION_INCHARGE','Section In-charge'],
+  ['AREA_INCHARGE','Area In-charge'],
+  ['SHIFT_INCHARGE','Shift In-charge'],
+  ['GENERAL_SHIFT','General Shift'],
+  ['NORMAL_EMPLOYEE','Normal Employee']
+];
+
+async function sendResponsibilityPicker(to, employeeNumber) {
+  await sendList(
+    to,
+    `Set responsibility\nEmployee No: ${employeeNumber}`,
+    'Select',
+    RESPONSIBILITY_OPTIONS.map(([code,title])=>({
+      id:`RESP:${code}:${employeeNumber}`, title
+    })),
+    'Responsibility'
+  );
+}
+
+async function setResponsibility(from, employeeNumber, code) {
+  const u=await byEmp(employeeNumber);
+  if(!u || u.approval_status!=='approved' || !u.is_active){
+    await sendText(from,'Not found.');
+    return;
+  }
+  const labels={
+    HOD:'HOD',
+    SECTION_INCHARGE:'Section In-charge',
+    AREA_INCHARGE:'Area In-charge',
+    SHIFT_INCHARGE:'Shift In-charge',
+    GENERAL_SHIFT:'General Shift',
+    NORMAL_EMPLOYEE:'Normal Employee'
+  };
+  const role=labels[code];
+  if(!role){ await sendText(from,'Not found.'); return; }
+
+  // Never infer responsibility from designation.
+  // Until exact Section/Area masters are supplied, use authenticated registration scope.
+  const section = code==='HOD' ? 'ALL SECTIONS' : (u.section_department || NA);
+  const area = code==='HOD' ? 'ALL AREAS' :
+               code==='SECTION_INCHARGE' ? 'ALL AREAS' :
+               (u.area_of_working || NA);
+
+  await pool.query('BEGIN');
+  try{
+    await pool.query(
+      `UPDATE user_responsibilities SET active=false
+       WHERE employee_number=$1 AND active=true`,[employeeNumber]
+    );
+    await pool.query(
+      `INSERT INTO user_responsibilities
+       (employee_number,responsibility_role,scope_section,scope_area,assigned_by)
+       VALUES($1,$2,$3,$4,$5)`,
+      [employeeNumber,role,section,area,from]
+    );
+    await pool.query(
+      `UPDATE users SET responsibility=$2,updated_at=now() WHERE employee_number=$1`,
+      [employeeNumber,role]
+    );
+    await pool.query(
+      `INSERT INTO authority_audit
+       (employee_number,action,responsibility_role,scope_section,scope_area,performed_by)
+       VALUES($1,'ASSIGN_RESPONSIBILITY',$2,$3,$4,$5)`,
+      [employeeNumber,role,section,area,from]
+    );
+    await pool.query('COMMIT');
+  }catch(e){ await pool.query('ROLLBACK'); throw e; }
+
+  await sendButtons(
+    from,
+    `Responsibility set\n${u.name} / ${employeeNumber}\n${role}\nSection: ${section}\nArea: ${area}`,
+    [
+      {id:`RESP_CHANGE:${employeeNumber}`,title:'Change'},
+      {id:`RESP_DONE:${employeeNumber}`,title:'Done'}
+    ]
+  );
+}
+
 async function ownerCommand(from, text) {
   const admin = from.replace(/\D/g, '');
   if (!SUPER_ADMIN_NUMBERS.has(admin)) return false;
 
   text = String(text || '').replace(/^APPROVE:(\d+)$/i, 'approve $1').replace(/^REJECT:(\d+)$/i, 'reject $1').replace(/^CONFIRM_REMOVE:(\d+)$/i, 'confirm remove $1').replace(/^CANCEL_REMOVE:(\d+)$/i, 'cancel remove $1').replace(/^CONFIRM_RESET$/i, 'confirm reset registrations').replace(/^CANCEL_RESET$/i, 'cancel reset registrations');
+
+  let rx;
+  if ((rx=text.match(/^SET RESPONSIBILITY\s+(\d+)$/i))) {
+    const u=await byEmp(rx[1]);
+    if(!u || u.approval_status!=='approved' || !u.is_active) await sendText(from,'Not found.');
+    else await sendResponsibilityPicker(from,rx[1]);
+    return true;
+  }
+  if ((rx=text.match(/^RESP_CHANGE:(\d+)$/i))) {
+    await sendResponsibilityPicker(from,rx[1]); return true;
+  }
+  if ((rx=text.match(/^RESP:(HOD|SECTION_INCHARGE|AREA_INCHARGE|SHIFT_INCHARGE|GENERAL_SHIFT|NORMAL_EMPLOYEE):(\d+)$/i))) {
+    await setResponsibility(from,rx[2],rx[1].toUpperCase()); return true;
+  }
+  if (/^RESP_DONE:\d+$/i.test(text)) {
+    await sendText(from,'Done.'); return true;
+  }
 
   let m = text.match(/^approve\s+(\d+)$/i);
   if (m) {
@@ -444,7 +576,14 @@ async function ownerCommand(from, text) {
 
     await sendText(u.whatsapp_number, 'Welcome to LMMM AI Maintenance.');
     if (from.replace(/\D/g, '') !== u.whatsapp_number.replace(/\D/g, '')) {
-      await sendText(from, `Approved ${m[1]}.`);
+      await sendButtons(
+        from,
+        `Registration approved\n${u.name} / ${u.employee_number}`,
+        [
+          {id:`RESP_CHANGE:${u.employee_number}`,title:'Set Responsibility'},
+          {id:`RESP_DONE:${u.employee_number}`,title:'Later'}
+        ]
+      );
     }
     return true;
   }
@@ -841,7 +980,7 @@ app.post('/webhook', (req, res) => {
 app.get('/api/status', (_q, r) =>
   r.status(200).json({
     status: 'ready',
-    registration: 'V4.4-hierarchy-authority',
+    registration: 'V4.5-responsibility-ux',
     webhook: '/webhook',
     super_admins_configured: SUPER_ADMIN_NUMBERS.size
   })
