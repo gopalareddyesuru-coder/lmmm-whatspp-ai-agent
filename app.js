@@ -709,6 +709,14 @@ function isoDate(v=''){
  if(dt.getUTCFullYear()!==y||dt.getUTCMonth()!==m-1||dt.getUTCDate()!==d)return null;
  return `${String(y).padStart(4,'0')}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
 }
+function resolveUserDate(text='') {
+ const t=String(text||'').trim().toLowerCase();
+ const n=plantNow();
+ if(/^(today|today's|ee roju|eroju|ఈరోజు|आज)$/.test(t)) return n.date;
+ if(/^(yesterday|ninna|నిన్న|कल)$/.test(t)){ const d=new Date(n.date+'T00:00:00Z'); d.setUTCDate(d.getUTCDate()-1); return d.toISOString().slice(0,10); }
+ const m=String(text||'').match(/(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[-\/.]\d{1,2}[-\/.]\d{4})/);
+ return m?isoDate(m[1]):null;
+}
 function normalizeMediaDates(obj={}){
  let invalid=false;
  const entries=(Array.isArray(obj.entries)?obj.entries:[]).map(e=>{
@@ -834,6 +842,9 @@ function geminiInstruction(u,ctx){
  return `You extract LMMM steel-plant maintenance/shift data.
 Return valid JSON only with this exact structure:
 {"language":"en|te|hi","uncertain":boolean,"needs_event_time":boolean,"summary":string,"entries":[{"type":"production|delay|inspection|defect|job_action|logbook_note","equipment":string|null,"text":string,"blooms_rolled":number|null,"delay_minutes":number|null,"delay_section":string|null,"reason":string|null,"event_date":string|null,"event_shift":"A|B|C|GENERAL|null"}]}.
+For TABLES: extract EVERY readable data row as a separate entry. Bind each row's Date, Equipment, Job Description/Action, Remarks and identifiers to THAT SAME ROW. Never replace visible row dates with null or one common date. If a row has a visible date, event_date MUST contain that exact visible date text. A table with visible dates does NOT need a common event-time question.
+For handwritten/current notes with no written event date, leave event_date=null and set needs_event_time=true.
+Classify observations such as loose, leak, damage, abnormality, failure or fault as defect unless the source explicitly records completed corrective work.
 Write every entry.text as concise standard technical ENGLISH, even when source speech is Telugu or Hindi.
 Extract equipment separately in entry.equipment (example: "Charging Grid 2").
 Never invent unreadable data. Preserve equipment/SAP/CAT/drawing/part identifiers exactly as supplied/visible.
@@ -862,7 +873,7 @@ async function classifyExtracted(text,u,ctx){
 }
 async function extractPhoto(buf,mime,u,ctx){
  return geminiGenerate([
-   {text:'Read this shift log-book/photo carefully and extract every relevant readable entry. Mark uncertain=true for doubtful handwriting or values.'},
+   {text:'Read this shift log-book/photo carefully. If it is a table, extract EVERY readable row and keep the date from that same row attached to that entry. Do not skip Date/Equipment/Job Description/Remarks columns. If handwritten, extract every readable maintenance observation. Mark uncertain=true only for genuinely doubtful handwriting/identifiers.'},
    {inline_data:{mime_type:mime||'image/jpeg',data:buf.toString('base64')}}
  ],u,ctx);
 }
@@ -1351,6 +1362,26 @@ async function processMessage(from, text, rawMessage = null) {
       try{await stageMedia(u,from,rawMessage);}catch(e){console.error('[MEDIA]',e);await sendText(from,'Could not process this file.');}
       return;
     }
+    // Resolve date replies for pending media (e.g. Today / Yesterday / DD-MM-YYYY).
+    // Apply the supplied date only to entries whose source had no readable date; never overwrite row dates extracted from a table.
+    const pendingMedia=(await pool.query(`SELECT * FROM pending_media_confirmations WHERE employee_number=$1`,[u.employee_number])).rows[0];
+    if(pendingMedia && !/^CONFIRM$|^CORRECT$/i.test(clean)){
+      const suppliedDate=resolveUserDate(clean);
+      if(suppliedDate){
+        const proposed=typeof pendingMedia.proposed_json==='string'?JSON.parse(pendingMedia.proposed_json):pendingMedia.proposed_json;
+        const entries=(proposed.entries||[]).map(e=>e.event_date?e:{...e,event_date:suppliedDate,event_date_source:clean});
+        const stillMissing=entries.some(e=>!e.event_date);
+        const updated={...proposed,entries,needs_event_time:stillMissing};
+        await pool.query(`UPDATE pending_media_confirmations SET proposed_json=$2,created_at=now() WHERE employee_number=$1`,[u.employee_number,updated]);
+        if(!stillMissing && !updated.uncertain){
+          const saved=await commitMedia(u,from,{...pendingMedia,proposed_json:updated},'confirmed','user_supplied_media_date');
+          const lines=saved.map(x=>`Saved. ${x.equipment?x.equipment+' – ':''}${x.text}`).join('\n');
+          await sendText(from,lines||'Saved.');
+          return;
+        }
+      }
+    }
+
     if(/^CONFIRM$/i.test(clean)){
       const p=(await pool.query(`SELECT * FROM pending_media_confirmations WHERE employee_number=$1`,[u.employee_number])).rows[0];
       if(!p){await sendText(from,'Not found.');return;}
