@@ -286,6 +286,28 @@ async function initDB() {
       created_at TIMESTAMPTZ DEFAULT now()
     )
   `);
+  // V5.4 audit-safe record control and batch ingestion metadata.
+  await pool.query(`ALTER TABLE section_event_log ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ`);
+  await pool.query(`ALTER TABLE section_event_log ADD COLUMN IF NOT EXISTS deleted_by TEXT`);
+  await pool.query(`ALTER TABLE section_event_log ADD COLUMN IF NOT EXISTS delete_reason TEXT`);
+  await pool.query(`ALTER TABLE section_event_log ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ`);
+  await pool.query(`ALTER TABLE section_event_log ADD COLUMN IF NOT EXISTS edited_by TEXT`);
+  await pool.query(`ALTER TABLE section_event_log ADD COLUMN IF NOT EXISTS original_event_text TEXT`);
+  await pool.query(`ALTER TABLE section_event_log ADD COLUMN IF NOT EXISTS original_event_date DATE`);
+  await pool.query(`ALTER TABLE production_shift_logs ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ`);
+  await pool.query(`ALTER TABLE production_shift_logs ADD COLUMN IF NOT EXISTS deleted_by TEXT`);
+  await pool.query(`ALTER TABLE production_delays ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ`);
+  await pool.query(`ALTER TABLE production_delays ADD COLUMN IF NOT EXISTS deleted_by TEXT`);
+  await pool.query(`ALTER TABLE media_ingestion ADD COLUMN IF NOT EXISTS batch_code TEXT`);
+  await pool.query(`ALTER TABLE media_ingestion ADD COLUMN IF NOT EXISTS record_count INTEGER DEFAULT 0`);
+  await pool.query(`ALTER TABLE media_ingestion ADD COLUMN IF NOT EXISTS review_count INTEGER DEFAULT 0`);
+  await pool.query(`ALTER TABLE media_ingestion ADD COLUMN IF NOT EXISTS rolled_back_at TIMESTAMPTZ`);
+  await pool.query(`ALTER TABLE media_ingestion ADD COLUMN IF NOT EXISTS rolled_back_by TEXT`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS record_change_audit(
+    id BIGSERIAL PRIMARY KEY, record_table TEXT NOT NULL, record_id BIGINT NOT NULL,
+    action TEXT NOT NULL, before_json JSONB, after_json JSONB, employee_number TEXT,
+    changed_by TEXT NOT NULL, changed_at TIMESTAMPTZ NOT NULL DEFAULT now(), reason TEXT
+  )`);
   console.log('[DATABASE] V4.4 hierarchy + authority foundation ready');
   console.log('[ADMIN] configured:', SUPER_ADMIN_NUMBERS.size);
 }
@@ -743,12 +765,12 @@ async function productionAuthority(u){
 }
 async function productionSummary(date,area=null){
  const p=area?
-   (await pool.query(`SELECT * FROM production_shift_logs WHERE production_date=$1 AND LOWER(area)=LOWER($2) ORDER BY shift,id`,[date,area])).rows:
-   (await pool.query(`SELECT * FROM production_shift_logs WHERE production_date=$1 ORDER BY area,shift,id`,[date])).rows;
+   (await pool.query(`SELECT * FROM production_shift_logs WHERE production_date=$1 AND LOWER(area)=LOWER($2) AND deleted_at IS NULL ORDER BY shift,id`,[date,area])).rows:
+   (await pool.query(`SELECT * FROM production_shift_logs WHERE production_date=$1 AND deleted_at IS NULL ORDER BY area,shift,id`,[date])).rows;
  if(!p.length)return 'Not found.';
  let out=[];
  for(const x of p){
-   const ds=(await pool.query(`SELECT * FROM production_delays WHERE production_log_id=$1 ORDER BY id`,[x.id])).rows;
+   const ds=(await pool.query(`SELECT * FROM production_delays WHERE production_log_id=$1 AND deleted_at IS NULL ORDER BY id`,[x.id])).rows;
    out.push(`${x.production_date.toISOString().slice(0,10)} | ${x.area} | Shift ${x.shift}\nBlooms: ${x.blooms_rolled}\nEstimated: ${(x.blooms_rolled*4).toFixed(0)} t${x.operations_shift_incharge?`\nOperations Shift In-charge: ${x.operations_shift_incharge}`:''}${ds.length?'\nDelays:\n'+ds.map(d=>`${d.delay_section}: ${d.delay_minutes} min - ${d.reason}${d.job_action?` | Action: ${d.job_action}`:''}`).join('\n'):''}`);
  }
  return out.join('\n\n');
@@ -841,8 +863,8 @@ async function mediaBytes(url){
 function geminiInstruction(u,ctx){
  return `You extract LMMM steel-plant maintenance/shift data.
 Return valid JSON only with this exact structure:
-{"language":"en|te|hi","uncertain":boolean,"needs_event_time":boolean,"summary":string,"entries":[{"type":"production|delay|inspection|defect|job_action|logbook_note","equipment":string|null,"text":string,"blooms_rolled":number|null,"delay_minutes":number|null,"delay_section":string|null,"reason":string|null,"event_date":string|null,"event_shift":"A|B|C|GENERAL|null"}]}.
-For TABLES: extract EVERY readable data row as a separate entry. Bind each row's Date, Equipment, Job Description/Action, Remarks and identifiers to THAT SAME ROW. Never replace visible row dates with null or one common date. If a row has a visible date, event_date MUST contain that exact visible date text. A table with visible dates does NOT need a common event-time question.
+{"language":"en|te|hi","uncertain":boolean,"needs_event_time":boolean,"document_kind":"table|handwritten_note|photo|audio|document","table_has_date_column":boolean,"summary":string,"entries":[{"type":"production|delay|inspection|defect|job_action|logbook_note","equipment":string|null,"text":string,"blooms_rolled":number|null,"delay_minutes":number|null,"delay_section":string|null,"reason":string|null,"event_date":string|null,"event_shift":"A|B|C|GENERAL|null"}]}.
+For TABLES: set document_kind="table" and table_has_date_column=true when a Date column is visible. Extract EVERY readable data row as a separate entry. Bind each row's Date, Equipment, Job Description/Action, Remarks and identifiers to THAT SAME ROW. Never replace visible row dates with null or one common date. If a row has a visible date, event_date MUST contain that exact visible date text. A table with visible dates does NOT need a common event-time question. NEVER ask/apply one common date to a historical table. If a row date is unreadable, leave only that row event_date=null and set uncertain=true; do not copy another row date.
 For handwritten/current notes with no written event date, leave event_date=null and set needs_event_time=true.
 Classify observations such as loose, leak, damage, abnormality, failure or fault as defect unless the source explicitly records completed corrective work.
 Write every entry.text as concise standard technical ENGLISH, even when source speech is Telugu or Hindi.
@@ -889,6 +911,23 @@ async function extractDocument(buf,mime,u,ctx){
    {inline_data:{mime_type:mime,data:buf.toString('base64')}}
  ],u,ctx);
 }
+async function repairTableDates(buf,mime,u,ctx,obj){
+ const entries=Array.isArray(obj?.entries)?obj.entries:[];
+ if(!entries.length || !obj?.table_has_date_column || !entries.some(e=>!e?.event_date))return obj;
+ try{
+  const fixed=await geminiGenerate([
+   {text:`DATE-REPAIR PASS. Re-read the source table. The previous extraction is below. Return the full JSON structure again. Keep every entry in row order. For EACH row, read that SAME row's Date cell and populate event_date exactly as visible. Never use today's date, never copy a neighbouring row date, and never invent an unreadable date. Previous extraction:\n${JSON.stringify(obj)}`},
+   {inline_data:{mime_type:mime||'image/jpeg',data:buf.toString('base64')}}
+  ],u,ctx);
+  return fixed?.entries?.length?fixed:obj;
+ }catch(e){console.error('[MEDIA DATE REPAIR]',e);return obj;}
+}
+function mediaBatchCode(id){return `UP-${id}`;}
+function mediaSummary(saved,mediaId,reviewCount=0){
+ const counts={}; for(const x of saved||[]){const k=x.equipment||'Unresolved';counts[k]=(counts[k]||0)+1;}
+ const byEq=Object.entries(counts).slice(0,8).map(([k,v])=>`${k}: ${v}`).join(' | ');
+ return `✅ ${(saved||[]).length} records saved${byEq?`\n${byEq}`:''}${reviewCount?`\n⚠️ ${reviewCount} records need review`:''}\nBatch ID: ${mediaBatchCode(mediaId)}\nUse: UNDO ${mediaBatchCode(mediaId)} / VIEW ${mediaBatchCode(mediaId)}`;
+}
 async function stageMedia(u,from,msg){
  const n=msg.image||msg.audio||msg.voice||msg.document;
  const type=msg.image?'image':(msg.audio||msg.voice)?'audio':'document';
@@ -899,7 +938,9 @@ async function stageMedia(u,from,msg){
  else if(type==='image'){obj=await extractPhoto(buf,mime,u,ctx);raw=obj.summary||'';}
  else if(/text|csv|json|xml/i.test(mime)){raw=buf.toString('utf8').slice(0,150000);obj=await classifyExtracted(raw,u,ctx);}
  else if(/pdf/i.test(mime)){obj=await extractDocument(buf,mime,u,ctx);raw=obj.summary||'';}
- else {obj={language:'en',uncertain:true,needs_event_time:false,summary:'File received. This file type is not parsed automatically yet.',entries:[]};}
+ else if(/wordprocessingml|spreadsheetml|msword|ms-excel|tiff/i.test(mime) || /\.(docx?|xlsx?|tiff?)$/i.test(name)){obj=await extractDocument(buf,mime,u,ctx);raw=obj.summary||'';}
+ else {obj={language:'en',uncertain:true,needs_event_time:false,document_kind:'document',table_has_date_column:false,summary:'File received. This file type is not parsed automatically yet.',entries:[]};}
+ if((type==='image'||type==='document') && obj?.table_has_date_column && (obj.entries||[]).some(e=>!e?.event_date)) obj=await repairTableDates(buf,mime,u,ctx,obj);
  // Normalize Gemini/document dates before any PostgreSQL DATE insert.
  // Keep the exact extracted value in event_date_source for audit/source fidelity.
  const normalizedDates=normalizeMediaDates(obj);
@@ -907,7 +948,8 @@ async function stageMedia(u,from,msg){
  const lang=obj.language||languageOf(raw);
  const entries=Array.isArray(obj.entries)?obj.entries:[];
  const supportedTypes=new Set(['production','delay','inspection','defect','job_action','logbook_note']);
- const clearMedia=!obj.uncertain && !obj.needs_event_time && entries.length>0 &&
+ const tableMissingDate=Boolean(obj.table_has_date_column && entries.some(e=>!e?.event_date));
+ const clearMedia=!obj.uncertain && !obj.needs_event_time && !tableMissingDate && entries.length>0 &&
    entries.every(e=>{
      if(!e || !supportedTypes.has(e.type))return false;
      if(e.type==='production')return Number.isInteger(e.blooms_rolled) && e.blooms_rolled>=0;
@@ -918,20 +960,20 @@ async function stageMedia(u,from,msg){
  const q=await pool.query(`INSERT INTO media_ingestion(employee_number,media_id,media_type,mime_type,filename,detected_language,extracted_text,extraction_json,status,entered_by)
  VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
  [u.employee_number,n.id,type,mime,name,lang,raw,obj,status,from]);
+ const mediaRowId=q.rows[0].id; await pool.query(`UPDATE media_ingestion SET batch_code=$2 WHERE id=$1`,[mediaRowId,mediaBatchCode(mediaRowId)]);
 
  if(clearMedia){
-   const p={media_ingestion_id:q.rows[0].id,proposed_json:obj};
+   const p={media_ingestion_id:mediaRowId,proposed_json:obj};
    const saved=await commitMedia(u,from,p,'auto_confirmed','media_auto_confirmed');
-   const lines=saved.map(x=>`Saved. ${x.equipment?x.equipment+' – ':''}${x.text}`).join('\n');
-   await sendText(from,lines||'Saved.');
+   await sendText(from,mediaSummary(saved,mediaRowId,0));
    return;
  }
 
  await pool.query(`INSERT INTO pending_media_confirmations(employee_number,media_ingestion_id,proposed_json) VALUES($1,$2,$3)
  ON CONFLICT(employee_number) DO UPDATE SET media_ingestion_id=EXCLUDED.media_ingestion_id,proposed_json=EXCLUDED.proposed_json,created_at=now()`,
- [u.employee_number,q.rows[0].id,obj]);
+ [u.employee_number,mediaRowId,obj]);
  const lines=entries.slice(0,15).map((e,i)=>`${i+1}. ${e.type}: ${e.equipment?e.equipment+' – ':''}${e.text||''}`).join('\n');
- const ask=obj.needs_event_time?ml(lang,'When did it happen?','ఇది ఎప్పుడు జరిగింది?','यह कब हुआ था?'):
+ const ask=tableMissingDate?ml(lang,`${entries.filter(e=>!e.event_date).length} table row(s) have an unreadable/missing date. Please send a clearer file/image or an explicit row-wise correction. A common date will not be applied.`,`టేబుల్‌లో ${entries.filter(e=>!e.event_date).length} row date స్పష్టంగా లేదు. Clear image/file లేదా row-wise correction పంపండి. Common date apply చేయను.`,`तालिका में ${entries.filter(e=>!e.event_date).length} पंक्तियों की तारीख स्पष्ट नहीं है। साफ़ फ़ाइल/चित्र या row-wise correction भेजें; common date लागू नहीं होगी।`):obj.needs_event_time?ml(lang,'When did it happen?','ఇది ఎప్పుడు జరిగింది?','यह कब हुआ था?'):
    ml(lang,'Please confirm because some information is unclear: CONFIRM / CORRECT','కొంత సమాచారం స్పష్టంగా లేదు. దయచేసి CONFIRM / CORRECT చేయండి','कुछ जानकारी स्पष्ट नहीं है। कृपया CONFIRM / CORRECT करें');
  await sendText(from,`${lines||obj.summary}\n\n${ask}`);
 }
@@ -940,7 +982,7 @@ async function commitMedia(u,from,p,status='confirmed',timingSource='media_confi
  const mediaId=p.media_ingestion_id;
  const productionByKey=new Map();
  for(const e of (o.entries||[])){
-  const d=e.event_date?(isoDate(e.event_date)||null):n.date,sh=e.event_shift||ctx.shift;
+  const d=e.event_date?(isoDate(e.event_date)||null):null,sh=e.event_shift||ctx.shift;
   if(!d)throw new Error(`Invalid media event_date: ${e.event_date}`);
   if(e.type==='production' && Number.isInteger(e.blooms_rolled)){
    const q=await pool.query(`INSERT INTO production_shift_logs(production_date,shift,area,blooms_rolled,operations_shift_incharge,remarks,entered_by,source_media_ingestion_id)
@@ -968,7 +1010,7 @@ async function commitMedia(u,from,p,status='confirmed',timingSource='media_confi
    }
   }
  }
- await pool.query(`UPDATE media_ingestion SET status=$2 WHERE id=$1`,[p.media_ingestion_id,status]);
+ await pool.query(`UPDATE media_ingestion SET status=$2,record_count=$3 WHERE id=$1`,[p.media_ingestion_id,status,saved.length]);
  await pool.query(`DELETE FROM pending_media_confirmations WHERE employee_number=$1`,[u.employee_number]);
  return saved;
 }
@@ -1369,14 +1411,14 @@ async function processMessage(from, text, rawMessage = null) {
       const suppliedDate=resolveUserDate(clean);
       if(suppliedDate){
         const proposed=typeof pendingMedia.proposed_json==='string'?JSON.parse(pendingMedia.proposed_json):pendingMedia.proposed_json;
+        if(proposed.table_has_date_column){await sendText(from,'This is a dated table. I will not apply one common date to rows whose Date cells were missed. Send a clearer image/file or row-wise correction.');return;}
         const entries=(proposed.entries||[]).map(e=>e.event_date?e:{...e,event_date:suppliedDate,event_date_source:clean});
         const stillMissing=entries.some(e=>!e.event_date);
         const updated={...proposed,entries,needs_event_time:stillMissing};
         await pool.query(`UPDATE pending_media_confirmations SET proposed_json=$2,created_at=now() WHERE employee_number=$1`,[u.employee_number,updated]);
         if(!stillMissing && !updated.uncertain){
           const saved=await commitMedia(u,from,{...pendingMedia,proposed_json:updated},'confirmed','user_supplied_media_date');
-          const lines=saved.map(x=>`Saved. ${x.equipment?x.equipment+' – ':''}${x.text}`).join('\n');
-          await sendText(from,lines||'Saved.');
+          await sendText(from,mediaSummary(saved,pendingMedia.media_ingestion_id,0));
           return;
         }
       }
@@ -1385,12 +1427,58 @@ async function processMessage(from, text, rawMessage = null) {
     if(/^CONFIRM$/i.test(clean)){
       const p=(await pool.query(`SELECT * FROM pending_media_confirmations WHERE employee_number=$1`,[u.employee_number])).rows[0];
       if(!p){await sendText(from,'Not found.');return;}
-      await commitMedia(u,from,p);
+      const po=typeof p.proposed_json==='string'?JSON.parse(p.proposed_json):p.proposed_json;
+      if((po.entries||[]).some(e=>!e.event_date)){await sendText(from,po.table_has_date_column?'Cannot confirm: one or more table row dates are missing. Send a clearer source or row-wise correction.':'Cannot confirm yet: event date is missing.');return;}
+      await commitMedia(u,from,{...p,proposed_json:po});
       const l=p.proposed_json?.language||'en';
       await sendText(from,ml(l,'Saved.','సేవ్ అయింది.','सेव हो गया।'));return;
     }
     if(/^CORRECT$/i.test(clean)){
       await sendText(from,ml(languageOf(clean),'Send the correction in text.','సరిచేయాల్సిన వివరాన్ని టెక్స్ట్‌లో పంపండి.','सही जानकारी टेक्स्ट में भेजें।'));return;
+    }
+
+    // V5.4 record controls: audit-safe view/edit/delete/undo. Creator may control own records; owner may control all.
+    let rc;
+    if((rc=clean.match(/^VIEW\s+(?:UP-)?(\d+)$/i))){
+      const mid=Number(rc[1]);
+      const m=(await pool.query(`SELECT * FROM media_ingestion WHERE id=$1`,[mid])).rows[0];
+      if(!m || (!isOwner(from) && m.employee_number!==u.employee_number)){await sendText(from,'Not found.');return;}
+      const rows=(await pool.query(`SELECT id,event_type,equipment_name,event_date,event_shift,event_text,status,deleted_at FROM section_event_log WHERE source_media_ingestion_id=$1 ORDER BY id`,[mid])).rows;
+      const live=rows.filter(x=>!x.deleted_at);
+      const body=live.slice(0,25).map(x=>`#${x.id} | ${x.event_date?.toISOString?.().slice(0,10)||x.event_date} | ${x.equipment_name||'Unresolved'} | ${x.event_type}\n${x.event_text}`).join('\n\n');
+      await sendText(from,`${m.batch_code||mediaBatchCode(mid)} | ${live.length} active record(s)${rows.length-live.length?` | ${rows.length-live.length} deleted`:''}\n\n${body||'No active section records.'}`);return;
+    }
+    if((rc=clean.match(/^(?:UNDO|DELETE BATCH)\s+(?:UP-)?(\d+)$/i))){
+      const mid=Number(rc[1]); const m=(await pool.query(`SELECT * FROM media_ingestion WHERE id=$1`,[mid])).rows[0];
+      if(!m || (!isOwner(from) && m.employee_number!==u.employee_number)){await sendText(from,'Not found.');return;}
+      await pool.query('BEGIN'); try{
+        await pool.query(`UPDATE section_event_log SET deleted_at=now(),deleted_by=$2,delete_reason='batch_undo',status='deleted' WHERE source_media_ingestion_id=$1 AND deleted_at IS NULL`,[mid,from]);
+        await pool.query(`UPDATE production_delays SET deleted_at=now(),deleted_by=$2 WHERE source_media_ingestion_id=$1 AND deleted_at IS NULL`,[mid,from]);
+        await pool.query(`UPDATE production_shift_logs SET deleted_at=now(),deleted_by=$2 WHERE source_media_ingestion_id=$1 AND deleted_at IS NULL`,[mid,from]);
+        await pool.query(`UPDATE media_ingestion SET status='rolled_back',rolled_back_at=now(),rolled_back_by=$2 WHERE id=$1`,[mid,from]);
+        await pool.query('COMMIT');
+      }catch(e){await pool.query('ROLLBACK');throw e;}
+      await sendText(from,`Rolled back ${m.batch_code||mediaBatchCode(mid)}. Source file and audit trail are preserved.`);return;
+    }
+    if((rc=clean.match(/^DELETE\s+(\d+)(?:\s+(.+))?$/i))){
+      const id=Number(rc[1]),reason=rc[2]||'user_delete';
+      const old=(await pool.query(`SELECT * FROM section_event_log WHERE id=$1`,[id])).rows[0];
+      if(!old || old.deleted_at || (!isOwner(from) && old.employee_number!==u.employee_number)){await sendText(from,'Not found.');return;}
+      await pool.query(`UPDATE section_event_log SET deleted_at=now(),deleted_by=$2,delete_reason=$3,status='deleted' WHERE id=$1`,[id,from,reason]);
+      await pool.query(`INSERT INTO record_change_audit(record_table,record_id,action,before_json,employee_number,changed_by,reason) VALUES('section_event_log',$1,'delete',$2,$3,$4,$5)`,[id,old,u.employee_number,from,reason]);
+      await sendText(from,`Deleted record #${id}. Audit history preserved.`);return;
+    }
+    if((rc=clean.match(/^EDIT\s+(\d+)\s*:\s*(.+)$/i))){
+      const id=Number(rc[1]),replacement=rc[2].trim();
+      const old=(await pool.query(`SELECT * FROM section_event_log WHERE id=$1`,[id])).rows[0];
+      if(!old || old.deleted_at || (!isOwner(from) && old.employee_number!==u.employee_number)){await sendText(from,'Not found.');return;}
+      // Optional leading date in correction; otherwise preserve existing event date. Equipment is never guessed/renamed here.
+      const dm=replacement.match(/^(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[-\/.]\d{1,2}[-\/.]\d{4})\s*[|,-]\s*(.+)$/);
+      const nd=dm?isoDate(dm[1]):(old.event_date?.toISOString?.().slice(0,10)||old.event_date), nt=dm?dm[2].trim():replacement;
+      if(dm && !nd){await sendText(from,'Invalid date. Use DD-MM-YYYY or YYYY-MM-DD.');return;}
+      const q=await pool.query(`UPDATE section_event_log SET original_event_text=COALESCE(original_event_text,event_text),original_event_date=COALESCE(original_event_date,event_date),event_text=$2,event_date=$3,edited_at=now(),edited_by=$4,status='edited' WHERE id=$1 RETURNING *`,[id,nt,nd,from]);
+      await pool.query(`INSERT INTO record_change_audit(record_table,record_id,action,before_json,after_json,employee_number,changed_by) VALUES('section_event_log',$1,'edit',$2,$3,$4,$5)`,[id,old,q.rows[0],u.employee_number,from]);
+      await sendText(from,`Updated record #${id}. Previous value preserved in audit history.`);return;
     }
 
     // Common shift check-in for ALL sections. Explicit check-in is attendance evidence.
