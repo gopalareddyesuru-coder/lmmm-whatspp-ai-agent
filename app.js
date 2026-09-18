@@ -303,6 +303,12 @@ async function initDB() {
   await pool.query(`ALTER TABLE media_ingestion ADD COLUMN IF NOT EXISTS review_count INTEGER DEFAULT 0`);
   await pool.query(`ALTER TABLE media_ingestion ADD COLUMN IF NOT EXISTS rolled_back_at TIMESTAMPTZ`);
   await pool.query(`ALTER TABLE media_ingestion ADD COLUMN IF NOT EXISTS rolled_back_by TEXT`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS technical_document_knowledge(
+    id BIGSERIAL PRIMARY KEY, media_ingestion_id BIGINT NOT NULL, employee_number TEXT NOT NULL,
+    document_class TEXT NOT NULL, title TEXT, equipment_name TEXT, identifiers JSONB,
+    content_json JSONB NOT NULL, source_filename TEXT, entered_by TEXT NOT NULL, entered_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_technical_doc_equipment ON technical_document_knowledge(equipment_name,document_class)`);
   await pool.query(`CREATE TABLE IF NOT EXISTS record_change_audit(
     id BIGSERIAL PRIMARY KEY, record_table TEXT NOT NULL, record_id BIGINT NOT NULL,
     action TEXT NOT NULL, before_json JSONB, after_json JSONB, employee_number TEXT,
@@ -861,19 +867,16 @@ async function mediaBytes(url){
  if(!r.ok)throw new Error(`Meta media download ${r.status}`); return Buffer.from(await r.arrayBuffer());
 }
 function geminiInstruction(u,ctx){
- return `You extract LMMM steel-plant maintenance/shift data.
+ return `You are the document-intelligence ingestion engine for the LMMM steel-plant maintenance system.
+FIRST understand what the source actually is. Never convert instructions/reference material into events that happened.
 Return valid JSON only with this exact structure:
-{"language":"en|te|hi","uncertain":boolean,"needs_event_time":boolean,"document_kind":"table|handwritten_note|photo|audio|document","table_has_date_column":boolean,"summary":string,"entries":[{"type":"production|delay|inspection|defect|job_action|logbook_note","equipment":string|null,"text":string,"blooms_rolled":number|null,"delay_minutes":number|null,"delay_section":string|null,"reason":string|null,"event_date":string|null,"event_shift":"A|B|C|GENERAL|null"}]}.
-For TABLES: set document_kind="table" and table_has_date_column=true when a Date column is visible. Extract EVERY readable data row as a separate entry. Bind each row's Date, Equipment, Job Description/Action, Remarks and identifiers to THAT SAME ROW. Never replace visible row dates with null or one common date. If a row has a visible date, event_date MUST contain that exact visible date text. A table with visible dates does NOT need a common event-time question. NEVER ask/apply one common date to a historical table. If a row date is unreadable, leave only that row event_date=null and set uncertain=true; do not copy another row date.
-For handwritten/current notes with no written event date, leave event_date=null and set needs_event_time=true.
-Classify observations such as loose, leak, damage, abnormality, failure or fault as defect unless the source explicitly records completed corrective work.
-Write every entry.text as concise standard technical ENGLISH, even when source speech is Telugu or Hindi.
-Extract equipment separately in entry.equipment (example: "Charging Grid 2").
-Never invent unreadable data. Preserve equipment/SAP/CAT/drawing/part identifiers exactly as supplied/visible.
-If a spoken equipment number/identifier is genuinely ambiguous, set uncertain=true instead of guessing.
-Primary production is blooms rolled. Do not invent tonnes.
-Section=${u.section_department}; Area=${u.area_of_working}; Current shift=${ctx.shift||'unknown'}.
-If event date/shift is unclear for an apparently old/late entry, set needs_event_time=true.`;
+{"language":"en|te|hi","uncertain":boolean,"needs_event_time":boolean,"document_class":"manual|sop|smp|drawing|spares|inspection_record|defect_record|job_record|maintenance_history|vibration_readings|motor_load_readings|breakdown_delay|production|logbook|attendance|other_reference","document_kind":"table|handwritten_note|photo|audio|document","table_has_date_column":boolean,"title":string|null,"summary":string,"equipment_refs":[string],"identifiers":[string],"reference_items":[{"heading":string|null,"text":string}],"entries":[{"type":"production|delay|inspection|defect|job_action|logbook_note|vibration_reading|motor_load_reading","equipment":string|null,"text":string,"blooms_rolled":number|null,"delay_minutes":number|null,"delay_section":string|null,"reason":string|null,"reading_value":number|null,"reading_unit":string|null,"reading_point":string|null,"event_date":string|null,"event_shift":"A|B|C|GENERAL|null"}]}.
+DOCUMENT CLASSIFICATION IS MANDATORY.
+Manual/SOP/SMP/drawing/spares/other_reference are REFERENCE documents. Put their useful content in reference_items and summary. Do NOT create inspection/job/defect/history entries merely because the manual says check, inspect, replace, maintain or lubricate. They have no event date unless the source explicitly records an action that actually happened. Set needs_event_time=false for pure reference documents.
+For actual inspection/defect/job/history/vibration/motor-load/breakdown/production/logbook records, extract EVERY readable record. For TABLES bind each row's own Date + Equipment + description/readings/remarks to THAT SAME ROW. Different rows may have different dates/equipment. Never use a common date for a historical table. If one row date is unreadable, only that row gets event_date=null.
+For fresh handwritten/current observations with no date, event_date=null and needs_event_time=true. User may later supply Today, Yesterday, DD/MM/YYYY, DD-MM-YYYY or YYYY-MM-DD.
+Write entry.text in concise standard technical ENGLISH. Preserve exact visible equipment/SAP/CAT/drawing/part identifiers. Never guess unreadable identifiers. If mapping/classification is genuinely doubtful set uncertain=true.
+Section=${u.section_department}; Area=${u.area_of_working}; Current shift=${ctx.shift||'unknown'}.`;
 }
 async function geminiGenerate(parts,u,ctx){
  if(!GEMINI_API_KEY)throw new Error('GEMINI_API_KEY missing');
@@ -907,7 +910,7 @@ async function extractAudio(buf,mime,u,ctx){
 }
 async function extractDocument(buf,mime,u,ctx){
  return geminiGenerate([
-   {text:'Read this document and extract relevant LMMM maintenance/production/log-book entries. Do not guess unreadable identifiers.'},
+   {text:'Understand this document first, classify it, then extract all supported information. Reference manuals/SOP/SMP/drawings must remain reference knowledge and must NOT be treated as completed maintenance events. Actual history/inspection/defect/job/vibration/motor-load tables must be extracted row-by-row with each row own date and equipment. Do not guess unreadable identifiers.'},
    {inline_data:{mime_type:mime,data:buf.toString('base64')}}
  ],u,ctx);
 }
@@ -933,7 +936,7 @@ async function repairTableDates(buf,mime,u,ctx,obj){
 }
 function isCompleteMediaEntry(e){
  if(!e)return false;
- const supportedTypes=new Set(['production','delay','inspection','defect','job_action','logbook_note']);
+ const supportedTypes=new Set(['production','delay','inspection','defect','job_action','logbook_note','vibration_reading','motor_load_reading']);
  if(!supportedTypes.has(e.type) || !e.event_date)return false;
  if(e.type==='production')return Number.isInteger(e.blooms_rolled) && e.blooms_rolled>=0;
  if(e.type==='delay')return Number.isInteger(e.delay_minutes) && e.delay_minutes>=0 && !!String(e.delay_section||'').trim() && !!String(e.reason||e.text||'').trim();
@@ -962,6 +965,8 @@ async function stageMedia(u,from,msg){
  obj=normalizeMediaDates(obj).obj;
  const lang=obj.language||languageOf(raw);
  const entries=Array.isArray(obj.entries)?obj.entries:[];
+ const referenceClasses=new Set(['manual','sop','smp','drawing','spares','other_reference']);
+ const isReference=referenceClasses.has(obj.document_class);
 
  // Historical dated tables are row-independent. Save every complete row immediately and
  // hold ONLY incomplete rows for review. One bad date must never block or date-shift good rows.
@@ -974,6 +979,16 @@ async function stageMedia(u,from,msg){
  VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
  [u.employee_number,n.id,type,mime,name,lang,raw,obj,status,from]);
  const mediaRowId=q.rows[0].id; await pool.query(`UPDATE media_ingestion SET batch_code=$2 WHERE id=$1`,[mediaRowId,mediaBatchCode(mediaRowId)]);
+
+ if(isReference){
+   const eq=(obj.equipment_refs||[])[0]||null;
+   await pool.query(`INSERT INTO technical_document_knowledge(media_ingestion_id,employee_number,document_class,title,equipment_name,identifiers,content_json,source_filename,entered_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+    [mediaRowId,u.employee_number,obj.document_class,obj.title||name,eq,JSON.stringify(obj.identifiers||[]),obj,name,from]);
+   await pool.query(`UPDATE media_ingestion SET status='reference_saved',record_count=0 WHERE id=$1`,[mediaRowId]);
+   const items=(obj.reference_items||[]).slice(0,8).map((x,i)=>`${i+1}. ${x.heading?x.heading+': ':''}${x.text}`).join('\n');
+   await sendText(from,`📘 ${String(obj.document_class).toUpperCase()} identified${obj.title?` — ${obj.title}`:''}\n${obj.summary||''}${items?`\n\n${items}`:''}\n\nSaved as reference knowledge. Batch ID: ${mediaBatchCode(mediaRowId)}`);
+   return;
+ }
 
  let saved=[];
  if(wholeClear){
@@ -1010,7 +1025,7 @@ async function commitMedia(u,from,p,status='confirmed',timingSource='media_confi
    VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,[d,sh||'Not found',u.area_of_working,e.blooms_rolled,u.name,`Media: ${e.text||''}`,from,mediaId]);
    productionByKey.set(`${d}|${sh||'Not found'}|${String(u.area_of_working).toLowerCase()}`,q.rows[0].id);
    saved.push({type:'production',id:q.rows[0].id,text:`${e.blooms_rolled} blooms`,equipment:e.equipment||null});
-  }else if(['inspection','defect','job_action','logbook_note'].includes(e.type)){
+  }else if(['inspection','defect','job_action','logbook_note','vibration_reading','motor_load_reading'].includes(e.type)){
    const id=await saveSectionEvent(u,from,e.type,e.text||'',d,sh,timingSource,e.equipment||null,mediaId);
    saved.push({type:e.type,id,text:e.text||'',equipment:e.equipment||null});
   }else if(e.type==='delay' && Number.isInteger(e.delay_minutes)){
@@ -1435,7 +1450,7 @@ async function processMessage(from, text, rawMessage = null) {
         if(proposed.table_has_date_column){await sendText(from,'This is a historical dated table. Today/common date is blocked. Only unresolved rows are pending; send a clearer source or row-wise correction such as ROW 1 DATE 19-06-2005.');return;}
         const entries=(proposed.entries||[]).map(e=>e.event_date?e:{...e,event_date:suppliedDate,event_date_source:clean});
         const stillMissing=entries.some(e=>!e.event_date);
-        const updated={...proposed,entries,needs_event_time:stillMissing};
+        const updated={...proposed,entries,needs_event_time:stillMissing,uncertain:stillMissing?Boolean(proposed.uncertain):false};
         await pool.query(`UPDATE pending_media_confirmations SET proposed_json=$2,created_at=now() WHERE employee_number=$1`,[u.employee_number,updated]);
         if(!stillMissing && !updated.uncertain){
           const saved=await commitMedia(u,from,{...pendingMedia,proposed_json:updated},'confirmed','user_supplied_media_date');
