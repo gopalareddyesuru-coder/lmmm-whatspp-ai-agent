@@ -19,7 +19,7 @@ const NA='NOT ASSIGNED';
 app.use((req,_res,next)=>{console.log(`[REQUEST] ${req.method} ${req.originalUrl}`);next();});
 const isTe=t=>/[\u0C00-\u0C7F]/.test(t||'');
 const T=(k,te=false)=>({
- register:te?'దయచేసి నమోదు చేయండి:\nName / Employee Number / Designation / Area / Section / Responsibility':'Please register:\nName / Employee Number / Designation / Area / Section / Responsibility',
+ register:te?'దయచేసి నమోదు చేయండి:\nName / Employee Number / Designation / Section / Area':'Please register:\nName / Employee Number / Designation / Section / Area',
  pending:te?'ఆమోదం కోసం పంపబడింది.':'Sent for approval.',
  welcome:te?'LMMM AI Maintenance కి స్వాగతం.':'Welcome to LMMM AI Maintenance.',
  notfound:te?'కనుగొనబడలేదు.':'Not found.',
@@ -41,11 +41,13 @@ async function sendText(to,body){
  console.log('[WHATSAPP] Sent OK',to); return d;
 }
 function parseReg(text){
- const p=String(text||'').split('/').map(x=>x.trim());
- if(p.length<3)return null;
- const [name,employee_number,designation,area,section,responsibility]=p;
- if(!name||!/^\d+$/.test(employee_number||'')||!designation)return null;
- return {name,employee_number,designation,area:area||NA,section:section||NA,responsibility:responsibility||NA};
+ const raw=String(text||'').trim();
+ const p=(raw.includes('/') ? raw.split('/') : raw.split(/\r?\n/))
+   .map(x=>x.trim()).filter(Boolean);
+ if(p.length < 5) return null;
+ const [name,employee_number,designation,section,area]=p;
+ if(!name || !/^\d+$/.test(employee_number||'') || !designation || !section || !area) return null;
+ return {name,employee_number,designation,section,area,responsibility:NA};
 }
 async function byWA(wa){const r=await pool.query('SELECT * FROM users WHERE whatsapp_number=$1 LIMIT 1',[wa]);return r.rows[0]||null;}
 async function byEmp(e){const r=await pool.query('SELECT * FROM users WHERE employee_number=$1 LIMIT 1',[e]);return r.rows[0]||null;}
@@ -81,7 +83,7 @@ async function processMessage(from,text){
   const d=parseReg(text);if(!d){await sendText(from,T('register',te));return;}
   await pool.query(`INSERT INTO users(whatsapp_number,name,employee_number,designation,area_of_working,section_department,responsibility,approval_status) VALUES($1,$2,$3,$4,$5,$6,$7,'pending') ON CONFLICT(whatsapp_number) DO UPDATE SET name=EXCLUDED.name,employee_number=EXCLUDED.employee_number,designation=EXCLUDED.designation,area_of_working=EXCLUDED.area_of_working,section_department=EXCLUDED.section_department,responsibility=EXCLUDED.responsibility,approval_status='pending',updated_at=now()`,[from,d.name,d.employee_number,d.designation,d.area,d.section,d.responsibility]);
   await sendText(from,T('pending',te));
-  for(const owner of OWNER_NUMBERS)await sendText(owner,`Registration approval:\n${d.name} / ${d.employee_number} / ${d.designation} / ${d.area} / ${d.section} / ${d.responsibility}\n\nAPPROVE ${d.employee_number}\nREJECT ${d.employee_number}`);
+  for(const owner of OWNER_NUMBERS)await sendText(owner,`Registration approval:\n${d.name} / ${d.employee_number} / ${d.designation} / ${d.section} / ${d.area}\n\nAPPROVE ${d.employee_number}\nREJECT ${d.employee_number}`);
   return;
  }
  if(u.is_active===false){await sendText(from,'Not authorised.');return;}
