@@ -141,6 +141,26 @@ async function initDB() {
     )
   `);
 
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS employee_contacts(
+      id BIGSERIAL PRIMARY KEY,
+      employee_number TEXT NOT NULL UNIQUE,
+      max_number TEXT,
+      company_email TEXT,
+      entered_by TEXT NOT NULL,
+      updated_at TIMESTAMPTZ DEFAULT now()
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS emergency_contacts(
+      id BIGSERIAL PRIMARY KEY,
+      contact_name TEXT NOT NULL,
+      max_number TEXT NOT NULL,
+      notes TEXT,
+      entered_by TEXT NOT NULL,
+      updated_at TIMESTAMPTZ DEFAULT now()
+    )
+  `);
   console.log('[DATABASE] V4.4 hierarchy + authority foundation ready');
   console.log('[ADMIN] configured:', SUPER_ADMIN_NUMBERS.size);
 }
@@ -520,6 +540,32 @@ async function setResponsibility(from, employeeNumber, code) {
       {id:`RESP_DONE:${employeeNumber}`,title:'Done'}
     ]
   );
+}
+
+
+function validCompanyEmail(v=''){return /^[A-Z0-9._%+-]+@vizagsteel\.com$/i.test(String(v).trim());}
+function cleanMax(v=''){const x=String(v).trim();return /^[0-9+\-()\/ ]{2,30}$/.test(x)?x:null;}
+async function employeeSearch(term){
+ const t=String(term||'').trim();if(!t)return[];
+ if(/^\d+$/.test(t))return(await pool.query(`SELECT u.*,c.max_number,c.company_email FROM users u LEFT JOIN employee_contacts c USING(employee_number) WHERE u.employee_number=$1 AND u.approval_status='approved' AND u.is_active=true LIMIT 5`,[t])).rows;
+ return(await pool.query(`SELECT u.*,c.max_number,c.company_email FROM users u LEFT JOIN employee_contacts c USING(employee_number) WHERE u.approval_status='approved' AND u.is_active=true AND LOWER(u.name) LIKE LOWER($1) ORDER BY u.name LIMIT 5`,[`%${t}%`])).rows;
+}
+async function profileText(u){
+ const a=await effectiveAuthority(u.employee_number);
+ const resp=(a?.responsibility_roles||[])[0]?.responsibility_role||u.responsibility||'Not found';
+ return `${u.name}\nEmployee No: ${u.employee_number}\nDesignation: ${u.designation}\nSection: ${u.section_department}\nArea: ${u.area_of_working}\nResponsibility: ${resp}\nMAX No: ${u.max_number||'Not found'}\nCompany Email: ${u.company_email||'Not found'}`;
+}
+async function saveMax(from,emp,val){
+ const u=await byEmp(emp),v=cleanMax(val);if(!u||u.approval_status!=='approved'||!u.is_active||!v)return false;
+ await pool.query(`INSERT INTO employee_contacts(employee_number,max_number,entered_by) VALUES($1,$2,$3) ON CONFLICT(employee_number) DO UPDATE SET max_number=EXCLUDED.max_number,entered_by=EXCLUDED.entered_by,updated_at=now()`,[emp,v,from]);return true;
+}
+async function saveEmail(from,emp,val){
+ const u=await byEmp(emp);if(!u||u.approval_status!=='approved'||!u.is_active||!validCompanyEmail(val))return false;
+ await pool.query(`INSERT INTO employee_contacts(employee_number,company_email,entered_by) VALUES($1,$2,$3) ON CONFLICT(employee_number) DO UPDATE SET company_email=EXCLUDED.company_email,entered_by=EXCLUDED.entered_by,updated_at=now()`,[emp,String(val).toLowerCase(),from]);return true;
+}
+async function saveEmergency(from,name,val){
+ const v=cleanMax(val),n=String(name).trim();if(!v||!n)return false;
+ await pool.query(`INSERT INTO emergency_contacts(contact_name,max_number,entered_by) VALUES($1,$2,$3)`,[n,v,from]);return true;
 }
 
 async function ownerCommand(from, text) {
@@ -905,13 +951,43 @@ async function processMessage(from, text) {
   }
 
   if (u.approval_status === 'approved') {
+    let cm;
     if (/^(hi|hello|hey|start)$/i.test(clean)) {
-      await sendText(from, T('help', te));
-      return;
+      await sendText(from,T('help',te)); return;
     }
-
-    await sendText(from, T('notfound', te));
-    return;
+    if ((cm=clean.match(/^(.+?)\s+details$/i)) || (cm=clean.match(/^employee\s+(.+)$/i))) {
+      const rows=await employeeSearch(cm[1]);
+      if(!rows.length){await sendText(from,T('notfound',te));return;}
+      if(rows.length===1){await sendText(from,await profileText(rows[0]));return;}
+      await sendList(from,'Select employee','Select',rows.map(x=>({id:`EMPDETAIL:${x.employee_number}`,title:String(x.name).slice(0,24),description:`Emp No: ${x.employee_number}`})),'Employees');return;
+    }
+    if ((cm=clean.match(/^EMPDETAIL:(\d+)$/i))) {
+      const rows=await employeeSearch(cm[1]);await sendText(from,rows[0]?await profileText(rows[0]):T('notfound',te));return;
+    }
+    if ((cm=clean.match(/^MAX\s+(\d+)\s+(.+)$/i))) {
+      await sendText(from,(await saveMax(from,cm[1],cm[2]))?'Saved.':T('notfound',te));return;
+    }
+    if ((cm=clean.match(/^EMAIL\s+(\d+)\s+(\S+)$/i))) {
+      await sendText(from,(await saveEmail(from,cm[1],cm[2]))?'Saved.':T('notfound',te));return;
+    }
+    if ((cm=clean.match(/^(.+?)\s+(?:max|telephone)\s*(?:number|no)?$/i))) {
+      const rows=await employeeSearch(cm[1]);await sendText(from,rows.length===1?`${rows[0].name}\nMAX No: ${rows[0].max_number||'Not found'}`:T('notfound',te));return;
+    }
+    if ((cm=clean.match(/^(.+?)\s+(?:mail|email)(?:\s+id)?$/i))) {
+      const rows=await employeeSearch(cm[1]);await sendText(from,rows.length===1?`${rows[0].name}\nCompany Email: ${rows[0].company_email||'Not found'}`:T('notfound',te));return;
+    }
+    if ((cm=clean.match(/^EMERGENCY\s+MAX\s+(.+?)\s+([0-9+\-()\/ ]{2,30})$/i))) {
+      await sendText(from,(await saveEmergency(from,cm[1],cm[2]))?'Saved.':T('notfound',te));return;
+    }
+    if (/^emergency\s+(?:max\s+)?numbers?$/i.test(clean)) {
+      const rows=(await pool.query(`SELECT contact_name,max_number FROM emergency_contacts ORDER BY contact_name LIMIT 50`)).rows;
+      await sendText(from,rows.length?rows.map(x=>`${x.contact_name}: ${x.max_number}`).join('\n'):T('notfound',te));return;
+    }
+    if ((cm=clean.match(/^(.+?)\s+emergency\s+(?:max\s+)?(?:number|no)?$/i))) {
+      const rows=(await pool.query(`SELECT contact_name,max_number FROM emergency_contacts WHERE LOWER(contact_name) LIKE LOWER($1) ORDER BY contact_name LIMIT 10`,[`%${cm[1]}%`])).rows;
+      await sendText(from,rows.length?rows.map(x=>`${x.contact_name}: ${x.max_number}`).join('\n'):T('notfound',te));return;
+    }
+    await sendText(from,T('notfound',te));return;
   }
 
   await sendText(from, T('notfound', te));
@@ -980,7 +1056,7 @@ app.post('/webhook', (req, res) => {
 app.get('/api/status', (_q, r) =>
   r.status(200).json({
     status: 'ready',
-    registration: 'V4.5-responsibility-ux',
+    registration: 'V4.7-contact-directory',
     webhook: '/webhook',
     super_admins_configured: SUPER_ADMIN_NUMBERS.size
   })
