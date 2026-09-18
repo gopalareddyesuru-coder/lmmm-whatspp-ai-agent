@@ -13,7 +13,7 @@ const PHONE_NUMBER_ID = process.env.META_PHONE_NUMBER_ID || process.env.PHONE_NU
 const ACCESS_TOKEN = process.env.META_ACCESS_TOKEN || '';
 const DATABASE_URL = process.env.DATABASE_URL || '';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite';
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
 
 const SUPER_ADMIN_NUMBERS = new Set(
   (
@@ -256,6 +256,9 @@ async function initDB() {
     )
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_section_event_date ON section_event_log(event_date,section,area,event_type)`);
+  await pool.query(`ALTER TABLE section_event_log ADD COLUMN IF NOT EXISTS equipment_name TEXT`);
+  await pool.query(`ALTER TABLE section_event_log ADD COLUMN IF NOT EXISTS source_media_ingestion_id BIGINT`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_section_event_equipment ON section_event_log(equipment_name,event_date)`);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS media_ingestion(
@@ -807,7 +810,9 @@ async function mediaBytes(url){
 function geminiInstruction(u,ctx){
  return `You extract LMMM steel-plant maintenance/shift data.
 Return valid JSON only with this exact structure:
-{"language":"en|te|hi","uncertain":boolean,"needs_event_time":boolean,"summary":string,"entries":[{"type":"production|delay|inspection|defect|job_action|logbook_note","text":string,"blooms_rolled":number|null,"delay_minutes":number|null,"delay_section":string|null,"reason":string|null,"event_date":string|null,"event_shift":"A|B|C|GENERAL|null"}]}.
+{"language":"en|te|hi","uncertain":boolean,"needs_event_time":boolean,"summary":string,"entries":[{"type":"production|delay|inspection|defect|job_action|logbook_note","equipment":string|null,"text":string,"blooms_rolled":number|null,"delay_minutes":number|null,"delay_section":string|null,"reason":string|null,"event_date":string|null,"event_shift":"A|B|C|GENERAL|null"}]}.
+Convert every clear maintenance observation/action into concise standard technical ENGLISH in "text", even if source speech is Telugu, Hindi or mixed. Example: "Charging Grid 2 chain loose observe chesam" => equipment "Charging Grid 2", type "defect", text "Chain found loose".
+Fault conditions such as loose, leak, damaged, abnormal, failed or failure are defects even if the speaker says observed.
 Never invent unreadable data. Preserve equipment/SAP/CAT/drawing/part identifiers exactly as supplied/visible.
 Primary production is blooms rolled. Do not invent tonnes.
 Section=${u.section_department}; Area=${u.area_of_working}; Current shift=${ctx.shift||'unknown'}.
@@ -849,42 +854,54 @@ async function extractDocument(buf,mime,u,ctx){
    {inline_data:{mime_type:mime,data:buf.toString('base64')}}
  ],u,ctx);
 }
+async function commitMediaObject(u,from,o,mediaId,timing='media_auto'){
+ const ctx=await currentShiftContext(u),n=plantNow(),saved=[];
+ for(const e of (o.entries||[])){
+  const d=e.event_date||n.date,sh=e.event_shift||ctx.shift;
+  if(e.type==='production' && Number.isInteger(e.blooms_rolled)){
+   await pool.query(`INSERT INTO production_shift_logs(production_date,shift,area,blooms_rolled,operations_shift_incharge,remarks,entered_by) VALUES($1,$2,$3,$4,$5,$6,$7)`,
+   [d,sh||'Not found',u.area_of_working,e.blooms_rolled,u.name,`Media: ${e.text||''}`,from]);
+   saved.push(`Production ${e.blooms_rolled} blooms`);
+  }else if(['inspection','defect','job_action','logbook_note'].includes(e.type)){
+   const id=await saveSectionEvent(u,from,e.type,e.text||'',d,sh,timing);
+   await pool.query(`UPDATE section_event_log SET equipment_name=$1,source_media_ingestion_id=$2 WHERE id=$3`,[e.equipment||null,mediaId,id]);
+   saved.push(`${e.equipment?e.equipment+' – ':''}${e.text||e.type}`);
+  }
+ }
+ return saved;
+}
 async function stageMedia(u,from,msg){
  const n=msg.image||msg.audio||msg.voice||msg.document;
  const type=msg.image?'image':(msg.audio||msg.voice)?'audio':'document';
- const meta=await mediaMeta(n.id), mime=meta.mime_type||n.mime_type||'', name=n.filename||`${type}-${n.id}`;
+ const meta=await mediaMeta(n.id),mime=meta.mime_type||n.mime_type||'',name=n.filename||`${type}-${n.id}`;
  const buf=await mediaBytes(meta.url),ctx=await currentShiftContext(u);
  let raw='',obj;
  if(type==='audio'){obj=await extractAudio(buf,mime,u,ctx);raw=obj.summary||'';}
  else if(type==='image'){obj=await extractPhoto(buf,mime,u,ctx);raw=obj.summary||'';}
  else if(/text|csv|json|xml/i.test(mime)){raw=buf.toString('utf8').slice(0,150000);obj=await classifyExtracted(raw,u,ctx);}
  else if(/pdf/i.test(mime)){obj=await extractDocument(buf,mime,u,ctx);raw=obj.summary||'';}
- else {obj={language:'en',uncertain:true,needs_event_time:false,summary:'File received. This file type is not parsed automatically yet.',entries:[]};}
+ else obj={language:'en',uncertain:true,needs_event_time:false,summary:'File received. This file type is not parsed automatically yet.',entries:[]};
  const lang=obj.language||languageOf(raw);
- const q=await pool.query(`INSERT INTO media_ingestion(employee_number,media_id,media_type,mime_type,filename,detected_language,extracted_text,extraction_json,status,entered_by)
- VALUES($1,$2,$3,$4,$5,$6,$7,$8,'pending_confirmation',$9) RETURNING id`,
- [u.employee_number,n.id,type,mime,name,lang,raw,obj,from]);
- await pool.query(`INSERT INTO pending_media_confirmations(employee_number,media_ingestion_id,proposed_json) VALUES($1,$2,$3)
- ON CONFLICT(employee_number) DO UPDATE SET media_ingestion_id=EXCLUDED.media_ingestion_id,proposed_json=EXCLUDED.proposed_json,created_at=now()`,
- [u.employee_number,q.rows[0].id,obj]);
- const lines=(obj.entries||[]).slice(0,15).map((e,i)=>`${i+1}. ${e.type}: ${e.text||''}`).join('\n');
- const ask=obj.needs_event_time?ml(lang,'When did it happen?','ఇది ఎప్పుడు జరిగింది?','यह कब हुआ था?'):
-   ml(lang,'Confirm these entries: CONFIRM / CORRECT','ఈ వివరాలు సరైతే: CONFIRM / CORRECT','जानकारी सही है तो: CONFIRM / CORRECT');
+ const auto=!obj.uncertain&&!obj.needs_event_time&&(obj.entries||[]).length>0;
+ const q=await pool.query(`INSERT INTO media_ingestion(employee_number,media_id,media_type,mime_type,filename,detected_language,extracted_text,extraction_json,status,entered_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+ [u.employee_number,n.id,type,mime,name,lang,raw,obj,auto?'auto_processing':'pending_confirmation',from]);
+ if(auto){
+  const saved=await commitMediaObject(u,from,obj,q.rows[0].id);
+  await pool.query(`UPDATE media_ingestion SET status='auto_saved' WHERE id=$1`,[q.rows[0].id]);
+  await pool.query(`DELETE FROM pending_media_confirmations WHERE employee_number=$1`,[u.employee_number]);
+  await sendText(from,saved.length?`Saved. ${saved.join('\n')}`:'Not found.');
+  return;
+ }
+ await pool.query(`INSERT INTO pending_media_confirmations(employee_number,media_ingestion_id,proposed_json) VALUES($1,$2,$3) ON CONFLICT(employee_number) DO UPDATE SET media_ingestion_id=EXCLUDED.media_ingestion_id,proposed_json=EXCLUDED.proposed_json,created_at=now()`,[u.employee_number,q.rows[0].id,obj]);
+ const lines=(obj.entries||[]).slice(0,15).map((e,i)=>`${i+1}. ${e.type}: ${e.equipment?e.equipment+' – ':''}${e.text||''}`).join('\n');
+ const ask=obj.needs_event_time?ml(lang,'When did it happen?','ఇది ఎప్పుడు జరిగింది?','यह कब हुआ था?'):ml(lang,'Some details are unclear. CONFIRM / CORRECT','కొన్ని వివరాలు స్పష్టంగా లేవు. CONFIRM / CORRECT','कुछ विवरण स्पष्ट नहीं हैं। CONFIRM / CORRECT');
  await sendText(from,`${lines||obj.summary}\n\n${ask}`);
 }
 async function commitMedia(u,from,p){
- const o=p.proposed_json,ctx=await currentShiftContext(u),n=plantNow();
- for(const e of (o.entries||[])){
-  const d=e.event_date||n.date,sh=e.event_shift||ctx.shift;
-  if(e.type==='production' && Number.isInteger(e.blooms_rolled)){
-   await pool.query(`INSERT INTO production_shift_logs(production_date,shift,area,blooms_rolled,operations_shift_incharge,remarks,entered_by)
-   VALUES($1,$2,$3,$4,$5,$6,$7)`,[d,sh||'Not found',u.area_of_working,e.blooms_rolled,u.name,`Media: ${e.text||''}`,from]);
-  }else if(['inspection','defect','job_action','logbook_note'].includes(e.type)){
-   await saveSectionEvent(u,from,e.type,e.text||'',d,sh,'media_confirmed');
-  }
- }
+ const saved=await commitMediaObject(u,from,p.proposed_json,p.media_ingestion_id,'media_confirmed');
  await pool.query(`UPDATE media_ingestion SET status='confirmed' WHERE id=$1`,[p.media_ingestion_id]);
  await pool.query(`DELETE FROM pending_media_confirmations WHERE employee_number=$1`,[u.employee_number]);
+ await sendText(from,saved.length?`Saved. ${saved.join('\n')}`:'Not found.');
 }
 
 async function ownerCommand(from, text) {
@@ -1486,7 +1503,7 @@ app.post('/webhook', (req, res) => {
 app.get('/api/status', (_q, r) =>
   r.status(200).json({
     status: 'ready',
-    registration: 'V5.1-gemini-multimodal',
+    registration: 'V5.2-auto-english-equipment-save',
     webhook: '/webhook',
     super_admins_configured: SUPER_ADMIN_NUMBERS.size
   })
