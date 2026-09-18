@@ -12,9 +12,8 @@ const GRAPH_VERSION = process.env.META_GRAPH_VERSION || 'v26.0';
 const PHONE_NUMBER_ID = process.env.META_PHONE_NUMBER_ID || process.env.PHONE_NUMBER_ID || '';
 const ACCESS_TOKEN = process.env.META_ACCESS_TOKEN || '';
 const DATABASE_URL = process.env.DATABASE_URL || '';
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
-const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4.1-mini';
-const OPENAI_TRANSCRIBE_MODEL = process.env.OPENAI_TRANSCRIBE_MODEL || 'gpt-4o-mini-transcribe';
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite';
 
 const SUPER_ADMIN_NUMBERS = new Set(
   (
@@ -805,29 +804,50 @@ async function mediaBytes(url){
  const r=await fetch(url,{headers:{Authorization:`Bearer ${ACCESS_TOKEN}`}});
  if(!r.ok)throw new Error(`Meta media download ${r.status}`); return Buffer.from(await r.arrayBuffer());
 }
-async function aiJSON(messages){
- if(!OPENAI_API_KEY)throw new Error('OPENAI_API_KEY missing');
- const r=await fetch('https://api.openai.com/v1/chat/completions',{method:'POST',
-  headers:{Authorization:`Bearer ${OPENAI_API_KEY}`,'Content-Type':'application/json'},
-  body:JSON.stringify({model:OPENAI_MODEL,messages,response_format:{type:'json_object'},temperature:0})});
- if(!r.ok)throw new Error(`AI extraction ${r.status}`);
- return JSON.parse((await r.json()).choices[0].message.content);
+function geminiInstruction(u,ctx){
+ return `You extract LMMM steel-plant maintenance/shift data.
+Return valid JSON only with this exact structure:
+{"language":"en|te|hi","uncertain":boolean,"needs_event_time":boolean,"summary":string,"entries":[{"type":"production|delay|inspection|defect|job_action|logbook_note","text":string,"blooms_rolled":number|null,"delay_minutes":number|null,"delay_section":string|null,"reason":string|null,"event_date":string|null,"event_shift":"A|B|C|GENERAL|null"}]}.
+Never invent unreadable data. Preserve equipment/SAP/CAT/drawing/part identifiers exactly as supplied/visible.
+Primary production is blooms rolled. Do not invent tonnes.
+Section=${u.section_department}; Area=${u.area_of_working}; Current shift=${ctx.shift||'unknown'}.
+If event date/shift is unclear for an apparently old/late entry, set needs_event_time=true.`;
 }
-async function transcribe(buf,mime,name){
- const fd=new FormData();fd.append('file',new Blob([buf],{type:mime||'audio/ogg'}),name||'voice.ogg');fd.append('model',OPENAI_TRANSCRIBE_MODEL);
- const r=await fetch('https://api.openai.com/v1/audio/transcriptions',{method:'POST',headers:{Authorization:`Bearer ${OPENAI_API_KEY}`},body:fd});
- if(!r.ok)throw new Error(`Transcription ${r.status}`);return (await r.json()).text||'';
+async function geminiGenerate(parts,u,ctx){
+ if(!GEMINI_API_KEY)throw new Error('GEMINI_API_KEY missing');
+ const url=`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`;
+ const body={
+   system_instruction:{parts:[{text:geminiInstruction(u,ctx)}]},
+   contents:[{role:'user',parts}],
+   generationConfig:{temperature:0,responseMimeType:'application/json'}
+ };
+ const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+ if(!r.ok)throw new Error(`Gemini ${r.status}: ${await r.text()}`);
+ const j=await r.json();
+ const txt=(j.candidates?.[0]?.content?.parts||[]).map(p=>p.text||'').join('').trim();
+ if(!txt)throw new Error('Gemini returned no text');
+ return JSON.parse(txt.replace(/^```json\s*/i,'').replace(/```$/,'').trim());
 }
 async function classifyExtracted(text,u,ctx){
- return aiJSON([{role:'system',content:`Extract LMMM shift data. JSON only:
-{"language":"en|te|hi","uncertain":boolean,"needs_event_time":boolean,"summary":string,"entries":[{"type":"production|delay|inspection|defect|job_action|logbook_note","text":string,"blooms_rolled":number|null,"delay_minutes":number|null,"delay_section":string|null,"reason":string|null,"event_date":string|null,"event_shift":"A|B|C|GENERAL|null"}]}.
-Never invent equipment/SAP/CAT/drawing identifiers. Preserve identifiers exactly. Section=${u.section_department}; Area=${u.area_of_working}; Shift=${ctx.shift||'unknown'}.`},{role:'user',content:text}]);
+ return geminiGenerate([{text:`Classify and extract every relevant LMMM entry from this message:\n${text}`}],u,ctx);
 }
 async function extractPhoto(buf,mime,u,ctx){
- return aiJSON([{role:'system',content:`Read this LMMM shift/log-book image. JSON only:
-{"language":"en|te|hi","uncertain":boolean,"needs_event_time":boolean,"summary":string,"entries":[{"type":"production|delay|inspection|defect|job_action|logbook_note","text":string,"blooms_rolled":number|null,"delay_minutes":number|null,"delay_section":string|null,"reason":string|null,"event_date":string|null,"event_shift":"A|B|C|GENERAL|null"}]}.
-Extract all readable entries. Never guess unreadable values or identifiers; mark uncertain=true. Preserve exact identifiers. Section=${u.section_department}; Area=${u.area_of_working}; Shift=${ctx.shift||'unknown'}.`},
- {role:'user',content:[{type:'text',text:'Extract this log-book/photo.'},{type:'image_url',image_url:{url:`data:${mime||'image/jpeg'};base64,${buf.toString('base64')}`,detail:'high'}}]}]);
+ return geminiGenerate([
+   {text:'Read this shift log-book/photo carefully and extract every relevant readable entry. Mark uncertain=true for doubtful handwriting or values.'},
+   {inline_data:{mime_type:mime||'image/jpeg',data:buf.toString('base64')}}
+ ],u,ctx);
+}
+async function extractAudio(buf,mime,u,ctx){
+ return geminiGenerate([
+   {text:'Transcribe/understand this voice or audio message and extract every relevant LMMM entry. Detect Telugu, English or Hindi and preserve technical identifiers exactly.'},
+   {inline_data:{mime_type:mime||'audio/ogg',data:buf.toString('base64')}}
+ ],u,ctx);
+}
+async function extractDocument(buf,mime,u,ctx){
+ return geminiGenerate([
+   {text:'Read this document and extract relevant LMMM maintenance/production/log-book entries. Do not guess unreadable identifiers.'},
+   {inline_data:{mime_type:mime,data:buf.toString('base64')}}
+ ],u,ctx);
 }
 async function stageMedia(u,from,msg){
  const n=msg.image||msg.audio||msg.voice||msg.document;
@@ -835,10 +855,11 @@ async function stageMedia(u,from,msg){
  const meta=await mediaMeta(n.id), mime=meta.mime_type||n.mime_type||'', name=n.filename||`${type}-${n.id}`;
  const buf=await mediaBytes(meta.url),ctx=await currentShiftContext(u);
  let raw='',obj;
- if(type==='audio'){raw=await transcribe(buf,mime,name);obj=await classifyExtracted(raw,u,ctx);}
+ if(type==='audio'){obj=await extractAudio(buf,mime,u,ctx);raw=obj.summary||'';}
  else if(type==='image'){obj=await extractPhoto(buf,mime,u,ctx);raw=obj.summary||'';}
  else if(/text|csv|json|xml/i.test(mime)){raw=buf.toString('utf8').slice(0,150000);obj=await classifyExtracted(raw,u,ctx);}
- else {obj={language:'en',uncertain:true,needs_event_time:false,summary:'File received. This file type needs manual confirmation.',entries:[]};}
+ else if(/pdf/i.test(mime)){obj=await extractDocument(buf,mime,u,ctx);raw=obj.summary||'';}
+ else {obj={language:'en',uncertain:true,needs_event_time:false,summary:'File received. This file type is not parsed automatically yet.',entries:[]};}
  const lang=obj.language||languageOf(raw);
  const q=await pool.query(`INSERT INTO media_ingestion(employee_number,media_id,media_type,mime_type,filename,detected_language,extracted_text,extraction_json,status,entered_by)
  VALUES($1,$2,$3,$4,$5,$6,$7,$8,'pending_confirmation',$9) RETURNING id`,
@@ -1465,7 +1486,7 @@ app.post('/webhook', (req, res) => {
 app.get('/api/status', (_q, r) =>
   r.status(200).json({
     status: 'ready',
-    registration: 'V5.0-multimodal-capture',
+    registration: 'V5.1-gemini-multimodal',
     webhook: '/webhook',
     super_admins_configured: SUPER_ADMIN_NUMBERS.size
   })
