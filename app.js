@@ -695,10 +695,30 @@ async function saveEmergency(from,name,val){
 
 
 function isoDate(v=''){
- const x=String(v).trim();
- if(/^\d{4}-\d{2}-\d{2}$/.test(x)) return x;
- const m=x.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})$/);
- return m?`${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`:null;
+ const x=String(v??'').trim();
+ if(!x)return null;
+ let y,m,d;
+ let a=x.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+ if(a){y=Number(a[1]);m=Number(a[2]);d=Number(a[3]);}
+ else{
+  a=x.match(/^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{4})$/);
+  if(!a)return null;
+  d=Number(a[1]);m=Number(a[2]);y=Number(a[3]);
+ }
+ const dt=new Date(Date.UTC(y,m-1,d));
+ if(dt.getUTCFullYear()!==y||dt.getUTCMonth()!==m-1||dt.getUTCDate()!==d)return null;
+ return `${String(y).padStart(4,'0')}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+}
+function normalizeMediaDates(obj={}){
+ let invalid=false;
+ const entries=(Array.isArray(obj.entries)?obj.entries:[]).map(e=>{
+  if(!e||!e.event_date)return e;
+  const source=String(e.event_date).trim();
+  const normalized=isoDate(source);
+  if(!normalized){invalid=true;return {...e,event_date_source:source,event_date:null};}
+  return {...e,event_date_source:source,event_date:normalized};
+ });
+ return {obj:{...obj,entries,needs_event_time:Boolean(obj.needs_event_time||invalid)},invalid};
 }
 function isOperationsSection(u){
  return /operation|metallurgy/i.test(String(u?.section_department||''));
@@ -777,7 +797,8 @@ async function currentShiftContext(u){
 }
 async function saveSectionEvent(u,from,type,text,eventDate=null,eventShift=null,timingSource='entry_context',equipmentName=null,sourceMediaIngestionId=null){
   const n=plantNow(),ctx=await currentShiftContext(u),resp=await responsibilityName(u.employee_number);
-  const d=eventDate||n.date,sh=eventShift||ctx.shift;
+  const d=eventDate?(isoDate(eventDate)||null):n.date,sh=eventShift||ctx.shift;
+  if(!d)throw new Error(`Invalid event date: ${eventDate}`);
   const r=await pool.query(`INSERT INTO section_event_log(
     event_type,event_text,employee_number,employee_name,section,area,responsibility,event_date,event_shift,event_time,entered_by,timing_source,equipment_name,source_media_ingestion_id)
     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
@@ -868,6 +889,10 @@ async function stageMedia(u,from,msg){
  else if(/text|csv|json|xml/i.test(mime)){raw=buf.toString('utf8').slice(0,150000);obj=await classifyExtracted(raw,u,ctx);}
  else if(/pdf/i.test(mime)){obj=await extractDocument(buf,mime,u,ctx);raw=obj.summary||'';}
  else {obj={language:'en',uncertain:true,needs_event_time:false,summary:'File received. This file type is not parsed automatically yet.',entries:[]};}
+ // Normalize Gemini/document dates before any PostgreSQL DATE insert.
+ // Keep the exact extracted value in event_date_source for audit/source fidelity.
+ const normalizedDates=normalizeMediaDates(obj);
+ obj=normalizedDates.obj;
  const lang=obj.language||languageOf(raw);
  const entries=Array.isArray(obj.entries)?obj.entries:[];
  const supportedTypes=new Set(['production','delay','inspection','defect','job_action','logbook_note']);
@@ -904,7 +929,8 @@ async function commitMedia(u,from,p,status='confirmed',timingSource='media_confi
  const mediaId=p.media_ingestion_id;
  const productionByKey=new Map();
  for(const e of (o.entries||[])){
-  const d=e.event_date||n.date,sh=e.event_shift||ctx.shift;
+  const d=e.event_date?(isoDate(e.event_date)||null):n.date,sh=e.event_shift||ctx.shift;
+  if(!d)throw new Error(`Invalid media event_date: ${e.event_date}`);
   if(e.type==='production' && Number.isInteger(e.blooms_rolled)){
    const q=await pool.query(`INSERT INTO production_shift_logs(production_date,shift,area,blooms_rolled,operations_shift_incharge,remarks,entered_by,source_media_ingestion_id)
    VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,[d,sh||'Not found',u.area_of_working,e.blooms_rolled,u.name,`Media: ${e.text||''}`,from,mediaId]);
