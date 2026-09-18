@@ -915,13 +915,31 @@ async function repairTableDates(buf,mime,u,ctx,obj){
  const entries=Array.isArray(obj?.entries)?obj.entries:[];
  if(!entries.length || !obj?.table_has_date_column || !entries.some(e=>!e?.event_date))return obj;
  try{
-  const fixed=await geminiGenerate([
-   {text:`DATE-REPAIR PASS. Re-read the source table. The previous extraction is below. Return the full JSON structure again. Keep every entry in row order. For EACH row, read that SAME row's Date cell and populate event_date exactly as visible. Never use today's date, never copy a neighbouring row date, and never invent an unreadable date. Previous extraction:\n${JSON.stringify(obj)}`},
+  // Dedicated row/date reconstruction: the model only has to recover row identity + date,
+  // then we merge dates back into the first-pass extraction instead of replacing good text.
+  const datePass=await geminiGenerate([
+   {text:`ROW/DATE RECONSTRUCTION PASS. Re-read the source table at maximum care. Previous extracted entries are below in row order. Return the normal JSON structure, but preserve the SAME number/order of entries. For each entry, use its text/equipment to locate the SAME source row and read ONLY that row's Date cell. Populate event_date exactly as printed. Never use today's date, never copy a neighbouring row date, never infer a year, and never invent an unreadable date. Keep the previous equipment/text unchanged where possible. Previous entries:\n${JSON.stringify(entries)}`},
    {inline_data:{mime_type:mime||'image/jpeg',data:buf.toString('base64')}}
   ],u,ctx);
-  return fixed?.entries?.length?fixed:obj;
+  const recovered=Array.isArray(datePass?.entries)?datePass.entries:[];
+  const merged=entries.map((e,i)=>{
+    if(e?.event_date)return e;
+    const r=recovered[i];
+    return r?.event_date?{...e,event_date:r.event_date}:e;
+  });
+  const missing=merged.some(e=>!e?.event_date);
+  return {...obj,entries:merged,uncertain:missing?Boolean(obj.uncertain):false,needs_event_time:false};
  }catch(e){console.error('[MEDIA DATE REPAIR]',e);return obj;}
 }
+function isCompleteMediaEntry(e){
+ if(!e)return false;
+ const supportedTypes=new Set(['production','delay','inspection','defect','job_action','logbook_note']);
+ if(!supportedTypes.has(e.type) || !e.event_date)return false;
+ if(e.type==='production')return Number.isInteger(e.blooms_rolled) && e.blooms_rolled>=0;
+ if(e.type==='delay')return Number.isInteger(e.delay_minutes) && e.delay_minutes>=0 && !!String(e.delay_section||'').trim() && !!String(e.reason||e.text||'').trim();
+ return !!String(e.text||'').trim();
+}
+
 function mediaBatchCode(id){return `UP-${id}`;}
 function mediaSummary(saved,mediaId,reviewCount=0){
  const counts={}; for(const x of saved||[]){const k=x.equipment||'Unresolved';counts[k]=(counts[k]||0)+1;}
@@ -941,43 +959,46 @@ async function stageMedia(u,from,msg){
  else if(/wordprocessingml|spreadsheetml|msword|ms-excel|tiff/i.test(mime) || /\.(docx?|xlsx?|tiff?)$/i.test(name)){obj=await extractDocument(buf,mime,u,ctx);raw=obj.summary||'';}
  else {obj={language:'en',uncertain:true,needs_event_time:false,document_kind:'document',table_has_date_column:false,summary:'File received. This file type is not parsed automatically yet.',entries:[]};}
  if((type==='image'||type==='document') && obj?.table_has_date_column && (obj.entries||[]).some(e=>!e?.event_date)) obj=await repairTableDates(buf,mime,u,ctx,obj);
- // Normalize Gemini/document dates before any PostgreSQL DATE insert.
- // Keep the exact extracted value in event_date_source for audit/source fidelity.
- const normalizedDates=normalizeMediaDates(obj);
- obj=normalizedDates.obj;
+ obj=normalizeMediaDates(obj).obj;
  const lang=obj.language||languageOf(raw);
  const entries=Array.isArray(obj.entries)?obj.entries:[];
- const supportedTypes=new Set(['production','delay','inspection','defect','job_action','logbook_note']);
- const tableMissingDate=Boolean(obj.table_has_date_column && entries.some(e=>!e?.event_date));
- const clearMedia=!obj.uncertain && !obj.needs_event_time && !tableMissingDate && entries.length>0 &&
-   entries.every(e=>{
-     if(!e || !supportedTypes.has(e.type))return false;
-     if(e.type==='production')return Number.isInteger(e.blooms_rolled) && e.blooms_rolled>=0;
-     if(e.type==='delay')return Number.isInteger(e.delay_minutes) && e.delay_minutes>=0 && !!String(e.delay_section||'').trim() && !!String(e.reason||e.text||'').trim();
-     return !!String(e.text||'').trim();
-   });
- const status=clearMedia?'auto_processing':'pending_confirmation';
+
+ // Historical dated tables are row-independent. Save every complete row immediately and
+ // hold ONLY incomplete rows for review. One bad date must never block or date-shift good rows.
+ const isHistoricalTable=Boolean(obj.table_has_date_column);
+ const validEntries=entries.filter(isCompleteMediaEntry);
+ const reviewEntries=entries.filter(e=>!isCompleteMediaEntry(e));
+ const wholeClear=!obj.uncertain && !obj.needs_event_time && reviewEntries.length===0 && validEntries.length>0;
+ const status=(wholeClear || (isHistoricalTable&&validEntries.length))?'auto_processing':'pending_confirmation';
  const q=await pool.query(`INSERT INTO media_ingestion(employee_number,media_id,media_type,mime_type,filename,detected_language,extracted_text,extraction_json,status,entered_by)
  VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
  [u.employee_number,n.id,type,mime,name,lang,raw,obj,status,from]);
  const mediaRowId=q.rows[0].id; await pool.query(`UPDATE media_ingestion SET batch_code=$2 WHERE id=$1`,[mediaRowId,mediaBatchCode(mediaRowId)]);
 
- if(clearMedia){
-   const p={media_ingestion_id:mediaRowId,proposed_json:obj};
-   const saved=await commitMedia(u,from,p,'auto_confirmed','media_auto_confirmed');
-   await sendText(from,mediaSummary(saved,mediaRowId,0));
-   return;
+ let saved=[];
+ if(wholeClear){
+   saved=await commitMedia(u,from,{media_ingestion_id:mediaRowId,proposed_json:{...obj,entries:validEntries}},'auto_confirmed','media_auto_confirmed');
+   await sendText(from,mediaSummary(saved,mediaRowId,0)); return;
  }
-
+ if(isHistoricalTable && validEntries.length){
+   saved=await commitMedia(u,from,{media_ingestion_id:mediaRowId,proposed_json:{...obj,entries:validEntries}},reviewEntries.length?'partial_saved':'auto_confirmed','historical_row_auto_saved',false);
+ }
+ if(!reviewEntries.length){
+   await sendText(from,mediaSummary(saved,mediaRowId,0)); return;
+ }
+ const pendingObj={...obj,entries:reviewEntries,uncertain:true,needs_event_time:false,partial_batch:true};
  await pool.query(`INSERT INTO pending_media_confirmations(employee_number,media_ingestion_id,proposed_json) VALUES($1,$2,$3)
- ON CONFLICT(employee_number) DO UPDATE SET media_ingestion_id=EXCLUDED.media_ingestion_id,proposed_json=EXCLUDED.proposed_json,created_at=now()`,
- [u.employee_number,mediaRowId,obj]);
- const lines=entries.slice(0,15).map((e,i)=>`${i+1}. ${e.type}: ${e.equipment?e.equipment+' – ':''}${e.text||''}`).join('\n');
- const ask=tableMissingDate?ml(lang,`${entries.filter(e=>!e.event_date).length} table row(s) have an unreadable/missing date. Please send a clearer file/image or an explicit row-wise correction. A common date will not be applied.`,`టేబుల్‌లో ${entries.filter(e=>!e.event_date).length} row date స్పష్టంగా లేదు. Clear image/file లేదా row-wise correction పంపండి. Common date apply చేయను.`,`तालिका में ${entries.filter(e=>!e.event_date).length} पंक्तियों की तारीख स्पष्ट नहीं है। साफ़ फ़ाइल/चित्र या row-wise correction भेजें; common date लागू नहीं होगी।`):obj.needs_event_time?ml(lang,'When did it happen?','ఇది ఎప్పుడు జరిగింది?','यह कब हुआ था?'):
-   ml(lang,'Please confirm because some information is unclear: CONFIRM / CORRECT','కొంత సమాచారం స్పష్టంగా లేదు. దయచేసి CONFIRM / CORRECT చేయండి','कुछ जानकारी स्पष्ट नहीं है। कृपया CONFIRM / CORRECT करें');
- await sendText(from,`${lines||obj.summary}\n\n${ask}`);
+ ON CONFLICT(employee_number) DO UPDATE SET media_ingestion_id=EXCLUDED.media_ingestion_id,proposed_json=EXCLUDED.proposed_json,created_at=now()`,[u.employee_number,mediaRowId,pendingObj]);
+ const lines=reviewEntries.slice(0,15).map((e,i)=>`${i+1}. ${e.type}: ${e.equipment?e.equipment+' – ':''}${e.text||''}`).join('\n');
+ if(isHistoricalTable){
+   await sendText(from,`${saved.length?mediaSummary(saved,mediaRowId,reviewEntries.length)+'\n\n':''}${lines}\n\n⚠️ Only these ${reviewEntries.length} row(s) are held for review because their own date/data is unreadable. Other dated rows were saved with their respective source dates. A common date/Today will NOT be applied to this historical batch.`);
+ }else{
+   const ask=obj.needs_event_time?ml(lang,'When did it happen?','ఇది ఎప్పుడు జరిగింది?','यह कब हुआ था?'):ml(lang,'Please confirm because some information is unclear: CONFIRM / CORRECT','కొంత సమాచారం స్పష్టంగా లేదు. దయచేసి CONFIRM / CORRECT చేయండి','कुछ जानकारी स्पष्ट नहीं है। कृपया CONFIRM / CORRECT करें');
+   await sendText(from,`${lines||obj.summary}\n\n${ask}`);
+ }
 }
-async function commitMedia(u,from,p,status='confirmed',timingSource='media_confirmed'){
+
+async function commitMedia(u,from,p,status='confirmed',timingSource='media_confirmed',clearPending=true){
  const o=p.proposed_json,ctx=await currentShiftContext(u),n=plantNow(),saved=[];
  const mediaId=p.media_ingestion_id;
  const productionByKey=new Map();
@@ -1011,7 +1032,7 @@ async function commitMedia(u,from,p,status='confirmed',timingSource='media_confi
   }
  }
  await pool.query(`UPDATE media_ingestion SET status=$2,record_count=$3 WHERE id=$1`,[p.media_ingestion_id,status,saved.length]);
- await pool.query(`DELETE FROM pending_media_confirmations WHERE employee_number=$1`,[u.employee_number]);
+ if(clearPending) await pool.query(`DELETE FROM pending_media_confirmations WHERE employee_number=$1`,[u.employee_number]);
  return saved;
 }
 
@@ -1411,7 +1432,7 @@ async function processMessage(from, text, rawMessage = null) {
       const suppliedDate=resolveUserDate(clean);
       if(suppliedDate){
         const proposed=typeof pendingMedia.proposed_json==='string'?JSON.parse(pendingMedia.proposed_json):pendingMedia.proposed_json;
-        if(proposed.table_has_date_column){await sendText(from,'This is a dated table. I will not apply one common date to rows whose Date cells were missed. Send a clearer image/file or row-wise correction.');return;}
+        if(proposed.table_has_date_column){await sendText(from,'This is a historical dated table. Today/common date is blocked. Only unresolved rows are pending; send a clearer source or row-wise correction such as ROW 1 DATE 19-06-2005.');return;}
         const entries=(proposed.entries||[]).map(e=>e.event_date?e:{...e,event_date:suppliedDate,event_date_source:clean});
         const stillMissing=entries.some(e=>!e.event_date);
         const updated={...proposed,entries,needs_event_time:stillMissing};
