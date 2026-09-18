@@ -200,6 +200,60 @@ async function initDB() {
     )
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_prod_date_area ON production_shift_logs(production_date,area)`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_shift_sessions(
+      employee_number TEXT PRIMARY KEY,
+      duty_date DATE NOT NULL,
+      shift TEXT NOT NULL,
+      checked_in_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      source TEXT NOT NULL DEFAULT 'explicit',
+      updated_at TIMESTAMPTZ DEFAULT now()
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS employee_attendance(
+      id BIGSERIAL PRIMARY KEY,
+      employee_number TEXT NOT NULL,
+      duty_date DATE NOT NULL,
+      shift TEXT NOT NULL,
+      check_in_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      entered_by TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT 'shift_checkin',
+      UNIQUE(employee_number,duty_date,shift)
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS section_event_log(
+      id BIGSERIAL PRIMARY KEY,
+      event_type TEXT NOT NULL,
+      event_text TEXT NOT NULL,
+      employee_number TEXT NOT NULL,
+      employee_name TEXT,
+      section TEXT,
+      area TEXT,
+      responsibility TEXT,
+      event_date DATE NOT NULL,
+      event_shift TEXT,
+      event_time TIME,
+      entered_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      entered_by TEXT NOT NULL,
+      timing_source TEXT NOT NULL DEFAULT 'entry_context',
+      status TEXT NOT NULL DEFAULT 'recorded'
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS pending_event_entries(
+      employee_number TEXT PRIMARY KEY,
+      event_type TEXT NOT NULL,
+      event_text TEXT NOT NULL,
+      section TEXT,
+      area TEXT,
+      responsibility TEXT,
+      created_at TIMESTAMPTZ DEFAULT now()
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_section_event_date ON section_event_log(event_date,section,area,event_type)`);
   console.log('[DATABASE] V4.4 hierarchy + authority foundation ready');
   console.log('[ADMIN] configured:', SUPER_ADMIN_NUMBERS.size);
 }
@@ -640,6 +694,74 @@ async function productionSummary(date,area=null){
  return out.join('\n\n');
 }
 
+
+function plantNow(){
+  // Render may run UTC; derive plant-local clock explicitly.
+  const parts=new Intl.DateTimeFormat('en-CA',{
+    timeZone:'Asia/Kolkata',year:'numeric',month:'2-digit',day:'2-digit',
+    hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'
+  }).formatToParts(new Date()).reduce((a,p)=>(a[p.type]=p.value,a),{});
+  return {date:`${parts.year}-${parts.month}-${parts.day}`,time:`${parts.hour}:${parts.minute}:${parts.second}`,
+          minutes:Number(parts.hour)*60+Number(parts.minute)};
+}
+function inferredPlantShift(mins){
+  // Overlap belongs to the shift that is ending:
+  // C/A: 06:00–06:30 => C, A/B: 14:00–14:30 => A, B/C: 22:00–22:30 => B.
+  if(mins>=22*60 && mins<=22*60+30) return 'B';
+  if(mins>22*60+30 || mins<6*60) return 'C';
+  if(mins>=6*60 && mins<=6*60+30) return 'C';
+  if(mins>6*60+30 && mins<=14*60+30) return 'A';
+  if(mins>14*60+30 && mins<22*60) return 'B';
+  return null;
+}
+function shiftToken(t=''){
+  const m=String(t).trim().match(/^(?:i am in |today |duty )?([abc])\s*shift$/i);
+  if(m)return m[1].toUpperCase();
+  if(/^(general|general shift|g shift)$/i.test(String(t).trim()))return 'GENERAL';
+  return null;
+}
+async function responsibilityName(emp){
+  const a=await effectiveAuthority(emp);
+  return (a?.responsibility_roles||[])[0]?.responsibility_role || 'Normal Employee';
+}
+async function setShiftCheckin(u,shift,from){
+  const n=plantNow();
+  await pool.query(`INSERT INTO user_shift_sessions(employee_number,duty_date,shift,checked_in_at,source)
+    VALUES($1,$2,$3,now(),'explicit') ON CONFLICT(employee_number) DO UPDATE
+    SET duty_date=EXCLUDED.duty_date,shift=EXCLUDED.shift,checked_in_at=now(),source='explicit',updated_at=now()`,
+    [u.employee_number,n.date,shift]);
+  await pool.query(`INSERT INTO employee_attendance(employee_number,duty_date,shift,check_in_at,entered_by,source)
+    VALUES($1,$2,$3,now(),$4,'shift_checkin') ON CONFLICT(employee_number,duty_date,shift) DO NOTHING`,
+    [u.employee_number,n.date,shift,from]);
+}
+async function currentShiftContext(u){
+  const n=plantNow();
+  const r=(await pool.query(`SELECT * FROM user_shift_sessions WHERE employee_number=$1 AND duty_date=$2 LIMIT 1`,
+    [u.employee_number,n.date])).rows[0];
+  if(r)return {shift:r.shift,source:'explicit_session'};
+  const resp=(await responsibilityName(u.employee_number)).toLowerCase();
+  if(resp.includes('general shift'))return {shift:'GENERAL',source:'responsibility'};
+  return {shift:inferredPlantShift(n.minutes),source:'entry_time'};
+}
+async function saveSectionEvent(u,from,type,text,eventDate=null,eventShift=null,timingSource='entry_context'){
+  const n=plantNow(),ctx=await currentShiftContext(u),resp=await responsibilityName(u.employee_number);
+  const d=eventDate||n.date,sh=eventShift||ctx.shift;
+  const r=await pool.query(`INSERT INTO section_event_log(
+    event_type,event_text,employee_number,employee_name,section,area,responsibility,event_date,event_shift,event_time,entered_by,timing_source)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
+    [type,text,u.employee_number,u.name,u.section_department,u.area_of_working,resp,d,sh,eventDate?null:n.time,from,timingSource]);
+  return r.rows[0].id;
+}
+function looksLateOrUnclear(text=''){
+  return /\b(earlier|previous|last shift|morning|afternoon|night|yesterday|day before|late entry|old)\b/i.test(text);
+}
+function classifySectionEvent(text=''){
+  if(/\binspection|inspected|checked|observed\b/i.test(text))return 'inspection';
+  if(/\bdefect|leak|loose|damage|damaged|abnormal|problem|fault|failed|failure\b/i.test(text))return 'defect';
+  if(/\bjob|rectified|replaced|attended|repair|repaired|completed|action taken\b/i.test(text))return 'job_action';
+  return null;
+}
+
 async function ownerCommand(from, text) {
   const admin = from.replace(/\D/g, '');
   if (!SUPER_ADMIN_NUMBERS.has(admin)) return false;
@@ -1025,6 +1147,49 @@ async function processMessage(from, text) {
   if (u.approval_status === 'approved') {
     let cm;
 
+    // Common shift check-in for ALL sections. Explicit check-in is attendance evidence.
+    const st=shiftToken(clean);
+    if(st){
+      await setShiftCheckin(u,st,from);
+      await sendText(from,`${st==='GENERAL'?'General':st} Shift recorded. Attendance saved.`);
+      return;
+    }
+
+    // Resolve a pending late/backdated section event.
+    const pending=(await pool.query(`SELECT * FROM pending_event_entries WHERE employee_number=$1`,[u.employee_number])).rows[0];
+    if(pending){
+      let d=null,sh=null;
+      const dm=clean.match(/(\d{4}-\d{2}-\d{2}|\d{1,2}[-\/]\d{1,2}[-\/]\d{4})/);
+      if(dm)d=isoDate(dm[1]);
+      const sm=clean.match(/\b([ABC])\s*shift\b/i); if(sm)sh=sm[1].toUpperCase();
+      if(d || sh){
+        if(!d){await sendText(from,'Which date?');return;}
+        if(!sh){await sendText(from,'Which shift?');return;}
+        const id=await saveSectionEvent(u,from,pending.event_type,pending.event_text,d,sh,'user_confirmed_backdate');
+        await pool.query(`DELETE FROM pending_event_entries WHERE employee_number=$1`,[u.employee_number]);
+        await sendText(from,`Saved. ${pending.event_type} ID: ${id}`);
+        return;
+      }
+    }
+
+    // Natural inspection / defect / job-action entry for every section.
+    const et=classifySectionEvent(clean);
+    if(et && !/^PROD|^DELAY/i.test(clean)){
+      if(looksLateOrUnclear(clean)){
+        await pool.query(`INSERT INTO pending_event_entries(employee_number,event_type,event_text,section,area,responsibility)
+          VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(employee_number) DO UPDATE
+          SET event_type=EXCLUDED.event_type,event_text=EXCLUDED.event_text,section=EXCLUDED.section,area=EXCLUDED.area,
+              responsibility=EXCLUDED.responsibility,created_at=now()`,
+          [u.employee_number,et,clean,u.section_department,u.area_of_working,await responsibilityName(u.employee_number)]);
+        await sendText(from,'When did it happen? Send date and shift.');
+        return;
+      }
+      const id=await saveSectionEvent(u,from,et,clean);
+      const ctx=await currentShiftContext(u);
+      await sendText(from,`Saved. ${et} ID: ${id}\nShift: ${ctx.shift||'Not found'}`);
+      return;
+    }
+
     // PROD ADD YYYY-MM-DD | Shift | Area | Blooms | Operations Shift In-charge | Remarks
     if ((cm=clean.match(/^PROD\s+ADD\s+(.+)$/i))) {
       const auth=await productionAuthority(u);
@@ -1180,7 +1345,7 @@ app.post('/webhook', (req, res) => {
 app.get('/api/status', (_q, r) =>
   r.status(200).json({
     status: 'ready',
-    registration: 'V4.8-production-delay',
+    registration: 'V4.9-shift-intelligence',
     webhook: '/webhook',
     super_admins_configured: SUPER_ADMIN_NUMBERS.size
   })
