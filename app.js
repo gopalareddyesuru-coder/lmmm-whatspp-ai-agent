@@ -161,6 +161,45 @@ async function initDB() {
       updated_at TIMESTAMPTZ DEFAULT now()
     )
   `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS production_shift_logs(
+      id BIGSERIAL PRIMARY KEY,
+      production_date DATE NOT NULL,
+      shift TEXT NOT NULL,
+      area TEXT NOT NULL,
+      blooms_rolled INTEGER NOT NULL CHECK(blooms_rolled >= 0),
+      operations_shift_incharge TEXT,
+      remarks TEXT,
+      entered_by TEXT NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT now(),
+      updated_at TIMESTAMPTZ DEFAULT now()
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS production_delays(
+      id BIGSERIAL PRIMARY KEY,
+      production_log_id BIGINT NOT NULL REFERENCES production_shift_logs(id) ON DELETE CASCADE,
+      delay_section TEXT NOT NULL,
+      delay_minutes INTEGER NOT NULL CHECK(delay_minutes >= 0),
+      reason TEXT NOT NULL,
+      job_action TEXT,
+      entered_by TEXT NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT now()
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS production_change_audit(
+      id BIGSERIAL PRIMARY KEY,
+      production_log_id BIGINT NOT NULL,
+      old_data JSONB NOT NULL,
+      new_data JSONB NOT NULL,
+      change_reason TEXT NOT NULL,
+      changed_by TEXT NOT NULL,
+      changed_at TIMESTAMPTZ DEFAULT now()
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_prod_date_area ON production_shift_logs(production_date,area)`);
   console.log('[DATABASE] V4.4 hierarchy + authority foundation ready');
   console.log('[ADMIN] configured:', SUPER_ADMIN_NUMBERS.size);
 }
@@ -568,6 +607,39 @@ async function saveEmergency(from,name,val){
  await pool.query(`INSERT INTO emergency_contacts(contact_name,max_number,entered_by) VALUES($1,$2,$3)`,[n,v,from]);return true;
 }
 
+
+function isoDate(v=''){
+ const x=String(v).trim();
+ if(/^\d{4}-\d{2}-\d{2}$/.test(x)) return x;
+ const m=x.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})$/);
+ return m?`${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`:null;
+}
+function isOperationsSection(u){
+ return /operation|metallurgy/i.test(String(u?.section_department||''));
+}
+async function productionAuthority(u){
+ if(!u)return {enter:false,modify:false};
+ const owner=isOwner(u.wa_number);
+ const a=await effectiveAuthority(u.employee_number);
+ const roles=(a?.responsibility_roles||[]).map(x=>String(x.responsibility_role||'').toLowerCase());
+ const hod=roles.includes('hod');
+ const opIncharge=isOperationsSection(u) && roles.some(r=>r.includes('in-charge')||r.includes('incharge'));
+ const opShift=isOperationsSection(u) && roles.some(r=>r.includes('shift'));
+ return {enter:owner||hod||opIncharge||opShift,modify:owner||hod||opIncharge};
+}
+async function productionSummary(date,area=null){
+ const p=area?
+   (await pool.query(`SELECT * FROM production_shift_logs WHERE production_date=$1 AND LOWER(area)=LOWER($2) ORDER BY shift,id`,[date,area])).rows:
+   (await pool.query(`SELECT * FROM production_shift_logs WHERE production_date=$1 ORDER BY area,shift,id`,[date])).rows;
+ if(!p.length)return 'Not found.';
+ let out=[];
+ for(const x of p){
+   const ds=(await pool.query(`SELECT * FROM production_delays WHERE production_log_id=$1 ORDER BY id`,[x.id])).rows;
+   out.push(`${x.production_date.toISOString().slice(0,10)} | ${x.area} | Shift ${x.shift}\nBlooms: ${x.blooms_rolled}\nEstimated: ${(x.blooms_rolled*4).toFixed(0)} t${x.operations_shift_incharge?`\nOperations Shift In-charge: ${x.operations_shift_incharge}`:''}${ds.length?'\nDelays:\n'+ds.map(d=>`${d.delay_section}: ${d.delay_minutes} min - ${d.reason}${d.job_action?` | Action: ${d.job_action}`:''}`).join('\n'):''}`);
+ }
+ return out.join('\n\n');
+}
+
 async function ownerCommand(from, text) {
   const admin = from.replace(/\D/g, '');
   if (!SUPER_ADMIN_NUMBERS.has(admin)) return false;
@@ -952,6 +1024,58 @@ async function processMessage(from, text) {
 
   if (u.approval_status === 'approved') {
     let cm;
+
+    // PROD ADD YYYY-MM-DD | Shift | Area | Blooms | Operations Shift In-charge | Remarks
+    if ((cm=clean.match(/^PROD\s+ADD\s+(.+)$/i))) {
+      const auth=await productionAuthority(u);
+      if(!auth.enter){await sendText(from,'Not authorized.');return;}
+      const p=cm[1].split('|').map(x=>x.trim());
+      const d=isoDate(p[0]), blooms=Number(p[3]);
+      if(p.length<4||!d||!p[1]||!p[2]||!Number.isInteger(blooms)||blooms<0){await sendText(from,'Format: PROD ADD Date | Shift | Area | Blooms | Operations Shift In-charge | Remarks');return;}
+      const r=await pool.query(`INSERT INTO production_shift_logs(production_date,shift,area,blooms_rolled,operations_shift_incharge,remarks,entered_by) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+        [d,p[1],p[2],blooms,p[4]||u.name,p[5]||null,from]);
+      await sendText(from,`Saved. Production ID: ${r.rows[0].id}\n${blooms} blooms ≈ ${blooms*4} t`);return;
+    }
+
+    // DELAY ADD ProductionID | Section | Minutes | Reason | Job/Action
+    if ((cm=clean.match(/^DELAY\s+ADD\s+(.+)$/i))) {
+      const auth=await productionAuthority(u);
+      if(!auth.enter){await sendText(from,'Not authorized.');return;}
+      const p=cm[1].split('|').map(x=>x.trim()), id=Number(p[0]), mins=Number(p[2]);
+      if(p.length<4||!Number.isInteger(id)||!p[1]||!Number.isInteger(mins)||mins<0||!p[3]){await sendText(from,'Format: DELAY ADD ProductionID | Section | Minutes | Reason | Job/Action');return;}
+      const exists=(await pool.query(`SELECT id FROM production_shift_logs WHERE id=$1`,[id])).rows[0];
+      if(!exists){await sendText(from,'Not found.');return;}
+      await pool.query(`INSERT INTO production_delays(production_log_id,delay_section,delay_minutes,reason,job_action,entered_by) VALUES($1,$2,$3,$4,$5,$6)`,[id,p[1],mins,p[3],p[4]||null,from]);
+      await sendText(from,'Saved.');return;
+    }
+
+    // PROD EDIT ID | Blooms | Reason
+    if ((cm=clean.match(/^PROD\s+EDIT\s+(.+)$/i))) {
+      const auth=await productionAuthority(u);
+      if(!auth.modify){await sendText(from,'Not authorized.');return;}
+      const p=cm[1].split('|').map(x=>x.trim()),id=Number(p[0]),blooms=Number(p[1]);
+      if(p.length<3||!Number.isInteger(id)||!Number.isInteger(blooms)||blooms<0||!p[2]){await sendText(from,'Format: PROD EDIT ID | Blooms | Correction reason');return;}
+      const old=(await pool.query(`SELECT * FROM production_shift_logs WHERE id=$1`,[id])).rows[0];
+      if(!old){await sendText(from,'Not found.');return;}
+      const nr=(await pool.query(`UPDATE production_shift_logs SET blooms_rolled=$2,updated_at=now() WHERE id=$1 RETURNING *`,[id,blooms])).rows[0];
+      await pool.query(`INSERT INTO production_change_audit(production_log_id,old_data,new_data,change_reason,changed_by) VALUES($1,$2,$3,$4,$5)`,[id,old,nr,p[2],from]);
+      await sendText(from,`Updated. ${old.blooms_rolled} → ${blooms} blooms`);return;
+    }
+
+    // YYYY-MM-DD production / DD-MM-YYYY production / AREA production DATE
+    if ((cm=clean.match(/^(.+?)\s+production$/i))) {
+      const d=isoDate(cm[1]);
+      if(d){await sendText(from,await productionSummary(d));return;}
+    }
+    if ((cm=clean.match(/^(.+?)\s+production\s+(.+)$/i))) {
+      const d=isoDate(cm[2]);
+      if(d){await sendText(from,await productionSummary(d,cm[1]));return;}
+    }
+    if ((cm=clean.match(/^(.+?)\s+production\s+(?:in\s+)?tonnes?\s+(.+)$/i))) {
+      const d=isoDate(cm[2]);
+      if(d){await sendText(from,await productionSummary(d,cm[1]));return;}
+    }
+
     if (/^(hi|hello|hey|start)$/i.test(clean)) {
       await sendText(from,T('help',te)); return;
     }
@@ -1056,7 +1180,7 @@ app.post('/webhook', (req, res) => {
 app.get('/api/status', (_q, r) =>
   r.status(200).json({
     status: 'ready',
-    registration: 'V4.7-contact-directory',
+    registration: 'V4.8-production-delay',
     webhook: '/webhook',
     super_admins_configured: SUPER_ADMIN_NUMBERS.size
   })
