@@ -47,6 +47,7 @@ const T = (k, te = false) => ({
     : 'Please register:\nName / Employee Number / Designation / Section / Area',
   pending: te ? 'ఆమోదం కోసం పంపబడింది.' : 'Sent for approval.',
   welcome: te ? 'LMMM AI Maintenance కి స్వాగతం.' : 'Welcome to LMMM AI Maintenance.',
+  help: te ? 'నేను మీకు ఎలా సహాయం చేయగలను?' : 'How can I help you?',
   notfound: te ? 'కనుగొనబడలేదు.' : 'Not found.',
   exit: te ? 'నిష్క్రమించారు.' : 'Exited.',
   removed: te ? 'మీ నమోదు తొలగించబడింది.' : 'Registration removed.'
@@ -108,7 +109,7 @@ async function initDB() {
     )
   `);
 
-  console.log('[DATABASE] V4.2 registration/removal ready');
+  console.log('[DATABASE] V4.3 interactive UX ready');
   console.log('[ADMIN] configured:', SUPER_ADMIN_NUMBERS.size);
 }
 
@@ -137,6 +138,42 @@ async function sendText(to, body) {
   }
 
   console.log('[WHATSAPP] Sent OK', to);
+  return d;
+}
+
+async function sendButtons(to, body, buttons) {
+  const safeButtons = (buttons || []).slice(0, 3).map(b => ({
+    type: 'reply',
+    reply: { id: String(b.id).slice(0, 256), title: String(b.title).slice(0, 20) }
+  }));
+
+  const r = await fetch(
+    `https://graph.facebook.com/${GRAPH_VERSION}/${PHONE_NUMBER_ID}/messages`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${ACCESS_TOKEN}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        messaging_product: 'whatsapp',
+        to,
+        type: 'interactive',
+        interactive: {
+          type: 'button',
+          body: { text: body },
+          action: { buttons: safeButtons }
+        }
+      })
+    }
+  );
+
+  const d = await r.json();
+  if (!r.ok) {
+    console.error('[WHATSAPP BUTTON ERROR]', r.status, d);
+    throw new Error('interactive send failed');
+  }
+  console.log('[WHATSAPP] Buttons sent OK', to);
   return d;
 }
 
@@ -215,15 +252,23 @@ async function notifyAdmins(d) {
     return false;
   }
 
+  const body =
+    `Registration Approval\n\n` +
+    `Name: ${d.name}\n` +
+    `Emp No: ${d.employee_number}\n` +
+    `Designation: ${d.designation}\n` +
+    `Section: ${d.section}\n` +
+    `Area: ${d.area}`;
+
   let sent = 0;
   for (const admin of SUPER_ADMIN_NUMBERS) {
     try {
-      await sendText(
-        admin,
-        `Registration approval:\n${d.name} / ${d.employee_number} / ${d.designation} / ${d.section} / ${d.area}\n\nAPPROVE ${d.employee_number}\nREJECT ${d.employee_number}`
-      );
+      await sendButtons(admin, body, [
+        { id: `APPROVE:${d.employee_number}`, title: 'Approve' },
+        { id: `REJECT:${d.employee_number}`, title: 'Reject' }
+      ]);
       sent++;
-      console.log('[APPROVAL] Sent to', admin);
+      console.log('[APPROVAL] Buttons sent to', admin);
     } catch (e) {
       console.error('[APPROVAL SEND ERROR]', admin, e);
     }
@@ -234,6 +279,8 @@ async function notifyAdmins(d) {
 async function ownerCommand(from, text) {
   const admin = from.replace(/\D/g, '');
   if (!SUPER_ADMIN_NUMBERS.has(admin)) return false;
+
+  text = String(text || '').replace(/^APPROVE:(\d+)$/i, 'approve $1').replace(/^REJECT:(\d+)$/i, 'reject $1').replace(/^CONFIRM_REMOVE:(\d+)$/i, 'confirm remove $1').replace(/^CANCEL_REMOVE:(\d+)$/i, 'cancel remove $1').replace(/^CONFIRM_RESET$/i, 'confirm reset registrations').replace(/^CANCEL_RESET$/i, 'cancel reset registrations');
 
   let m = text.match(/^approve\s+(\d+)$/i);
   if (m) {
@@ -264,7 +311,9 @@ async function ownerCommand(from, text) {
     );
 
     await sendText(u.whatsapp_number, 'Welcome to LMMM AI Maintenance.');
-    await sendText(from, `Approved ${m[1]}.`);
+    if (from.replace(/\D/g, '') !== u.whatsapp_number.replace(/\D/g, '')) {
+      await sendText(from, `Approved ${m[1]}.`);
+    }
     return true;
   }
 
@@ -279,8 +328,10 @@ async function ownerCommand(from, text) {
     const wa = u.whatsapp_number;
     await deleteRegistrationByEmployee(m[1]);
 
-    await sendText(wa, 'Registration rejected.');
-    await sendText(from, `Rejected and removed ${m[1]}.`);
+    await sendText(wa, 'Registration rejected. You can register again.');
+    if (from.replace(/\D/g, '') !== wa.replace(/\D/g, '')) {
+      await sendText(from, `Rejected ${m[1]}.`);
+    }
     return true;
   }
 
@@ -358,9 +409,15 @@ async function ownerCommand(from, text) {
       await sendText(from, 'Not found.');
       return true;
     }
-    await sendText(from, `Confirm removal: CONFIRM REMOVE ${m[1]}`);
+    await sendButtons(from, `Remove ${m[1]}?`, [
+      { id: `CONFIRM_REMOVE:${m[1]}`, title: 'Remove' },
+      { id: `CANCEL_REMOVE:${m[1]}`, title: 'Cancel' }
+    ]);
     return true;
   }
+
+  m = text.match(/^cancel\s+remove\s+(\d+)$/i);
+  if (m) { await sendText(from, 'Cancelled.'); return true; }
 
   m = text.match(/^confirm\s+remove\s+(\d+)$/i);
   if (m) {
@@ -376,9 +433,14 @@ async function ownerCommand(from, text) {
   }
 
   if (/^reset registrations$/i.test(text.trim())) {
-    await sendText(from, 'Confirm reset: CONFIRM RESET REGISTRATIONS');
+    await sendButtons(from, 'Remove all registrations?', [
+      { id: 'CONFIRM_RESET', title: 'Confirm' },
+      { id: 'CANCEL_RESET', title: 'Cancel' }
+    ]);
     return true;
   }
+
+  if (/^cancel reset registrations$/i.test(text.trim())) { await sendText(from, 'Cancelled.'); return true; }
 
   if (/^confirm reset registrations$/i.test(text.trim())) {
     await pool.query('BEGIN');
@@ -572,7 +634,7 @@ async function processMessage(from, text) {
 
   if (u.approval_status === 'approved') {
     if (/^(hi|hello|hey|start)$/i.test(clean)) {
-      await sendText(from, T('welcome', te));
+      await sendText(from, T('help', te));
       return;
     }
 
@@ -622,10 +684,16 @@ app.post('/webhook', (req, res) => {
       const m = req.body?.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
       if (!m) return;
 
-      const text = m.text?.body || '';
+      let text = '';
+      if (m.type === 'text') {
+        text = m.text?.body || '';
+      } else if (m.type === 'interactive') {
+        text = m.interactive?.button_reply?.id || m.interactive?.list_reply?.id || '';
+      }
+
       console.log('[MESSAGE]', { from: m.from, type: m.type, text });
 
-      if (m.type !== 'text') {
+      if (!text) {
         await sendText(m.from, 'Not found.');
         return;
       }
@@ -640,7 +708,7 @@ app.post('/webhook', (req, res) => {
 app.get('/api/status', (_q, r) =>
   r.status(200).json({
     status: 'ready',
-    registration: 'V4.2',
+    registration: 'V4.3-interactive',
     webhook: '/webhook',
     super_admins_configured: SUPER_ADMIN_NUMBERS.size
   })
