@@ -78,6 +78,8 @@ async function initDB() {
 
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS responsibility TEXT DEFAULT 'NOT ASSIGNED'`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS employee_category TEXT DEFAULT 'NOT ASSIGNED'`);
+
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS user_assignments(
@@ -109,7 +111,37 @@ async function initDB() {
     )
   `);
 
-  console.log('[DATABASE] V4.3 interactive UX ready');
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_responsibilities(
+      id BIGSERIAL PRIMARY KEY,
+      employee_number TEXT NOT NULL,
+      responsibility_role TEXT NOT NULL,
+      scope_section TEXT DEFAULT 'NOT ASSIGNED',
+      scope_area TEXT DEFAULT 'NOT ASSIGNED',
+      sub_area TEXT DEFAULT 'NOT ASSIGNED',
+      shift TEXT DEFAULT 'NOT ASSIGNED',
+      active BOOLEAN DEFAULT TRUE,
+      valid_from TIMESTAMPTZ DEFAULT now(),
+      valid_to TIMESTAMPTZ,
+      assigned_by TEXT,
+      created_at TIMESTAMPTZ DEFAULT now()
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS authority_audit(
+      id BIGSERIAL PRIMARY KEY,
+      employee_number TEXT,
+      action TEXT NOT NULL,
+      responsibility_role TEXT,
+      scope_section TEXT,
+      scope_area TEXT,
+      performed_by TEXT,
+      created_at TIMESTAMPTZ DEFAULT now()
+    )
+  `);
+
+  console.log('[DATABASE] V4.4 hierarchy + authority foundation ready');
   console.log('[ADMIN] configured:', SUPER_ADMIN_NUMBERS.size);
 }
 
@@ -225,6 +257,10 @@ async function deleteRegistrationByEmployee(employeeNumber) {
       [employeeNumber]
     );
     await pool.query(
+      'DELETE FROM user_responsibilities WHERE employee_number=$1',
+      [employeeNumber]
+    );
+    await pool.query(
       'DELETE FROM user_assignments WHERE employee_number=$1',
       [employeeNumber]
     );
@@ -276,6 +312,101 @@ async function notifyAdmins(d) {
   return sent > 0;
 }
 
+
+function normalizedDesignation(v='') {
+  return String(v).trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function employeeCategory(designation='') {
+  const d = normalizedDesignation(designation);
+  if (['kalasi','technician','chargeman','foreman','acting foreman','general foreman'].includes(d)) {
+    return 'NON_EXECUTIVE';
+  }
+  if (
+    d.includes('unskilled') || d.includes('helper') ||
+    d.includes('semi skilled') || d.includes('semi-skilled') ||
+    d.includes('welder') || d.includes('fitter') || d.includes('rigger') ||
+    d === 'supervisor' || d.includes('skilled')
+  ) return 'CONTRACT';
+  return 'EXECUTIVE';
+}
+
+function designationBand(designation='') {
+  const d = normalizedDesignation(designation);
+  if (['deputy general manager','dgm'].includes(d)) return 'DGM';
+  if ([
+    'management trainee','junior manager','asst manager','assistant manager',
+    'deputy manager','manager','sr manager','senior manager',
+    'asst general manager','assistant general manager','agm'
+  ].includes(d)) return 'EXECUTIVE_UPTO_AGM';
+  return employeeCategory(designation);
+}
+
+async function effectiveAuthority(employeeNumber) {
+  const ur = await pool.query(
+    `SELECT employee_number,designation,section_department,area_of_working,approval_status,is_active
+     FROM users WHERE employee_number=$1 LIMIT 1`,
+    [employeeNumber]
+  );
+  const u = ur.rows[0];
+  if (!u || u.approval_status !== 'approved' || !u.is_active) return null;
+
+  const rr = await pool.query(
+    `SELECT * FROM user_responsibilities
+     WHERE employee_number=$1 AND active=true
+       AND (valid_from IS NULL OR valid_from<=now())
+       AND (valid_to IS NULL OR valid_to>=now())
+     ORDER BY created_at DESC`,
+    [employeeNumber]
+  );
+
+  const pr = await pool.query(
+    `SELECT permission FROM user_special_permissions
+     WHERE employee_number=$1 AND active=true`,
+    [employeeNumber]
+  );
+
+  const roles = rr.rows.map(x => String(x.responsibility_role || '').trim().toLowerCase());
+  const hod = roles.includes('hod');
+  const sectionIncharge = roles.includes('section in-charge') || roles.includes('section incharge');
+  const areaIncharge = roles.includes('area in-charge') || roles.includes('area incharge');
+  const band = designationBand(u.designation);
+  const category = employeeCategory(u.designation);
+
+  let effectiveAccess = category === 'EXECUTIVE' ? 'ENTRY_VIEW' : 'ENTRY';
+  let scope = 'REGISTERED_SCOPE';
+
+  // DGM gets full access only to the assigned/registered section.
+  if (band === 'DGM') {
+    effectiveAccess = 'FULL';
+    scope = 'ASSIGNED_SECTION';
+  }
+  // Responsibility overrides designation assumptions.
+  if (areaIncharge) scope = 'ASSIGNED_AREA';
+  if (sectionIncharge) {
+    effectiveAccess = 'FULL';
+    scope = 'ASSIGNED_SECTION';
+  }
+  // HOD can be DGM, GM, or another authorized designation: HOD responsibility controls scope.
+  if (hod) {
+    effectiveAccess = 'FULL';
+    scope = 'ALL_SECTIONS';
+  }
+
+  return {
+    employee_number: u.employee_number,
+    designation: u.designation,
+    employee_category: category,
+    designation_band: band,
+    registered_section: u.section_department,
+    registered_area: u.area_of_working,
+    responsibilities: rr.rows,
+    effective_access: effectiveAccess,
+    scope,
+    special_permissions: pr.rows.map(x => x.permission)
+  };
+}
+
 async function ownerCommand(from, text) {
   const admin = from.replace(/\D/g, '');
   if (!SUPER_ADMIN_NUMBERS.has(admin)) return false;
@@ -292,9 +423,10 @@ async function ownerCommand(from, text) {
 
     await pool.query(
       `UPDATE users
-       SET approval_status='approved', is_active=true, updated_at=now()
+       SET approval_status='approved', is_active=true,
+           employee_category=$2, updated_at=now()
        WHERE employee_number=$1`,
-      [m[1]]
+      [m[1], employeeCategory(u.designation)]
     );
 
     await pool.query(
@@ -446,6 +578,7 @@ async function ownerCommand(from, text) {
     await pool.query('BEGIN');
     try {
       await pool.query('DELETE FROM user_special_permissions');
+      await pool.query('DELETE FROM user_responsibilities');
       await pool.query('DELETE FROM user_assignments');
       await pool.query('DELETE FROM users');
       await pool.query('COMMIT');
@@ -708,7 +841,7 @@ app.post('/webhook', (req, res) => {
 app.get('/api/status', (_q, r) =>
   r.status(200).json({
     status: 'ready',
-    registration: 'V4.3-interactive',
+    registration: 'V4.4-hierarchy-authority',
     webhook: '/webhook',
     super_admins_configured: SUPER_ADMIN_NUMBERS.size
   })
