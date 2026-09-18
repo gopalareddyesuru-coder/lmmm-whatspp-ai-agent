@@ -12,6 +12,9 @@ const GRAPH_VERSION = process.env.META_GRAPH_VERSION || 'v26.0';
 const PHONE_NUMBER_ID = process.env.META_PHONE_NUMBER_ID || process.env.PHONE_NUMBER_ID || '';
 const ACCESS_TOKEN = process.env.META_ACCESS_TOKEN || '';
 const DATABASE_URL = process.env.DATABASE_URL || '';
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
+const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4.1-mini';
+const OPENAI_TRANSCRIBE_MODEL = process.env.OPENAI_TRANSCRIBE_MODEL || 'gpt-4o-mini-transcribe';
 
 const SUPER_ADMIN_NUMBERS = new Set(
   (
@@ -254,6 +257,31 @@ async function initDB() {
     )
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_section_event_date ON section_event_log(event_date,section,area,event_type)`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS media_ingestion(
+      id BIGSERIAL PRIMARY KEY,
+      employee_number TEXT NOT NULL,
+      media_id TEXT NOT NULL,
+      media_type TEXT NOT NULL,
+      mime_type TEXT,
+      filename TEXT,
+      detected_language TEXT,
+      extracted_text TEXT,
+      extraction_json JSONB,
+      status TEXT NOT NULL DEFAULT 'received',
+      entered_by TEXT NOT NULL,
+      entered_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS pending_media_confirmations(
+      employee_number TEXT PRIMARY KEY,
+      media_ingestion_id BIGINT NOT NULL,
+      proposed_json JSONB NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT now()
+    )
+  `);
   console.log('[DATABASE] V4.4 hierarchy + authority foundation ready');
   console.log('[ADMIN] configured:', SUPER_ADMIN_NUMBERS.size);
 }
@@ -762,6 +790,82 @@ function classifySectionEvent(text=''){
   return null;
 }
 
+
+function languageOf(t=''){
+ if(/[\u0C00-\u0C7F]/.test(t))return 'te';
+ if(/[\u0900-\u097F]/.test(t))return 'hi';
+ return 'en';
+}
+function ml(lang,en,te,hi){return lang==='te'?te:lang==='hi'?hi:en;}
+async function mediaMeta(id){
+ const r=await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${id}`,{headers:{Authorization:`Bearer ${ACCESS_TOKEN}`}});
+ if(!r.ok)throw new Error(`Meta media metadata ${r.status}`); return await r.json();
+}
+async function mediaBytes(url){
+ const r=await fetch(url,{headers:{Authorization:`Bearer ${ACCESS_TOKEN}`}});
+ if(!r.ok)throw new Error(`Meta media download ${r.status}`); return Buffer.from(await r.arrayBuffer());
+}
+async function aiJSON(messages){
+ if(!OPENAI_API_KEY)throw new Error('OPENAI_API_KEY missing');
+ const r=await fetch('https://api.openai.com/v1/chat/completions',{method:'POST',
+  headers:{Authorization:`Bearer ${OPENAI_API_KEY}`,'Content-Type':'application/json'},
+  body:JSON.stringify({model:OPENAI_MODEL,messages,response_format:{type:'json_object'},temperature:0})});
+ if(!r.ok)throw new Error(`AI extraction ${r.status}`);
+ return JSON.parse((await r.json()).choices[0].message.content);
+}
+async function transcribe(buf,mime,name){
+ const fd=new FormData();fd.append('file',new Blob([buf],{type:mime||'audio/ogg'}),name||'voice.ogg');fd.append('model',OPENAI_TRANSCRIBE_MODEL);
+ const r=await fetch('https://api.openai.com/v1/audio/transcriptions',{method:'POST',headers:{Authorization:`Bearer ${OPENAI_API_KEY}`},body:fd});
+ if(!r.ok)throw new Error(`Transcription ${r.status}`);return (await r.json()).text||'';
+}
+async function classifyExtracted(text,u,ctx){
+ return aiJSON([{role:'system',content:`Extract LMMM shift data. JSON only:
+{"language":"en|te|hi","uncertain":boolean,"needs_event_time":boolean,"summary":string,"entries":[{"type":"production|delay|inspection|defect|job_action|logbook_note","text":string,"blooms_rolled":number|null,"delay_minutes":number|null,"delay_section":string|null,"reason":string|null,"event_date":string|null,"event_shift":"A|B|C|GENERAL|null"}]}.
+Never invent equipment/SAP/CAT/drawing identifiers. Preserve identifiers exactly. Section=${u.section_department}; Area=${u.area_of_working}; Shift=${ctx.shift||'unknown'}.`},{role:'user',content:text}]);
+}
+async function extractPhoto(buf,mime,u,ctx){
+ return aiJSON([{role:'system',content:`Read this LMMM shift/log-book image. JSON only:
+{"language":"en|te|hi","uncertain":boolean,"needs_event_time":boolean,"summary":string,"entries":[{"type":"production|delay|inspection|defect|job_action|logbook_note","text":string,"blooms_rolled":number|null,"delay_minutes":number|null,"delay_section":string|null,"reason":string|null,"event_date":string|null,"event_shift":"A|B|C|GENERAL|null"}]}.
+Extract all readable entries. Never guess unreadable values or identifiers; mark uncertain=true. Preserve exact identifiers. Section=${u.section_department}; Area=${u.area_of_working}; Shift=${ctx.shift||'unknown'}.`},
+ {role:'user',content:[{type:'text',text:'Extract this log-book/photo.'},{type:'image_url',image_url:{url:`data:${mime||'image/jpeg'};base64,${buf.toString('base64')}`,detail:'high'}}]}]);
+}
+async function stageMedia(u,from,msg){
+ const n=msg.image||msg.audio||msg.voice||msg.document;
+ const type=msg.image?'image':(msg.audio||msg.voice)?'audio':'document';
+ const meta=await mediaMeta(n.id), mime=meta.mime_type||n.mime_type||'', name=n.filename||`${type}-${n.id}`;
+ const buf=await mediaBytes(meta.url),ctx=await currentShiftContext(u);
+ let raw='',obj;
+ if(type==='audio'){raw=await transcribe(buf,mime,name);obj=await classifyExtracted(raw,u,ctx);}
+ else if(type==='image'){obj=await extractPhoto(buf,mime,u,ctx);raw=obj.summary||'';}
+ else if(/text|csv|json|xml/i.test(mime)){raw=buf.toString('utf8').slice(0,150000);obj=await classifyExtracted(raw,u,ctx);}
+ else {obj={language:'en',uncertain:true,needs_event_time:false,summary:'File received. This file type needs manual confirmation.',entries:[]};}
+ const lang=obj.language||languageOf(raw);
+ const q=await pool.query(`INSERT INTO media_ingestion(employee_number,media_id,media_type,mime_type,filename,detected_language,extracted_text,extraction_json,status,entered_by)
+ VALUES($1,$2,$3,$4,$5,$6,$7,$8,'pending_confirmation',$9) RETURNING id`,
+ [u.employee_number,n.id,type,mime,name,lang,raw,obj,from]);
+ await pool.query(`INSERT INTO pending_media_confirmations(employee_number,media_ingestion_id,proposed_json) VALUES($1,$2,$3)
+ ON CONFLICT(employee_number) DO UPDATE SET media_ingestion_id=EXCLUDED.media_ingestion_id,proposed_json=EXCLUDED.proposed_json,created_at=now()`,
+ [u.employee_number,q.rows[0].id,obj]);
+ const lines=(obj.entries||[]).slice(0,15).map((e,i)=>`${i+1}. ${e.type}: ${e.text||''}`).join('\n');
+ const ask=obj.needs_event_time?ml(lang,'When did it happen?','ఇది ఎప్పుడు జరిగింది?','यह कब हुआ था?'):
+   ml(lang,'Confirm these entries: CONFIRM / CORRECT','ఈ వివరాలు సరైతే: CONFIRM / CORRECT','जानकारी सही है तो: CONFIRM / CORRECT');
+ await sendText(from,`${lines||obj.summary}\n\n${ask}`);
+}
+async function commitMedia(u,from,p){
+ const o=p.proposed_json,ctx=await currentShiftContext(u),n=plantNow();
+ for(const e of (o.entries||[])){
+  const d=e.event_date||n.date,sh=e.event_shift||ctx.shift;
+  if(e.type==='production' && Number.isInteger(e.blooms_rolled)){
+   await pool.query(`INSERT INTO production_shift_logs(production_date,shift,area,blooms_rolled,operations_shift_incharge,remarks,entered_by)
+   VALUES($1,$2,$3,$4,$5,$6,$7)`,[d,sh||'Not found',u.area_of_working,e.blooms_rolled,u.name,`Media: ${e.text||''}`,from]);
+  }else if(['inspection','defect','job_action','logbook_note'].includes(e.type)){
+   await saveSectionEvent(u,from,e.type,e.text||'',d,sh,'media_confirmed');
+  }
+ }
+ await pool.query(`UPDATE media_ingestion SET status='confirmed' WHERE id=$1`,[p.media_ingestion_id]);
+ await pool.query(`DELETE FROM pending_media_confirmations WHERE employee_number=$1`,[u.employee_number]);
+}
+
 async function ownerCommand(from, text) {
   const admin = from.replace(/\D/g, '');
   if (!SUPER_ADMIN_NUMBERS.has(admin)) return false;
@@ -1054,7 +1158,7 @@ async function saveFreshRegistration(from, d) {
   }
 }
 
-async function processMessage(from, text) {
+async function processMessage(from, text, rawMessage = null) {
   const te = isTe(text);
   const clean = String(text || '').trim();
   console.log('[FLOW]', from, clean);
@@ -1146,6 +1250,21 @@ async function processMessage(from, text) {
 
   if (u.approval_status === 'approved') {
     let cm;
+
+    if(rawMessage && (rawMessage.image||rawMessage.audio||rawMessage.voice||rawMessage.document)){
+      try{await stageMedia(u,from,rawMessage);}catch(e){console.error('[MEDIA]',e);await sendText(from,'Could not process this file.');}
+      return;
+    }
+    if(/^CONFIRM$/i.test(clean)){
+      const p=(await pool.query(`SELECT * FROM pending_media_confirmations WHERE employee_number=$1`,[u.employee_number])).rows[0];
+      if(!p){await sendText(from,'Not found.');return;}
+      await commitMedia(u,from,p);
+      const l=p.proposed_json?.language||'en';
+      await sendText(from,ml(l,'Saved.','సేవ్ అయింది.','सेव हो गया।'));return;
+    }
+    if(/^CORRECT$/i.test(clean)){
+      await sendText(from,ml(languageOf(clean),'Send the correction in text.','సరిచేయాల్సిన వివరాన్ని టెక్స్ట్‌లో పంపండి.','सही जानकारी टेक्स्ट में भेजें।'));return;
+    }
 
     // Common shift check-in for ALL sections. Explicit check-in is attendance evidence.
     const st=shiftToken(clean);
@@ -1330,12 +1449,13 @@ app.post('/webhook', (req, res) => {
 
       console.log('[MESSAGE]', { from: m.from, type: m.type, text });
 
-      if (!text) {
+      const hasMedia = !!(m.image || m.audio || m.voice || m.document);
+      if (!text && !hasMedia) {
         await sendText(m.from, 'Not found.');
         return;
       }
 
-      await processMessage(m.from, text);
+      await processMessage(m.from, text, m);
     } catch (e) {
       console.error('[WEBHOOK ERROR]', e);
     }
@@ -1345,7 +1465,7 @@ app.post('/webhook', (req, res) => {
 app.get('/api/status', (_q, r) =>
   r.status(200).json({
     status: 'ready',
-    registration: 'V4.9-shift-intelligence',
+    registration: 'V5.0-multimodal-capture',
     webhook: '/webhook',
     super_admins_configured: SUPER_ADMIN_NUMBERS.size
   })
