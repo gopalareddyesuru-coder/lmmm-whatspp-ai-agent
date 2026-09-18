@@ -13,7 +13,7 @@ const PHONE_NUMBER_ID = process.env.META_PHONE_NUMBER_ID || process.env.PHONE_NU
 const ACCESS_TOKEN = process.env.META_ACCESS_TOKEN || '';
 const DATABASE_URL = process.env.DATABASE_URL || '';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite';
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
 
 const SUPER_ADMIN_NUMBERS = new Set(
   (
@@ -255,6 +255,8 @@ async function initDB() {
       created_at TIMESTAMPTZ DEFAULT now()
     )
   `);
+  await pool.query(`ALTER TABLE section_event_log ADD COLUMN IF NOT EXISTS equipment TEXT`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_section_event_equipment ON section_event_log(equipment)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_section_event_date ON section_event_log(event_date,section,area,event_type)`);
 
   await pool.query(`
@@ -770,13 +772,13 @@ async function currentShiftContext(u){
   if(resp.includes('general shift'))return {shift:'GENERAL',source:'responsibility'};
   return {shift:inferredPlantShift(n.minutes),source:'entry_time'};
 }
-async function saveSectionEvent(u,from,type,text,eventDate=null,eventShift=null,timingSource='entry_context'){
+async function saveSectionEvent(u,from,type,text,eventDate=null,eventShift=null,timingSource='entry_context',equipment=null){
   const n=plantNow(),ctx=await currentShiftContext(u),resp=await responsibilityName(u.employee_number);
   const d=eventDate||n.date,sh=eventShift||ctx.shift;
   const r=await pool.query(`INSERT INTO section_event_log(
-    event_type,event_text,employee_number,employee_name,section,area,responsibility,event_date,event_shift,event_time,entered_by,timing_source)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
-    [type,text,u.employee_number,u.name,u.section_department,u.area_of_working,resp,d,sh,eventDate?null:n.time,from,timingSource]);
+    event_type,event_text,equipment,employee_number,employee_name,section,area,responsibility,event_date,event_shift,event_time,entered_by,timing_source)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
+    [type,text,equipment,u.employee_number,u.name,u.section_department,u.area_of_working,resp,d,sh,eventDate?null:n.time,from,timingSource]);
   return r.rows[0].id;
 }
 function looksLateOrUnclear(text=''){
@@ -807,11 +809,13 @@ async function mediaBytes(url){
 function geminiInstruction(u,ctx){
  return `You extract LMMM steel-plant maintenance/shift data.
 Return valid JSON only with this exact structure:
-{"language":"en|te|hi","uncertain":boolean,"needs_event_time":boolean,"summary":string,"entries":[{"type":"production|delay|inspection|defect|job_action|logbook_note","text":string,"blooms_rolled":number|null,"delay_minutes":number|null,"delay_section":string|null,"reason":string|null,"event_date":string|null,"event_shift":"A|B|C|GENERAL|null"}]}.
+{"language":"en|te|hi","uncertain":boolean,"needs_event_time":boolean,"summary":string,"entries":[{"type":"production|delay|inspection|defect|job_action|logbook_note","equipment":string|null,"text":string,"confidence":number,"blooms_rolled":number|null,"delay_minutes":number|null,"delay_section":string|null,"reason":string|null,"event_date":string|null,"event_shift":"A|B|C|GENERAL|null"}]}.
+For clear Telugu/Hindi/English voice or text, write each entry.text as concise STANDARD TECHNICAL ENGLISH suitable for the maintenance database. Example: "Charging Grid 2 chain loose observe chesam" -> equipment="Charging Grid 2", text="Chain found loose".
+Do not translate or alter exact equipment/SAP/CAT/drawing/part identifiers.
 Never invent unreadable data. Preserve equipment/SAP/CAT/drawing/part identifiers exactly as supplied/visible.
 Primary production is blooms rolled. Do not invent tonnes.
 Section=${u.section_department}; Area=${u.area_of_working}; Current shift=${ctx.shift||'unknown'}.
-For a newly received voice/photo/message, treat the observation as CURRENT unless the user explicitly says it is old, yesterday, earlier, backdated, or gives another date/shift. For normal current observations set needs_event_time=false. Only explicitly old/backdated entries should require event date/shift.`;
+If event date/shift is unclear for an apparently old/late entry, set needs_event_time=true.`;
 }
 async function geminiGenerate(parts,u,ctx){
  if(!GEMINI_API_KEY)throw new Error('GEMINI_API_KEY missing');
@@ -861,27 +865,33 @@ async function stageMedia(u,from,msg){
  else if(/pdf/i.test(mime)){obj=await extractDocument(buf,mime,u,ctx);raw=obj.summary||'';}
  else {obj={language:'en',uncertain:true,needs_event_time:false,summary:'File received. This file type is not parsed automatically yet.',entries:[]};}
  const lang=obj.language||languageOf(raw);
+ const entries=obj.entries||[];
+ const clear = entries.length>0 && !obj.uncertain && !obj.needs_event_time &&
+   entries.every(e => Number(e.confidence ?? 1) >= 0.85 && String(e.text||'').trim());
  const q=await pool.query(`INSERT INTO media_ingestion(employee_number,media_id,media_type,mime_type,filename,detected_language,extracted_text,extraction_json,status,entered_by)
- VALUES($1,$2,$3,$4,$5,$6,$7,$8,'pending_confirmation',$9) RETURNING id`,
- [u.employee_number,n.id,type,mime,name,lang,raw,obj,from]);
+ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+ [u.employee_number,n.id,type,mime,name,lang,raw,obj,clear?'auto_processing':'pending_confirmation',from]);
+
+ if(clear){
+   const p={media_ingestion_id:q.rows[0].id,proposed_json:obj};
+   await commitMedia(u,from,p,true);
+   const saved=entries.slice(0,15).map(e=>{
+     const eq=e.equipment?`${e.equipment} – `:'';
+     return `${eq}${e.text||''}`;
+   }).join('\n');
+   await sendText(from,ml(lang,`Saved.\n${saved}`,`సేవ్ అయింది.\n${saved}`,`सेव हो गया।\n${saved}`));
+   return;
+ }
+
  await pool.query(`INSERT INTO pending_media_confirmations(employee_number,media_ingestion_id,proposed_json) VALUES($1,$2,$3)
  ON CONFLICT(employee_number) DO UPDATE SET media_ingestion_id=EXCLUDED.media_ingestion_id,proposed_json=EXCLUDED.proposed_json,created_at=now()`,
  [u.employee_number,q.rows[0].id,obj]);
- const lines=(obj.entries||[]).slice(0,15).map((e,i)=>`${i+1}. ${e.type}: ${e.text||''}`).join('\n');
- const clearCurrent=!obj.uncertain && !obj.needs_event_time && Array.isArray(obj.entries) && obj.entries.length>0;
- if(clearCurrent){
-   const p=(await pool.query(`SELECT * FROM pending_media_confirmations WHERE employee_number=$1`,[u.employee_number])).rows[0];
-   await commitMedia(u,from,p);
-   const first=obj.entries[0]||{};
-   const label=first.type==='defect'?'Defect':first.type==='inspection'?'Inspection':first.type==='production'?'Production':'Entry';
-   await sendText(from,`Saved. ${label}: ${first.text||obj.summary||''}`);
-   return;
- }
+ const lines=entries.slice(0,15).map((e,i)=>`${i+1}. ${e.type}: ${e.equipment?e.equipment+' – ':''}${e.text||''}`).join('\n');
  const ask=obj.needs_event_time?ml(lang,'When did it happen?','ఇది ఎప్పుడు జరిగింది?','यह कब हुआ था?'):
-   ml(lang,'Confirm these entries: CONFIRM / CORRECT','ఈ వివరాలు సరైతే: CONFIRM / CORRECT','जानकारी सही है तो: CONFIRM / CORRECT');
+   ml(lang,'Please verify: CONFIRM / CORRECT','దయచేసి చెక్ చేయండి: CONFIRM / CORRECT','कृपया जाँचें: CONFIRM / CORRECT');
  await sendText(from,`${lines||obj.summary}\n\n${ask}`);
 }
-async function commitMedia(u,from,p){
+async function commitMedia(u,from,p,auto=false){
  const o=p.proposed_json,ctx=await currentShiftContext(u),n=plantNow();
  for(const e of (o.entries||[])){
   const d=e.event_date||n.date,sh=e.event_shift||ctx.shift;
@@ -889,10 +899,10 @@ async function commitMedia(u,from,p){
    await pool.query(`INSERT INTO production_shift_logs(production_date,shift,area,blooms_rolled,operations_shift_incharge,remarks,entered_by)
    VALUES($1,$2,$3,$4,$5,$6,$7)`,[d,sh||'Not found',u.area_of_working,e.blooms_rolled,u.name,`Media: ${e.text||''}`,from]);
   }else if(['inspection','defect','job_action','logbook_note'].includes(e.type)){
-   await saveSectionEvent(u,from,e.type,e.text||'',d,sh,'media_confirmed');
+   await saveSectionEvent(u,from,e.type,e.text||'',d,sh,auto?'media_auto':'media_confirmed',e.equipment||null);
   }
  }
- await pool.query(`UPDATE media_ingestion SET status='confirmed' WHERE id=$1`,[p.media_ingestion_id]);
+ await pool.query(`UPDATE media_ingestion SET status=$2 WHERE id=$1`,[p.media_ingestion_id,auto?'auto_saved':'confirmed']);
  await pool.query(`DELETE FROM pending_media_confirmations WHERE employee_number=$1`,[u.employee_number]);
 }
 
@@ -1285,25 +1295,6 @@ async function processMessage(from, text, rawMessage = null) {
       try{await stageMedia(u,from,rawMessage);}catch(e){console.error('[MEDIA]',e);await sendText(from,'Could not process this file.');}
       return;
     }
-    // Pending media date answer: accept Today or a date instead of falling through to "Not found."
-    const mediaPending=(await pool.query(`SELECT * FROM pending_media_confirmations WHERE employee_number=$1`,[u.employee_number])).rows[0];
-    if(mediaPending && mediaPending.proposed_json?.needs_event_time){
-      let md=null;
-      if(/^today$/i.test(clean)) md=plantNow().date;
-      else if(/^(\d{4}-\d{2}-\d{2}|\d{1,2}[-\/]\d{1,2}[-\/]\d{4})$/.test(clean)) md=isoDate(clean);
-      if(md){
-        const ctx=await currentShiftContext(u);
-        const obj=mediaPending.proposed_json;
-        for(const e of (obj.entries||[])){ e.event_date=e.event_date||md; e.event_shift=e.event_shift||ctx.shift||plantNow().shift; }
-        obj.needs_event_time=false;
-        mediaPending.proposed_json=obj;
-        await pool.query(`UPDATE pending_media_confirmations SET proposed_json=$2 WHERE employee_number=$1`,[u.employee_number,obj]);
-        await commitMedia(u,from,mediaPending);
-        await sendText(from,'Saved.');
-        return;
-      }
-    }
-
     if(/^CONFIRM$/i.test(clean)){
       const p=(await pool.query(`SELECT * FROM pending_media_confirmations WHERE employee_number=$1`,[u.employee_number])).rows[0];
       if(!p){await sendText(from,'Not found.');return;}
@@ -1514,7 +1505,7 @@ app.post('/webhook', (req, res) => {
 app.get('/api/status', (_q, r) =>
   r.status(200).json({
     status: 'ready',
-    registration: 'V5.2-auto-media-save',
+    registration: 'V5.2-auto-english-equipment-routing',
     webhook: '/webhook',
     super_admins_configured: SUPER_ADMIN_NUMBERS.size
   })
