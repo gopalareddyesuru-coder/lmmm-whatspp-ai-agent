@@ -1479,6 +1479,15 @@ function dateRangeFromText(q=''){
 }
 function wantsOverall(q=''){return /\b(full|all|overall|complete|total|entire)\b/i.test(String(q||''));}
 function wantsMore(q=''){return /^(more|next|next 20|show more)$/i.test(String(q||'').trim());}
+function isDateOnlyCommand(q=''){
+ const t=String(q||'').trim();
+ if(/^(today|yesterday|last\s+\d+\s+days?|last week|this month)$/i.test(t))return true;
+ const ds=[...t.matchAll(/(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[-\/.]\d{1,2}[-\/.]\d{4})/g)];
+ return ds.length>=1 && /^(?:\s*(?:from\s*)?)?(?:\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[-\/.]\d{1,2}[-\/.]\d{4})(?:\s*(?:to|[-–—])\s*(?:\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[-\/.]\d{1,2}[-\/.]\d{4}))?\s*$/i.test(t);
+}
+async function clearSearchDates(u){
+ await pool.query(`UPDATE search_context SET date_from=NULL,date_to=NULL,page_offset=0,updated_at=now() WHERE employee_number=$1`,[u.employee_number]);
+}
 function areaDataQuery(q=''){return /\b(area|bdm|bar mill|finishing)\b/i.test(String(q||'')) && /\b(full|all|overall|complete|data|records?)\b/i.test(String(q||'')) && !/\b(wbf|furnace|equipment|gearbox|motor|pump|shear|door|recup|recuperator)\b/i.test(String(q||''));}
 async function setSearchFilters(u,{module,dateFrom,dateTo,offset,lastQuery}={}){
  await pool.query(`UPDATE search_context SET module=COALESCE($2,module),date_from=COALESCE($3,date_from),date_to=COALESCE($4,date_to),page_offset=COALESCE($5,page_offset),last_query=COALESCE($6,last_query),updated_at=now() WHERE employee_number=$1`,[u.employee_number,module||null,dateFrom||null,dateTo||null,Number.isInteger(offset)?offset:null,lastQuery||null]);
@@ -1694,16 +1703,22 @@ async function universalSearch(q,u){
  const original=String(q||'').trim(); if(!original)return null;
  if(areaDataQuery(original)) return await areaSearchMenu(original,u);
  let ctx=await getSearchContext(u); const range=dateRangeFromText(original);
- if(range && ctx) {await setSearchFilters(u,{dateFrom:range.from,dateTo:range.to,offset:0});ctx=await getSearchContext(u);}
  if(/^(select date( range)?|date range|search_date|SEARCH_DATE)$/i.test(original))return {dateMenu:true,text:'Select a time frame'};
- if(/^CUSTOM_DATE_RANGE$/i.test(original))return {text:'Enter From date and To date.\nExample: 01/05/2026 to 31/05/2026\n\nCurrent equipment/module will be retained.'};
+ if(/^(CUSTOM_DATE_RANGE|custom range|custom date range)$/i.test(original))return {text:'Enter From date and To date.\nExample: 01/05/2026 to 31/05/2026\n\nCurrent equipment/module will be retained.'};
+ // Date-menu selections and typed date ranges refine the active search; they are never treated as new equipment searches.
+ if(range && ctx?.last_query && isDateOnlyCommand(original)){
+   await setSearchFilters(u,{dateFrom:range.from,dateTo:range.to,offset:0});
+   return universalSearch(ctx.last_query,u);
+ }
+ if(range && ctx) {await setSearchFilters(u,{dateFrom:range.from,dateTo:range.to,offset:0});ctx=await getSearchContext(u);}
  if(/^(analysis|analysis & maintenance|search_analysis)$/i.test(original) && ctx?.equipment_name){const perms=await searchPermissions(u);if(!perms.analysis)return {text:'Analysis is not available for your access level.'};return {analysisMenu:true,text:`${ctx.equipment_name} — Analysis & Maintenance`};}
  if(/^search by equipment$/i.test(original)){const a=ctx?.area||'';const rows=(await pool.query(`SELECT DISTINCT equipment AS name FROM lmmm_master_records WHERE equipment IS NOT NULL AND ($1::text='' OR LOWER(COALESCE(area,'')) LIKE LOWER('%'||$1||'%')) ORDER BY name LIMIT 10`,[a])).rows;return {text:rows.length?`Select/search equipment:\n${rows.map((x,i)=>`${i+1}. ${x.name}`).join('\n')}\n\nYou can also type the equipment name.`:'Type the equipment name to search.'};}
  if((wantsMore(original)||/^SEARCH_MORE$/i.test(original)) && ctx?.last_query){
    const next=(Number(ctx.page_offset)||0)+20;
    const dr=ctx.date_from?{from:String(ctx.date_from).slice(0,10),to:String(ctx.date_to||ctx.date_from).slice(0,10)}:null;
-   const moreScope=await effectiveSearchScope(u); let rows=await searchBundledMaster(ctx.last_query,100,dr,next); rows=rows.filter(r=>areaMatchesScope(r.area,moreScope)).slice(0,20);
-   if(rows.length){await setSearchFilters(u,{offset:next}); return {text:`${ctx.equipment_name||'LMMM'}${dr?` | ${dr.from} to ${dr.to}`:''}\nShowing ${next+1}-${next+rows.length}\n\n${formatBundledResults(rows)}`,buttons:await primarySearchButtons(u,rows.length===20)};}
+   const moreScope=await effectiveSearchScope(u); const allMore=await searchBundledMaster(ctx.last_query,100,dr,next); let rows=allMore.filter(r=>areaMatchesScope(r.area,moreScope)).slice(0,20);
+   if(allMore.length && !rows.length && moreScope && !moreScope.plantWide)return {text:'Additional matching records are outside your authorised work scope.',status:'OUT_OF_SCOPE',buttons:await primarySearchButtons(u,false)};
+   if(rows.length){await setSearchFilters(u,{offset:next}); return {text:`${ctx.equipment_name||'LMMM'}${dr?` | ${dr.from} to ${dr.to}`:''}\nShowing ${next+1}-${next+rows.length}\n\n${formatBundledResults(rows)}`,buttons:await primarySearchButtons(u,rows.length===20),status:'OK'};}
    return {text:'No more matching records in the current filters.',buttons:await primarySearchButtons(u,false)};
  }
  if(/^\d+$/.test(original)){
@@ -1713,6 +1728,10 @@ async function universalSearch(q,u){
  ctx=await getSearchContext(u); let entity=stripIntentWords(naturalSearchAliases(original)); const alias=await resolveAlias(entity); if(alias)entity=alias.equipment_name||alias.canonical_text;
  if(!entity && ctx?.equipment_name)entity=ctx.equipment_name;
  const intent=searchIntent(original);
+ // A clearly new asset search must not inherit an old date filter accidentally. Date-only follow-ups keep context above.
+ if(!range && entity && !/^(more|next|search_more|analysis|search_analysis)$/i.test(original)){
+   await clearSearchDates(u); ctx=await getSearchContext(u);
+ }
  // Drawing numbers/part drawings and job procedures are reference-knowledge requests, not event/equipment searches.
  // Route them before fuzzy equipment discovery so a drawing number can never be mistaken for a defect/history term.
  if(intent==='drawing' || intent==='procedure'){
@@ -1721,7 +1740,11 @@ async function universalSearch(q,u){
  }
  let candidates=entity?await equipmentCandidates(entity,ctx):[];
  const searchScope=await effectiveSearchScope(u);
+ const unscopedCandidates=[...candidates];
  candidates=candidates.filter(x=>areaMatchesScope(x.area,searchScope));
+ if(unscopedCandidates.length && !candidates.length && searchScope && !searchScope.plantWide){
+   return {text:'This equipment/area is outside your authorised work scope.',status:'OUT_OF_SCOPE'};
+ }
  // Exact canonical equipment/known alias always outranks fuzzy contains matches.
  const canonicalEntity=naturalSearchAliases(entity||'').trim().toLowerCase();
  const exact=candidates.filter(x=>String(x.name||'').trim().toLowerCase()===canonicalEntity);
@@ -1743,10 +1766,14 @@ async function universalSearch(q,u){
  if(['production','delay','analysis','maintenance','condition'].includes(intent) && !dr && /\b(total|cumulative|mtbf|mtbr|mttr|performance|trend|schedule|scheduled|production|delay|delays)\b/i.test(original)) return {text:'Select a time frame first.\nToday | Last 7 days | Last 30 days | This month | Custom date range'};
  const limit=wantsOverall(original)?30:20;
  const liveEvents=(await eventSearch(original,u,equipment)).filter(x=>usefulLiveEvent(x,original));
- let masterRows=await searchBundledMaster(original,Math.max(limit,200),dr,0); masterRows=masterRows.filter(r=>areaMatchesScope(r.area,searchScope)).slice(0,limit); const perms=await searchPermissions(u);
- if(masterRows.length){if(!equipment){const names=[...new Set(masterRows.map(r=>r.equipment).filter(Boolean))];if(names.length===1){await setSearchContext(u,names[0],masterRows[0]?.area||ctx?.area||null);await setSearchFilters(u,{module:intent,offset:0,lastQuery:original});}} let text=`${equipment||masterRows[0]?.equipment||'LMMM'}${dr?` | ${dr.from} to ${dr.to}`:''}\nShowing latest ${masterRows.length}${wantsOverall(original)?' (overall view max 30)':''}\n\n${formatBundledResults(masterRows)}`;if(liveEvents.length)text+=`\n\nRecent live entries\n${formatLiveEvents(liveEvents)}`;return {text,buttons:await primarySearchButtons(u,masterRows.length===limit)};}
- if(liveEvents.length)return {text:(equipment?`${equipment}\n\n`:'')+formatLiveEvents(liveEvents),buttons:await primarySearchButtons(u,false)};
- return {knowledgeQuery:equipment && !original.toLowerCase().includes(equipment.toLowerCase())?`${equipment} ${original}`:original};
+ const unscopedMasterRows=await searchBundledMaster(original,Math.max(limit,200),dr,0);
+ let masterRows=unscopedMasterRows.filter(r=>areaMatchesScope(r.area,searchScope)).slice(0,limit); const perms=await searchPermissions(u);
+ if(unscopedMasterRows.length && !masterRows.length && searchScope && !searchScope.plantWide){
+   return {text:'Matching LMMM records exist, but they are outside your authorised work scope.',status:'OUT_OF_SCOPE'};
+ }
+ if(masterRows.length){if(!equipment){const names=[...new Set(masterRows.map(r=>r.equipment).filter(Boolean))];if(names.length===1){await setSearchContext(u,names[0],masterRows[0]?.area||ctx?.area||null);await setSearchFilters(u,{module:intent,offset:0,lastQuery:original});}} let text=`${equipment||masterRows[0]?.equipment||'LMMM'}${dr?` | ${dr.from} to ${dr.to}`:''}\nShowing latest ${masterRows.length}${wantsOverall(original)?' (overall view max 30)':''}\n\n${formatBundledResults(masterRows)}`;if(liveEvents.length)text+=`\n\nRecent live entries\n${formatLiveEvents(liveEvents)}`;return {text,buttons:await primarySearchButtons(u,masterRows.length===limit),status:'OK'};}
+ if(liveEvents.length)return {text:(equipment?`${equipment}\n\n`:'')+formatLiveEvents(liveEvents),buttons:await primarySearchButtons(u,false),status:'OK'};
+ return {knowledgeQuery:equipment && !original.toLowerCase().includes(equipment.toLowerCase())?`${equipment} ${original}`:original,status:'NO_STRUCTURED_DATA'};
 }
 
 async function retrieveReferenceKnowledge(question,u){
@@ -2714,7 +2741,8 @@ async function processMessage(from, text, rawMessage = null) {
         const answer=await geminiAnswerFromKnowledge(kq,knowledgeRows,u);
         if(answer){await sendText(from,answer);return;}
       }
-    }catch(e){console.error('[UNIVERSAL SEARCH]',e);}
+      if(us?.status==='NO_STRUCTURED_DATA'){await sendText(from,'No authorised stored records were found for the current equipment/module/date filters. Try Date Range, change equipment, or clear the filter.');return;}
+    }catch(e){console.error('[UNIVERSAL SEARCH]',e); await sendText(from,'Search could not be completed due to a system error. Please retry.'); return;}
     await sendText(from,ml(languageOf(clean),'No matching stored LMMM record or indexed reference knowledge was found. Try an equipment name, item number, maintenance term, or another date range.','సరిపోలే LMMM రికార్డు లేదా ఇండెక్స్ చేసిన రిఫరెన్స్ సమాచారం దొరకలేదు. Equipment పేరు, item number, maintenance term లేదా మరో date range తో ప్రయత్నించండి.','मिलता हुआ LMMM रिकॉर्ड या indexed reference knowledge नहीं मिला। Equipment name, item number, maintenance term या दूसरी date range से खोजें।'));return;
   }
 
