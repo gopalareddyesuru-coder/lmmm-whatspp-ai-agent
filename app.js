@@ -320,6 +320,14 @@ async function initDB() {
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_technical_chunks_media ON technical_document_chunks(media_ingestion_id,page_start)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_technical_chunks_equipment ON technical_document_chunks(equipment_name,document_class)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_technical_chunks_text ON technical_document_chunks USING GIN (to_tsvector('english',coalesce(section_heading,'')||' '||coalesce(content_text,'')))`);
+  // V6.0 resilient universal-ingestion checkpoints. A page/frame/sheet failure must not kill the batch.
+  await pool.query(`CREATE TABLE IF NOT EXISTS ingestion_checkpoints(
+    id BIGSERIAL PRIMARY KEY, media_ingestion_id BIGINT NOT NULL, unit_type TEXT NOT NULL,
+    unit_start INTEGER NOT NULL, unit_end INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
+    attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT, updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE(media_ingestion_id,unit_type,unit_start,unit_end))`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_ingestion_checkpoint_media ON ingestion_checkpoints(media_ingestion_id,status)`);
+
 
   await pool.query(`CREATE TABLE IF NOT EXISTS record_change_audit(
     id BIGSERIAL PRIMARY KEY, record_table TEXT NOT NULL, record_id BIGINT NOT NULL,
@@ -954,7 +962,15 @@ async function geminiGenerate(parts,u,ctx){
  const j=await r.json();
  const txt=(j.candidates?.[0]?.content?.parts||[]).map(p=>p.text||'').join('').trim();
  if(!txt)throw new Error('Gemini returned no text');
- return JSON.parse(txt.replace(/^```json\s*/i,'').replace(/```$/,'').trim());
+ return parseAiJson(txt);
+}
+function parseAiJson(txt){
+ let t=String(txt||'').trim().replace(/^```(?:json)?\s*/i,'').replace(/```$/,'').trim();
+ try{return JSON.parse(t);}catch(first){
+   const a=t.indexOf('{'), b=t.lastIndexOf('}');
+   if(a>=0&&b>a){try{return JSON.parse(t.slice(a,b+1));}catch(_e){}}
+   const err=new Error(`AI_JSON_INCOMPLETE: ${first.message}`); err.code='AI_JSON_INCOMPLETE'; throw err;
+ }
 }
 async function classifyExtracted(text,u,ctx){
  return geminiGenerate([{text:`Classify and extract every relevant LMMM entry from this message:\n${text}`}],u,ctx);
@@ -1029,14 +1045,35 @@ async function extractReferenceRange(buf,mime,u,ctx,obj,name,startPage,endPage,s
   sourcePart||{inline_data:{mime_type:mime,data:buf.toString('base64')}}
  ],u,ctx);
 }
+async function checkpoint(mediaId,unitType,start,end,status,error=null){
+ await pool.query(`INSERT INTO ingestion_checkpoints(media_ingestion_id,unit_type,unit_start,unit_end,status,attempts,last_error,updated_at)
+ VALUES($1,$2,$3,$4,$5,1,$6,now()) ON CONFLICT(media_ingestion_id,unit_type,unit_start,unit_end)
+ DO UPDATE SET status=EXCLUDED.status,attempts=ingestion_checkpoints.attempts+1,last_error=EXCLUDED.last_error,updated_at=now()`,[mediaId,unitType,start,end,status,error?String(error).slice(0,1500):null]);
+}
 async function indexFullReferenceDocument(mediaRowId,knowledgeId,buf,mime,u,from,obj,name,sourcePart=null){
- const total=Math.max(1,Math.min(Number(obj.page_count)||1,2000)),step=total>80?5:10; let chunkCount=0; const failedPages=[],indexed=new Set();
- async function savePart(part,start,end){for(const item of (Array.isArray(part?.reference_items)?part.reference_items:[])){const text=String(item?.text||'').trim();if(!text)continue;const ps=Math.max(start,Math.min(end,Number(item.page_number)||start)),pe=Math.max(ps,Math.min(end,Number(item.page_end)||ps));await pool.query(`INSERT INTO technical_document_chunks(media_ingestion_id,knowledge_id,employee_number,document_class,title,equipment_name,identifiers,page_start,page_end,section_heading,content_text,source_filename,entered_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,[mediaRowId,knowledgeId,u.employee_number,obj.document_class,obj.title||name,(obj.equipment_refs||[])[0]||null,JSON.stringify(obj.identifiers||[]),ps,pe,item.heading||null,text,name,from]);chunkCount++;for(let p=ps;p<=pe;p++)indexed.add(p);}}
- async function onePage(p){try{const ctx=await currentShiftContext(u),part=await withRetry(()=>extractReferenceRange(buf,mime,u,ctx,obj,name,p,p,sourcePart),3);await savePart(part,p,p);indexed.add(p);return true;}catch(e){console.error(`[REFERENCE PAGE ${p}]`,e);failedPages.push(p);return false;}}
- for(let start=1;start<=total;start+=step){const end=Math.min(total,start+step-1);try{const ctx=await currentShiftContext(u),part=await withRetry(()=>extractReferenceRange(buf,mime,u,ctx,obj,name,start,end,sourcePart),3);await savePart(part,start,end);for(let p=start;p<=end;p++)if(!indexed.has(p))await onePage(p);}catch(e){console.error(`[REFERENCE RANGE ${start}-${end}]`,e);for(let p=start;p<=end;p++)await onePage(p);}}
+ const total=Math.max(1,Math.min(Number(obj.page_count)||1,5000)),step=total>80?5:10; let chunkCount=0; const failedPages=[],indexed=new Set();
+ const unitType=/tiff?/i.test(mime)||/\.tiff?$/i.test(name)?'frame':'page';
+ async function savePart(part,start,end){
+   const items=Array.isArray(part?.reference_items)?part.reference_items:[];
+   for(const item of items){const text=String(item?.text||'').trim();if(!text)continue;const ps=Math.max(start,Math.min(end,Number(item.page_number)||start)),pe=Math.max(ps,Math.min(end,Number(item.page_end)||ps));
+    await pool.query(`INSERT INTO technical_document_chunks(media_ingestion_id,knowledge_id,employee_number,document_class,title,equipment_name,identifiers,page_start,page_end,section_heading,content_text,source_filename,entered_by) SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13 WHERE NOT EXISTS(SELECT 1 FROM technical_document_chunks WHERE media_ingestion_id=$1 AND page_start=$8 AND page_end=$9 AND coalesce(section_heading,'')=coalesce($10,'') AND content_text=$11)`,[mediaRowId,knowledgeId,u.employee_number,obj.document_class,obj.title||name,(obj.equipment_refs||[])[0]||null,JSON.stringify(obj.identifiers||[]),ps,pe,item.heading||null,text,name,from]);
+    chunkCount++;for(let p=ps;p<=pe;p++)indexed.add(p);
+   }
+ }
+ async function onePage(p){
+   await checkpoint(mediaRowId,unitType,p,p,'processing');
+   try{const ctx=await currentShiftContext(u);const part=await withRetry(()=>extractReferenceRange(buf,mime,u,ctx,obj,name,p,p,sourcePart),4);await savePart(part,p,p);indexed.add(p);await checkpoint(mediaRowId,unitType,p,p,'done');return true;}
+   catch(e){console.error(`[REFERENCE ${unitType.toUpperCase()} ${p}]`,e);failedPages.push(p);await checkpoint(mediaRowId,unitType,p,p,'review',e.message);return false;}
+ }
+ for(let start=1;start<=total;start+=step){
+   const end=Math.min(total,start+step-1); await checkpoint(mediaRowId,unitType,start,end,'processing');
+   try{const ctx=await currentShiftContext(u);const part=await withRetry(()=>extractReferenceRange(buf,mime,u,ctx,obj,name,start,end,sourcePart),3);await savePart(part,start,end);await checkpoint(mediaRowId,unitType,start,end,'done');for(let p=start;p<=end;p++)if(!indexed.has(p))await onePage(p);}
+   catch(e){console.error(`[REFERENCE RANGE ${start}-${end}]`,e);await checkpoint(mediaRowId,unitType,start,end,'fallback',e.message);for(let p=start;p<=end;p++)await onePage(p);}
+ }
  const uniqFail=[...new Set(failedPages)].filter(p=>!indexed.has(p)).sort((a,b)=>a-b),failedRanges=[];for(const p of uniqFail){const last=failedRanges.at(-1);if(last&&last[1]===p-1)last[1]=p;else failedRanges.push([p,p]);}
  return {total,indexedPages:total-uniqFail.length,attemptedPages:total,chunkCount,failedPages:uniqFail.length,failedRanges};
 }
+
 function queryTokens(t=''){
  return [...new Set(String(t).toLowerCase().replace(/[^a-z0-9_\-\/\.\s]/g,' ').split(/\s+/).filter(x=>x.length>=2 && !['the','and','for','with','what','tell','about','show','give','please','data','details','lo','ki','ga','ani'].includes(x)))].slice(0,12);
 }
@@ -1112,6 +1149,25 @@ function mediaSummary(saved,mediaId,reviewCount=0){
  const byEq=Object.entries(counts).slice(0,8).map(([k,v])=>`${k}: ${v}`).join(' | ');
  return `✅ ${(saved||[]).length} records saved${byEq?`\n${byEq}`:''}${reviewCount?`\n⚠️ ${reviewCount} records need review`:''}\nBatch ID: ${mediaBatchCode(mediaId)}\nUse: UNDO ${mediaBatchCode(mediaId)} / VIEW ${mediaBatchCode(mediaId)}`;
 }
+async function extractOfficeOrAccess(buf,mime,name,u,ctx){
+ const lower=String(name||'').toLowerCase();
+ try{
+  if(/\.xlsx?$/.test(lower)||/spreadsheet|ms-excel/i.test(mime)){
+   const XLSX=await import('xlsx'); const wb=XLSX.read(buf,{type:'buffer',cellDates:true}); let out=[];
+   for(const sh of wb.SheetNames){const rows=XLSX.utils.sheet_to_json(wb.Sheets[sh],{header:1,defval:null,raw:false});out.push(`SHEET: ${sh}\n`+rows.map(r=>r.map(v=>v??'').join(' | ')).join('\n'));}
+   return {text:out.join('\n\n').slice(0,1000000),kind:'spreadsheet'};
+  }
+  if(/\.docx$/.test(lower)||/wordprocessingml/i.test(mime)){
+   const mammoth=await import('mammoth'); const r=await mammoth.extractRawText({buffer:buf});return {text:String(r.value||'').slice(0,1000000),kind:'word'};
+  }
+  if(/\.(mdb|accdb)$/.test(lower)||/msaccess|access/i.test(mime)){
+   const mod=await import('mdb-reader'); const MDBReader=mod.default||mod.MDBReader||mod; const db=new MDBReader(buf); const names=db.getTableNames(); let out=[];
+   for(const tableName of names){try{const table=db.getTable(tableName);const rows=table.getData();out.push(`ACCESS TABLE: ${tableName}\n`+JSON.stringify(rows));}catch(e){out.push(`ACCESS TABLE: ${tableName}\n[READ ERROR: ${e.message}]`);}}
+   return {text:out.join('\n\n').slice(0,1500000),kind:'access',tables:names};
+  }
+ }catch(e){const err=new Error(`STRUCTURED_READER_UNAVAILABLE: ${e.message}`);err.code='STRUCTURED_READER_UNAVAILABLE';throw err;}
+ return null;
+}
 async function stageMedia(u,from,msg){
  const n=msg.image||msg.audio||msg.voice||msg.document;
  const type=msg.image?'image':(msg.audio||msg.voice)?'audio':'document';
@@ -1133,10 +1189,12 @@ async function stageMedia(u,from,msg){
  }
  else if(/text|csv|json|xml/i.test(mime)){raw=buf.toString('utf8').slice(0,150000);obj=await classifyExtracted(raw,u,ctx);}
  else if(/pdf/i.test(mime)){obj=await extractDocument(buf,mime,u,ctx,name,sourcePart);raw=obj.summary||'';}
- else if(/wordprocessingml|spreadsheetml|msword|ms-excel|tiff/i.test(mime) || /\.(docx?|xlsx?|tiff?)$/i.test(name)){
-   // TIFF/TIF may contain many frames. sourcePart points at the uploaded original when TIFF,
-   // allowing metadata + page-range passes to see the complete source instead of only frame 1.
+ else if(/tiff/i.test(mime) || /\.tiff?$/i.test(name)){
    obj=await extractDocument(buf,mime,u,ctx,name,sourcePart);raw=obj.summary||'';
+ }
+ else if(/wordprocessingml|spreadsheetml|msword|ms-excel|msaccess|access/i.test(mime) || /\.(docx?|xlsx?|mdb|accdb)$/i.test(name)){
+   try{const structured=await extractOfficeOrAccess(buf,mime,name,u,ctx);raw=structured?.text||'';obj=await classifyExtracted(`SOURCE FILE: ${name}\nSOURCE KIND: ${structured?.kind||'structured document'}\nExtract ALL relevant rows/records independently and preserve table/sheet names in text where useful.\n\n${raw}`,u,ctx);if(structured?.kind==='access')obj.source_tables=structured.tables||[];}
+   catch(e){console.error('[STRUCTURED FILE READER]',e);obj={language:'en',uncertain:true,needs_event_time:false,document_class:'other_reference',document_kind:'document',title:name,summary:`Structured file received but its dedicated reader is unavailable: ${e.message}`,entries:[],reference_items:[],page_count:1};raw=obj.summary;}
  }
  else {obj={language:'en',uncertain:true,needs_event_time:false,document_kind:'document',table_has_date_column:false,summary:'File received. This file type is not parsed automatically yet.',entries:[]};}
  // Secondary deterministic safety net for obvious reference-document filenames.
@@ -1923,7 +1981,7 @@ app.post('/webhook', (req, res) => {
 app.get('/api/status', (_q, r) =>
   r.status(200).json({
     status: 'ready',
-    registration: 'V5.8.1-universal-visual-ingestion',
+    registration: 'V6.0-universal-maintenance-data-engine',
     webhook: '/webhook',
     super_admins_configured: SUPER_ADMIN_NUMBERS.size
   })
