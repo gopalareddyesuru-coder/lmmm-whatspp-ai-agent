@@ -1624,8 +1624,10 @@ async function equipmentCandidates(term,ctx){
  const sql=`WITH eq AS (\n   SELECT DISTINCT equipment_name AS name, area FROM section_event_log WHERE deleted_at IS NULL AND equipment_name IS NOT NULL\n   UNION SELECT DISTINCT equipment_name AS name, NULL::text AS area FROM technical_document_chunks WHERE equipment_name IS NOT NULL\n   UNION SELECT DISTINCT equipment AS name, area FROM lmmm_master_records WHERE equipment IS NOT NULL\n ) SELECT name,area FROM eq WHERE (${clauses.join(' OR ')})\n ORDER BY CASE WHEN ${areaP} IS NOT NULL AND LOWER(COALESCE(area,''))=LOWER(${areaP}) THEN 0 ELSE 1 END, name LIMIT 12`;
  return (await pool.query(sql,vals)).rows;
 }
-async function eventSearch(q,u,equipment=null){
+async function eventSearch(q,u,equipment=null,dateRange=null){
  const intent=searchIntent(q), terms=queryTokens(stripIntentWords(q)); const vals=[]; let where=`deleted_at IS NULL`;
+ if(dateRange?.from){vals.push(dateRange.from);where+=` AND event_date >= $${vals.length}::date`;}
+ if(dateRange?.to){vals.push(dateRange.to);where+=` AND event_date <= $${vals.length}::date`;}
  if(equipment){vals.push(equipment);where+=` AND (LOWER(COALESCE(equipment_name,''))=LOWER($${vals.length}) OR LOWER(event_text) LIKE LOWER('%'||$${vals.length}||'%'))`;}
  for(const t of terms.slice(0,5)){vals.push(t);where+=` AND LOWER(event_text||' '||COALESCE(equipment_name,'')) LIKE LOWER('%'||$${vals.length}||'%')`;}
  if(intent==='defect'||intent==='job_action'){vals.push(intent);where+=` AND event_type=$${vals.length}`;}
@@ -1734,7 +1736,9 @@ async function universalSearch(q,u){
  // Date-menu selections and typed date ranges refine the active search; they are never treated as new equipment searches.
  if(range && ctx?.last_query && isDateOnlyCommand(original)){
    await setSearchFilters(u,{dateFrom:range.from,dateTo:range.to,offset:0});
-   return universalSearch(ctx.last_query,u);
+   // Keep the selected range attached to the recursive search. Calling last_query alone
+   // looked like a fresh equipment search and cleared the dates.
+   return universalSearch(`${ctx.last_query} ${range.from} to ${range.to}`,u);
  }
  if(range && ctx) {await setSearchFilters(u,{dateFrom:range.from,dateTo:range.to,offset:0});ctx=await getSearchContext(u);}
  if(/^(analysis|analysis & maintenance|search_analysis)$/i.test(original) && ctx?.equipment_name){const perms=await searchPermissions(u);if(!perms.analysis)return {text:'Analysis is not available for your access level.'};return {analysisMenu:true,text:`${ctx.equipment_name} — Analysis & Maintenance`};}
@@ -1792,15 +1796,22 @@ async function universalSearch(q,u){
  // Totals/trends need a time frame; do not silently calculate lifetime analytics.
  if(['production','delay','analysis','maintenance','condition'].includes(intent) && !dr && /\b(total|cumulative|mtbf|mtbr|mttr|performance|trend|schedule|scheduled|production|delay|delays)\b/i.test(original)) return {text:'Select a time frame first.\nToday | Last 7 days | Last 30 days | This month | Custom date range'};
  const limit=wantsOverall(original)?30:20;
- const liveEvents=(await eventSearch(original,u,equipment)).filter(x=>usefulLiveEvent(x,original));
+ const liveEvents=(await eventSearch(original,u,equipment,dr)).filter(x=>usefulLiveEvent(x,original));
  const unscopedMasterRows=await searchBundledMaster(original,Math.max(limit,200),dr,0);
  let masterRows=unscopedMasterRows.filter(r=>areaMatchesScope(r.area,searchScope,r.equipment)).slice(0,limit); const perms=await searchPermissions(u);
  if(unscopedMasterRows.length && !masterRows.length && searchScope && !searchScope.plantWide){
    console.log('[SCOPE] OUT_OF_SCOPE records',{employee:u.employee_number,areas:searchScope?.areas,equipment,query:original,sample:unscopedMasterRows.slice(0,5).map(r=>({equipment:r.equipment,area:r.area}))});
    return {text:'Matching LMMM records exist, but they are outside your authorised work scope.',status:'OUT_OF_SCOPE'};
  }
- if(masterRows.length){if(!equipment){const names=[...new Set(masterRows.map(r=>r.equipment).filter(Boolean))];if(names.length===1){await setSearchContext(u,names[0],masterRows[0]?.area||ctx?.area||null);await setSearchFilters(u,{module:intent,offset:0,lastQuery:original});}} let text=`${equipment||masterRows[0]?.equipment||'LMMM'}${dr?` | ${dr.from} to ${dr.to}`:''}\nShowing latest ${masterRows.length}${wantsOverall(original)?' (overall view max 30)':''}\n\n${formatBundledResults(masterRows)}`;if(liveEvents.length)text+=`\n\nRecent live entries\n${formatLiveEvents(liveEvents)}`;return {text,buttons:await primarySearchButtons(u,masterRows.length===limit),status:'OK'};}
- if(liveEvents.length)return {text:(equipment?`${equipment}\n\n`:'')+formatLiveEvents(liveEvents),buttons:await primarySearchButtons(u,false),status:'OK'};
+ if(masterRows.length){if(!equipment){const names=[...new Set(masterRows.map(r=>r.equipment).filter(Boolean))];if(names.length===1){await setSearchContext(u,names[0],masterRows[0]?.area||ctx?.area||null);await setSearchFilters(u,{module:intent,offset:0,lastQuery:original});}} let text=`${equipment||masterRows[0]?.equipment||'LMMM'}${dr?` | ${dr.from} to ${dr.to}`:''}\n${dr?`Showing ${masterRows.length} record${masterRows.length===1?'':'s'} in selected date range`:`Showing latest ${masterRows.length}${wantsOverall(original)?' (overall view max 30)':''}`}\n\n${formatBundledResults(masterRows)}`;if(liveEvents.length)text+=`\n\nRecent live entries\n${formatLiveEvents(liveEvents)}`;return {text,buttons:await primarySearchButtons(u,masterRows.length===limit),status:'OK'};}
+ if(liveEvents.length)return {text:(equipment?`${equipment}${dr?` | ${dr.from} to ${dr.to}`:''}\n\n`:'')+formatLiveEvents(liveEvents),buttons:await primarySearchButtons(u,false),status:'OK'};
+ // A selected date range is a hard filter. Never fall back to lifetime/latest records or
+ // undated reference knowledge when the user asked for a specific period.
+ if(dr && (equipment || ctx?.equipment_name)){
+   const eq=equipment||ctx?.equipment_name||'Selected equipment';
+   const mod=(ctx?.module||intent||'records').replace(/_/g,' ');
+   return {text:`No ${eq} ${mod} records found from ${dr.from} to ${dr.to}.`,buttons:await primarySearchButtons(u,false),status:'NO_DATA_IN_RANGE'};
+ }
  return {knowledgeQuery:equipment && !original.toLowerCase().includes(equipment.toLowerCase())?`${equipment} ${original}`:original,status:'NO_STRUCTURED_DATA'};
 }
 
