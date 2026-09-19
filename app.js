@@ -154,6 +154,21 @@ async function initDB() {
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS employee_category TEXT DEFAULT 'NOT ASSIGNED'`);
 
+  // V7.7.24: durable staged multi-select state shared by governance and search UX.
+  // A selection is only committed when the user taps Apply/Continue.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ui_selection_sessions(
+      owner_key TEXT NOT NULL,
+      session_key TEXT NOT NULL,
+      target_key TEXT NOT NULL DEFAULT '',
+      selected JSONB NOT NULL DEFAULT '[]'::jsonb,
+      context JSONB NOT NULL DEFAULT '{}'::jsonb,
+      updated_at TIMESTAMPTZ DEFAULT now(),
+      PRIMARY KEY(owner_key,session_key,target_key)
+    )
+  `);
+
+
 
 
   await pool.query(`
@@ -1712,10 +1727,10 @@ async function searchPermissions(u){
 }
 async function primarySearchButtons(u,hasMore=true){
  const perms=await searchPermissions(u);
- const b=[];
+ const b=[{id:'SEARCH_DATA_MENU',title:'Select Data'}];
  if(hasMore && perms.more)b.push({id:'SEARCH_MORE',title:'More'});
  if(perms.date)b.push({id:'SEARCH_DATE',title:'Date Range'});
- if(perms.analysis)b.push({id:'SEARCH_ANALYSIS',title:'Analysis'});
+ else if(perms.analysis)b.push({id:'SEARCH_ANALYSIS',title:'Analysis'});
  return b.slice(0,3);
 }
 function allowedAnalysisRows(perms){
@@ -2384,6 +2399,86 @@ async function commitMedia(u,from,p,status='confirmed',timingSource='media_confi
 }
 
 
+
+// V7.7.24 PROJECT-WIDE MENU STANDARD
+// Multi-select where multiple values are logically valid; single-select for exclusive values (e.g. operational role).
+async function selectionGet(owner,key,target='',defaults=[]){
+  const r=(await pool.query(`SELECT selected,context FROM ui_selection_sessions WHERE owner_key=$1 AND session_key=$2 AND target_key=$3`,[String(owner),key,String(target)])).rows[0];
+  if(r)return {selected:Array.isArray(r.selected)?r.selected:[],context:r.context||{}};
+  await pool.query(`INSERT INTO ui_selection_sessions(owner_key,session_key,target_key,selected) VALUES($1,$2,$3,$4::jsonb)
+    ON CONFLICT(owner_key,session_key,target_key) DO NOTHING`,[String(owner),key,String(target),JSON.stringify(defaults)]);
+  return {selected:[...defaults],context:{}};
+}
+async function selectionReset(owner,key,target='',values=[],context={}){
+  await pool.query(`INSERT INTO ui_selection_sessions(owner_key,session_key,target_key,selected,context,updated_at)
+    VALUES($1,$2,$3,$4::jsonb,$5::jsonb,now()) ON CONFLICT(owner_key,session_key,target_key)
+    DO UPDATE SET selected=EXCLUDED.selected,context=EXCLUDED.context,updated_at=now()`,
+    [String(owner),key,String(target),JSON.stringify(values),JSON.stringify(context)]);
+}
+async function selectionToggle(owner,key,target,value,defaults=[]){
+  const st=await selectionGet(owner,key,target,defaults); const set=new Set(st.selected.map(String));
+  if(set.has(String(value)))set.delete(String(value));else set.add(String(value));
+  await selectionReset(owner,key,target,[...set],st.context); return [...set];
+}
+async function selectionClear(owner,key,target=''){await pool.query(`DELETE FROM ui_selection_sessions WHERE owner_key=$1 AND session_key=$2 AND target_key=$3`,[String(owner),key,String(target)]);}
+
+const DATA_MENU_OPTIONS=[
+ ['DEFECTS','Defects'],['JOBS','Jobs Done'],['HISTORY','History'],['PM','PM / Scheduled'],
+ ['CBM','Inspection / CBM'],['BREAKDOWN','Breakdown / Delay'],['SPARES','Spares / Documents']
+];
+async function equipmentDataAvailability(ctx,u){
+  const all=await allAnalysisRows(ctx,u,6000);
+  const counts={
+    DEFECTS:all.filter(r=>String(r.record_type).toLowerCase()==='defect').length,
+    JOBS:all.filter(r=>String(r.record_type).toLowerCase()==='job_action'||isJobHistoryRow(r)).length,
+    HISTORY:all.filter(r=>String(r.record_type).toLowerCase()==='history').length,
+    PM:all.filter(isTruePmRow).length, CBM:all.filter(isTrueCbmRow).length,
+    BREAKDOWN:all.filter(isDelayEvidenceRow).length,
+    SPARES:all.filter(r=>/\b(spare|bearing|seal|coupling|blade|part no|item no|drawing)\b/i.test(String(r.record_text||''))).length
+  };
+  return {all,counts};
+}
+async function sendEquipmentDataMenu(to,u){
+  const ctx=await getSearchContext(u); if(!ctx?.equipment_name){await sendText(to,'Select/search an equipment first.');return;}
+  const perms=await searchPermissions(u), av=await equipmentDataAvailability(ctx,u);
+  const allowed=(code)=> code==='DEFECTS'||code==='HISTORY' ? perms.view :
+    code==='JOBS'?perms.jobs:code==='PM'?perms.pm:code==='CBM'?perms.cbm:code==='BREAKDOWN'?perms.delay:perms.view;
+  const opts=DATA_MENU_OPTIONS.filter(([c])=>allowed(c)&&av.counts[c]>0);
+  if(!opts.length){await sendText(to,`${ctx.equipment_name}\nNo authorised indexed data categories are available for selection.`);return;}
+  let st=await selectionGet(u.employee_number,'EQUIPMENT_DATA',ctx.equipment_name,[]);
+  const valid=new Set(opts.map(x=>x[0])); const selected=st.selected.filter(x=>valid.has(x));
+  if(selected.length!==st.selected.length)await selectionReset(u.employee_number,'EQUIPMENT_DATA',ctx.equipment_name,selected,{});
+  const rows=opts.map(([c,t])=>({id:`DATA_TOGGLE:${c}`,title:`${selected.includes(c)?'✓':'○'} ${t}`.slice(0,24),description:`${av.counts[c]} available record(s)`}));
+  rows.push({id:'DATA_APPLY',title:'✓ Continue / Apply',description:`${selected.length} selected`});
+  if(rows.length<=10)await sendList(to,`${ctx.equipment_name} • Select Data\nSelect one or more. Tap options to toggle, then Continue.`,`Select`,rows,'Equipment Data');
+  else await sendList(to,`${ctx.equipment_name} • Select Data`,`Select`,rows.slice(0,10),'Equipment Data');
+}
+function dataRowsForCode(all,code){
+  if(code==='DEFECTS')return all.filter(r=>String(r.record_type).toLowerCase()==='defect');
+  if(code==='JOBS')return all.filter(r=>String(r.record_type).toLowerCase()==='job_action'||isJobHistoryRow(r));
+  if(code==='HISTORY')return all.filter(r=>String(r.record_type).toLowerCase()==='history');
+  if(code==='PM')return all.filter(isTruePmRow);
+  if(code==='CBM')return all.filter(isTrueCbmRow);
+  if(code==='BREAKDOWN')return all.filter(isDelayEvidenceRow);
+  if(code==='SPARES')return all.filter(r=>/\b(spare|bearing|seal|coupling|blade|part no|item no|drawing)\b/i.test(String(r.record_text||'')));
+  return [];
+}
+async function applyEquipmentDataSelection(to,u){
+  const ctx=await getSearchContext(u);if(!ctx?.equipment_name){await sendText(to,'Select/search an equipment first.');return;}
+  const st=await selectionGet(u.employee_number,'EQUIPMENT_DATA',ctx.equipment_name,[]);
+  if(!st.selected.length){await sendText(to,'Select at least one data option, then Continue.');return;}
+  const {all}=await equipmentDataAvailability(ctx,u), dr=ctxRange(ctx), period=dr?` | ${dr.from} to ${dr.to}`:'';
+  const sections=[]; let hidden=0;
+  for(const code of st.selected){
+    const title=(DATA_MENU_OPTIONS.find(x=>x[0]===code)||[code,code])[1], rows=dataRowsForCode(all,code);
+    if(!rows.length)continue; const show=rows.slice(0,8); hidden+=Math.max(0,rows.length-show.length);
+    sections.push(`${title} — ${rows.length}\n${formatBundledResults(show)}`);
+  }
+  const perms=await searchPermissions(u);
+  const footer=`\n\nSelected: ${st.selected.join(', ')}${hidden?`\n${hidden} additional matching record(s) available.`:''}${perms.pdf?'\nPDF/Print access can use the full validated matching set when the report engine is connected.':''}`;
+  await sendLongText(to,`${ctx.equipment_name} — Selected Maintenance Data${period}\n\n${sections.join('\n\n──────────\n\n')}${footer}`);
+}
+
 const ACCESS_PERMISSION_OPTIONS = [
  ['FULL_ACCESS','Full Access'],['ENTRY','Entry'],['VIEW','View'],['EDIT','Edit'],['DELETE_UNDO','Delete / Undo'],['APPROVAL','Approval'],
  ['PRINT_EXPORT','PDF / Print'],['ANALYSIS','Analysis'],['ADVANCED_REPORTS','Advanced Reports'],['RCM','RCM Analysis'],
@@ -2431,11 +2526,19 @@ async function sendAccessAdminMenu(to,emp){
   {id:`ACCESS_JOB:${emp}`,title:'Job Responsibility'}, {id:`ACCESS_VIEW:${emp}`,title:'Effective Access'}, {id:`ACCESS_AUDIT:${emp}`,title:'Audit History'}
  ],'User Governance');
 }
-async function sendPermissionAdmin(to,emp){
+async function sendPermissionAdmin(to,emp,page=1){
  if(!await requireSuperAdmin(to))return; const a=await effectiveAuthority(emp);if(!a){await sendText(to,'Not found.');return;}
  const active=new Set((a.special_permissions||[]).map(x=>String(x).toUpperCase()));
  const inherited=new Set((a.default_permissions||[]).map(x=>String(x.permission||'').toUpperCase()));
- await sendList(to,`Access • ${emp}\n↳ Default/Inherited • ✓ Additional grant • ○ Available\nRegistration + approved hierarchy defaults are shown; all grantable options remain visible to Super Admin.`,`Select`,ACCESS_PERMISSION_OPTIONS.map(([code,title])=>({id:`ACCESS_TOGGLE:${code}:${emp}`,title:`${active.has(code)?'✓':inherited.has(code)?'↳':'○'} ${title}`.slice(0,24),description:active.has(code)?'Additional grant':inherited.has(code)?'Default / inherited':'Available to grant'})),'Access');
+ let st=await selectionGet(to,'ADMIN_ACCESS',emp,[...active]); const staged=new Set(st.selected);
+ const start=page===2?8:0, chunk=ACCESS_PERMISSION_OPTIONS.slice(start,start+8);
+ const rows=chunk.map(([code,title])=>({id:`ACCESS_STAGE:${code}:${emp}`,title:`${staged.has(code)?'✓':inherited.has(code)?'↳':'○'} ${title}`.slice(0,24),description:staged.has(code)?'Selected additional grant':inherited.has(code)?'Default / inherited':'Available'}));
+ if(page===1 && ACCESS_PERMISSION_OPTIONS.length>8)rows.push({id:`ACCESS_PERMS_PAGE2:${emp}`,title:'More Access Options',description:'Show remaining permissions'});
+ else if(page===2)rows.push({id:`ACCESS_PERMS:${emp}`,title:'Back to first options'});
+ rows.push({id:`ACCESS_APPLY:${emp}`,title:'✓ Apply Selection',description:`${staged.size} additional grant(s)`});
+ await sendList(to,`Access • ${emp} • ${page===2?'More':'Main'}
+↳ Default/Inherited • ✓ Selected additional grant • ○ Available
+Select one or more, then Apply.`,`Select`,rows,'Access');
 }
 async function togglePermissionAdmin(from,emp,permission){
  if(!await requireSuperAdmin(from))return;if(!ACCESS_PERMISSION_OPTIONS.some(x=>x[0]===permission)){await sendText(from,'Invalid permission.');return;}
@@ -2463,10 +2566,17 @@ async function setRoleAdmin(from,emp,role){
  await syncDefaultAccess(emp,from,'Operational role / hierarchy changed');
  await sendAccessAdminMenu(from,emp);
 }
-async function sendAuthorityAdmin(to,emp){
+async function sendAuthorityAdmin(to,emp,page=1){
  if(!await requireSuperAdmin(to))return;const a=await effectiveAuthority(emp);if(!a){await sendText(to,'Not found.');return;}
  const active=new Set((a.authority_grants||[]).map(x=>String(x).toUpperCase()));
- await sendList(to,`Authorities • ${emp}\nAuthority is separate from role and responsibility.`,`Select`,AUTHORITY_OPTIONS.map(([c,t])=>({id:`ACCESS_AUTH_TOGGLE:${c}:${emp}`,title:`${active.has(c)?'✓':'○'} ${t}`.slice(0,24)})),'Authorities');
+ let st=await selectionGet(to,'ADMIN_AUTH',emp,[...active]);const staged=new Set(st.selected);
+ const start=page===2?8:0,chunk=AUTHORITY_OPTIONS.slice(start,start+8);
+ const rows=chunk.map(([c,t])=>({id:`AUTH_STAGE:${c}:${emp}`,title:`${staged.has(c)?'✓':'○'} ${t}`.slice(0,24)}));
+ if(page===1 && AUTHORITY_OPTIONS.length>8)rows.push({id:`ACCESS_AUTH_PAGE2:${emp}`,title:'More Authorities'});
+ else if(page===2)rows.push({id:`ACCESS_AUTH:${emp}`,title:'Back to first options'});
+ rows.push({id:`AUTH_APPLY:${emp}`,title:'✓ Apply Selection',description:`${staged.size} selected`});
+ await sendList(to,`Authorities • ${emp} • ${page===2?'More':'Main'}
+Select one or more, then Apply. Authority is separate from role and responsibility.`,`Select`,rows,'Authorities');
 }
 async function toggleAuthorityAdmin(from,emp,code){
  if(!await requireSuperAdmin(from))return;if(!AUTHORITY_OPTIONS.some(x=>x[0]===code)){await sendText(from,'Invalid authority.');return;}
@@ -2475,10 +2585,87 @@ async function toggleAuthorityAdmin(from,emp,code){
  await pool.query(`INSERT INTO authority_audit(employee_number,action,performed_by,details) VALUES($1,$2,$3,$4::jsonb)`,[emp,active?'GRANT_AUTHORITY':'REVOKE_AUTHORITY',from,JSON.stringify({authority:code})]);await sendAuthorityAdmin(from,emp);
 }
 async function departmentAreaOptions(){const r=await pool.query(`SELECT area,COUNT(*) n FROM lmmm_master_records WHERE NULLIF(TRIM(COALESCE(area,'')),'') IS NOT NULL GROUP BY area ORDER BY n DESC,area LIMIT 40`);return r.rows.map(x=>String(x.area).trim()).filter(Boolean);}
-async function sendAreaScopePicker(to,emp){if(!await requireSuperAdmin(to))return;const u=await byEmp(emp);if(!u){await sendText(to,'Not found.');return;}let areas=await departmentAreaOptions();if(u.area_of_working&&!areas.some(x=>x.toLowerCase()===String(u.area_of_working).toLowerCase()))areas.unshift(u.area_of_working);areas=[...new Set(areas)].slice(0,9);const rows=[{id:`ACCESS_AREA_SET:REGISTERED:${emp}`,title:'Registered Area'},...areas.map((a,i)=>({id:`ACCESS_AREA_SET:${i}:${emp}`,title:a.slice(0,24)}))].slice(0,10);globalThis.__lmmmAreaPickers=globalThis.__lmmmAreaPickers||new Map();globalThis.__lmmmAreaPickers.set(String(emp),areas);await sendList(to,`Area / Equipment Scope • ${emp}\nScope is inherited by equipment, sub-equipment, assembly and parts.`,`Select`,rows,'Area Scope');}
-async function setAreaScope(from,emp,key){if(!await requireSuperAdmin(from))return;const u=await byEmp(emp);if(!u){await sendText(from,'Not found.');return;}const areas=globalThis.__lmmmAreaPickers?.get(String(emp))||await departmentAreaOptions();const area=key==='REGISTERED'?u.area_of_working:areas[Number(key)];if(!area){await sendText(from,'Area selection expired. Open User Control again.');return;}await pool.query(`UPDATE user_assignments SET active=false WHERE employee_number=$1 AND active=true`,[emp]);await pool.query(`INSERT INTO user_assignments(employee_number,area,section,responsibility,job_scope,assigned_by,reason) VALUES($1,$2,$3,$4,'ALL',$5,$6)`,[emp,area,u.section_department||NA,u.responsibility||NA,from,'Super Admin scope assignment']);await pool.query(`INSERT INTO authority_audit(employee_number,action,scope_section,scope_area,performed_by,details) VALUES($1,'SET_WORK_SCOPE',$2,$3,$4,$5::jsonb)`,[emp,u.section_department||NA,area,from,JSON.stringify({area})]);await syncDefaultAccess(emp,from,'Area / work scope changed');await sendAccessAdminMenu(from,emp);}
-async function sendJobScopePicker(to,emp){if(!await requireSuperAdmin(to))return;const a=await effectiveAuthority(emp);if(!a){await sendText(to,'Not found.');return;}const current=new Set((a.assignments||[]).map(x=>String(x.job_scope||'ALL').toUpperCase()));await sendList(to,`Job Responsibility • ${emp}\nChoose the work family this employee is responsible for.`,`Select`,JOB_SCOPE_OPTIONS.map(([c,t])=>({id:`ACCESS_JOB_SET:${c}:${emp}`,title:`${current.has(c)?'✓ ':''}${t}`.slice(0,24)})),'Job Scope');}
+function areaDisplayLabel(a){
+ const x=String(a||'').trim();
+ if(/^BAR$/i.test(x)||/^bar mill$/i.test(x))return 'Bar Mill';
+ if(/^FUR$/i.test(x)||/furnace/i.test(x))return 'Furnaces';
+ if(/^BDM$/i.test(x))return 'BDM';
+ if(/finish/i.test(x))return 'Finishing';
+ if(/^(AUX|common|support)$/i.test(x))return 'Common / Support';
+ return x;
+}
+async function sendAreaScopePicker(to,emp,page=1){
+ if(!await requireSuperAdmin(to))return;const u=await byEmp(emp);if(!u){await sendText(to,'Not found.');return;}
+ let areas=await departmentAreaOptions();if(u.area_of_working&&!areas.some(x=>x.toLowerCase()===String(u.area_of_working).toLowerCase()))areas.unshift(u.area_of_working);
+ areas=[...new Set(areas)].slice(0,24);globalThis.__lmmmAreaPickers=globalThis.__lmmmAreaPickers||new Map();globalThis.__lmmmAreaPickers.set(String(emp),areas);
+ const active=(await effectiveAuthority(emp))?.assignments?.map(x=>String(x.area||'')).filter(x=>x&&x!==NA)||[];
+ let st=await selectionGet(to,'ADMIN_AREA',emp,active);const staged=new Set(st.selected);
+ const start=(page-1)*7,chunk=areas.slice(start,start+7);
+ const rows=chunk.map((a,i)=>({id:`AREA_STAGE:${start+i}:${emp}`,title:`${staged.has(a)?'✓':'○'} ${areaDisplayLabel(a)}`.slice(0,24),description:a===areaDisplayLabel(a)?undefined:`Source: ${a}`}));
+ if(start+7<areas.length)rows.push({id:`ACCESS_AREA_PAGE:${page+1}:${emp}`,title:'More Areas'});
+ if(page>1)rows.push({id:`ACCESS_AREA_PAGE:${page-1}:${emp}`,title:'Previous Areas'});
+ rows.push({id:`AREA_APPLY:${emp}`,title:'✓ Apply Selection',description:`${staged.size} selected`});
+ await sendList(to,`Area / Equipment Scope • ${emp}
+Select one or more areas, then Apply. Equipment/sub-equipment/parts inherit the resulting scope.`,`Select`,rows.slice(0,10),'Area Scope');
+}
+async function stageAreaScope(from,emp,index){
+ if(!await requireSuperAdmin(from))return;const areas=globalThis.__lmmmAreaPickers?.get(String(emp))||await departmentAreaOptions();const area=areas[Number(index)];
+ if(!area){await sendText(from,'Area selection expired. Open Area / Equipment Scope again.');return;}
+ await selectionToggle(from,'ADMIN_AREA',emp,area,[]);await sendAreaScopePicker(from,emp,Math.floor(Number(index)/7)+1);
+}
+async function applyAreaSelection(from,emp){
+ if(!await requireSuperAdmin(from))return;const u=await byEmp(emp);if(!u){await sendText(from,'Not found.');return;}
+ const st=await selectionGet(from,'ADMIN_AREA',emp,[]);const selected=st.selected.length?st.selected:[u.area_of_working].filter(Boolean);
+ const latest=(await pool.query(`SELECT * FROM user_assignments WHERE employee_number=$1 AND active=true ORDER BY id DESC LIMIT 1`,[emp])).rows[0];
+ const jobs=[...new Set((await pool.query(`SELECT job_scope FROM user_assignments WHERE employee_number=$1 AND active=true`,[emp])).rows.map(x=>x.job_scope||'ALL'))];
+ await pool.query(`UPDATE user_assignments SET active=false WHERE employee_number=$1 AND active=true`,[emp]);
+ for(const area of selected)for(const jobScope of (jobs.length?jobs:['ALL']))await pool.query(`INSERT INTO user_assignments(employee_number,area,section,responsibility,sub_area,shift,employment_type,is_additional_charge,job_scope,assigned_by,reason)
+ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,[emp,area,u.section_department||NA,latest?.responsibility||u.responsibility||NA,latest?.sub_area||NA,latest?.shift||NA,latest?.employment_type||NA,!!latest?.is_additional_charge,jobScope,from,'Super Admin multi-area scope']);
+ await pool.query(`INSERT INTO authority_audit(employee_number,action,performed_by,details) VALUES($1,'APPLY_AREA_SCOPE_SET',$2,$3::jsonb)`,[emp,from,JSON.stringify({areas:selected})]);
+ await syncDefaultAccess(emp,from,'Area / work scope changed');await selectionClear(from,'ADMIN_AREA',emp);await sendAccessAdminMenu(from,emp);
+}
+async function sendJobScopePicker(to,emp){if(!await requireSuperAdmin(to))return;const a=await effectiveAuthority(emp);if(!a){await sendText(to,'Not found.');return;}const current=new Set((a.assignments||[]).map(x=>String(x.job_scope||'ALL').toUpperCase()));let st=await selectionGet(to,'ADMIN_JOB',emp,[...current]);const staged=new Set(st.selected);
+ const rows=JOB_SCOPE_OPTIONS.map(([c,t])=>({id:`JOB_STAGE:${c}:${emp}`,title:`${staged.has(c)?'✓':'○'} ${t}`.slice(0,24)}));
+ rows.push({id:`JOB_APPLY:${emp}`,title:'✓ Apply Selection',description:`${staged.size} selected`});
+ await sendList(to,`Job Responsibility • ${emp}\nSelect one or more work families, then Apply.`,`Select`,rows,'Job Scope');}
 async function setJobScope(from,emp,jobScope){if(!await requireSuperAdmin(from))return;if(!JOB_SCOPE_OPTIONS.some(x=>x[0]===jobScope)){await sendText(from,'Invalid job scope.');return;}const u=await byEmp(emp);if(!u){await sendText(from,'Not found.');return;}const latest=(await pool.query(`SELECT * FROM user_assignments WHERE employee_number=$1 AND active=true ORDER BY id DESC LIMIT 1`,[emp])).rows[0];await pool.query(`UPDATE user_assignments SET active=false WHERE employee_number=$1 AND active=true`,[emp]);await pool.query(`INSERT INTO user_assignments(employee_number,area,section,responsibility,sub_area,shift,employment_type,is_additional_charge,job_scope,assigned_by,reason) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,[emp,latest?.area||u.area_of_working||NA,latest?.section||u.section_department||NA,latest?.responsibility||u.responsibility||NA,latest?.sub_area||NA,latest?.shift||NA,latest?.employment_type||NA,!!latest?.is_additional_charge,jobScope,from,'Super Admin job responsibility']);await pool.query(`INSERT INTO authority_audit(employee_number,action,performed_by,details) VALUES($1,'SET_JOB_SCOPE',$2,$3::jsonb)`,[emp,from,JSON.stringify({job_scope:jobScope})]);await sendAccessAdminMenu(from,emp);}
+
+async function stageAdminOption(from,key,emp,code,sendFn){
+ if(!await requireSuperAdmin(from))return; await selectionToggle(from,key,emp,code,[]); await sendFn(from,emp);
+}
+async function applyAccessSelection(from,emp){
+ if(!await requireSuperAdmin(from))return;const st=await selectionGet(from,'ADMIN_ACCESS',emp,[]),sel=new Set(st.selected);
+ for(const [code] of ACCESS_PERMISSION_OPTIONS){
+  const active=sel.has(code);
+  await pool.query(`INSERT INTO user_special_permissions(employee_number,permission,active,granted_by,reason,updated_at) VALUES($1,$2,$3,$4,$5,now())
+   ON CONFLICT(employee_number,permission) DO UPDATE SET active=EXCLUDED.active,granted_by=EXCLUDED.granted_by,granted_at=now(),reason=EXCLUDED.reason,updated_at=now()`,
+   [emp,code,active,from,'Super Admin staged multi-select']);
+ }
+ await pool.query(`INSERT INTO authority_audit(employee_number,action,performed_by,details) VALUES($1,'APPLY_PERMISSION_SET',$2,$3::jsonb)`,[emp,from,JSON.stringify({permissions:[...sel]})]);
+ await selectionClear(from,'ADMIN_ACCESS',emp);await sendAccessAdminMenu(from,emp);
+}
+async function applyAuthoritySelection(from,emp){
+ if(!await requireSuperAdmin(from))return;const st=await selectionGet(from,'ADMIN_AUTH',emp,[]),sel=new Set(st.selected);
+ for(const [code] of AUTHORITY_OPTIONS){
+  await pool.query(`INSERT INTO user_authority_grants(employee_number,authority_code,active,reason,granted_by,updated_at) VALUES($1,$2,$3,$4,$5,now())
+   ON CONFLICT(employee_number,authority_code) DO UPDATE SET active=EXCLUDED.active,reason=EXCLUDED.reason,granted_by=EXCLUDED.granted_by,updated_at=now()`,
+   [emp,code,sel.has(code),'Super Admin staged multi-select',from]);
+ }
+ await pool.query(`INSERT INTO authority_audit(employee_number,action,performed_by,details) VALUES($1,'APPLY_AUTHORITY_SET',$2,$3::jsonb)`,[emp,from,JSON.stringify({authorities:[...sel]})]);
+ await selectionClear(from,'ADMIN_AUTH',emp);await sendAccessAdminMenu(from,emp);
+}
+async function applyJobSelection(from,emp){
+ if(!await requireSuperAdmin(from))return;const u=await byEmp(emp);if(!u){await sendText(from,'Not found.');return;}
+ const st=await selectionGet(from,'ADMIN_JOB',emp,[]);let selected=st.selected.filter(x=>JOB_SCOPE_OPTIONS.some(o=>o[0]===x));
+ if(selected.includes('ALL'))selected=['ALL']; if(!selected.length)selected=['ALL'];
+ const latest=(await pool.query(`SELECT * FROM user_assignments WHERE employee_number=$1 AND active=true ORDER BY id DESC LIMIT 1`,[emp])).rows[0];
+ await pool.query(`UPDATE user_assignments SET active=false WHERE employee_number=$1 AND active=true`,[emp]);
+ for(const jobScope of selected)await pool.query(`INSERT INTO user_assignments(employee_number,area,section,responsibility,sub_area,shift,employment_type,is_additional_charge,job_scope,assigned_by,reason)
+ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,[emp,latest?.area||u.area_of_working||NA,latest?.section||u.section_department||NA,latest?.responsibility||u.responsibility||NA,latest?.sub_area||NA,latest?.shift||NA,latest?.employment_type||NA,!!latest?.is_additional_charge,jobScope,from,'Super Admin staged multi-select']);
+ await pool.query(`INSERT INTO authority_audit(employee_number,action,performed_by,details) VALUES($1,'APPLY_JOB_SCOPE_SET',$2,$3::jsonb)`,[emp,from,JSON.stringify({job_scopes:selected})]);
+ await selectionClear(from,'ADMIN_JOB',emp);await sendAccessAdminMenu(from,emp);
+}
+
 async function sendEffectiveAccess(to,emp){if(!await requireSuperAdmin(to))return;const t=await employeeGovernanceSummary(emp);await sendText(to,t?`${t}\n\nServer-side enforcement is authoritative. Aliases/shortcuts never bypass scope.`:'Not found.');}
 async function sendAccessAudit(to,emp){
  if(!await requireSuperAdmin(to))return;
@@ -2504,17 +2691,30 @@ async function ownerCommand(from, text) {
   }
   if ((rx=text.match(/^ACCESS:(\d+)$/i))) { await sendAccessAdminMenu(from,rx[1]); return true; }
   if ((rx=text.match(/^ACCESS_PERMS:(\d+)$/i))) { await sendPermissionAdmin(from,rx[1]); return true; }
+  if ((rx=text.match(/^ACCESS_PERMS_PAGE2:(\d+)$/i))) { await sendPermissionAdmin(from,rx[1],2); return true; }
   if ((rx=text.match(/^ACCESS_ROLE:(\d+)$/i))) { await sendRoleAdmin(from,rx[1]); return true; }
   if ((rx=text.match(/^ACCESS_ROLE_SET:([A-Z_]+):(\d+)$/i))) { await setRoleAdmin(from,rx[2],rx[1].toUpperCase()); return true; }
   if ((rx=text.match(/^ACCESS_AUTH:(\d+)$/i))) { await sendAuthorityAdmin(from,rx[1]); return true; }
   if ((rx=text.match(/^ACCESS_AUTH_TOGGLE:([A-Z_]+):(\d+)$/i))) { await toggleAuthorityAdmin(from,rx[2],rx[1].toUpperCase()); return true; }
+  if ((rx=text.match(/^ACCESS_AUTH_PAGE2:(\d+)$/i))) { await sendAuthorityAdmin(from,rx[1],2); return true; }
   if ((rx=text.match(/^ACCESS_AUDIT:(\d+)$/i))) { await sendAccessAudit(from,rx[1]); return true; }
   if ((rx=text.match(/^ACCESS_TOGGLE:([A-Z_]+):(\d+)$/i))) { await togglePermissionAdmin(from,rx[2],rx[1].toUpperCase()); return true; }
   if ((rx=text.match(/^ACCESS_AREA:(\d+)$/i))) { await sendAreaScopePicker(from,rx[1]); return true; }
-  if ((rx=text.match(/^ACCESS_AREA_SET:([A-Z0-9_]+):(\d+)$/i))) { await setAreaScope(from,rx[2],rx[1].toUpperCase()); return true; }
+  if ((rx=text.match(/^ACCESS_AREA_SET:([A-Z0-9_]+):(\d+)$/i))) { await sendAreaScopePicker(from,rx[2]); return true; }
+  if ((rx=text.match(/^ACCESS_AREA_PAGE:(\d+):(\d+)$/i))) { await sendAreaScopePicker(from,rx[2],Number(rx[1])); return true; }
+  if ((rx=text.match(/^AREA_STAGE:(\d+):(\d+)$/i))) { await stageAreaScope(from,rx[2],Number(rx[1])); return true; }
+  if ((rx=text.match(/^AREA_APPLY:(\d+)$/i))) { await applyAreaSelection(from,rx[1]); return true; }
   if ((rx=text.match(/^ACCESS_JOB:(\d+)$/i))) { await sendJobScopePicker(from,rx[1]); return true; }
   if ((rx=text.match(/^ACCESS_JOB_SET:([A-Z_]+):(\d+)$/i))) { await setJobScope(from,rx[2],rx[1].toUpperCase()); return true; }
   if ((rx=text.match(/^ACCESS_VIEW:(\d+)$/i))) { await sendEffectiveAccess(from,rx[1]); return true; }
+
+  if ((rx=text.match(/^ACCESS_STAGE:([A-Z_]+):(\d+)$/i))) { await stageAdminOption(from,'ADMIN_ACCESS',rx[2],rx[1].toUpperCase(),sendPermissionAdmin); return true; }
+  if ((rx=text.match(/^ACCESS_APPLY:(\d+)$/i))) { await applyAccessSelection(from,rx[1]); return true; }
+  if ((rx=text.match(/^AUTH_STAGE:([A-Z_]+):(\d+)$/i))) { await stageAdminOption(from,'ADMIN_AUTH',rx[2],rx[1].toUpperCase(),sendAuthorityAdmin); return true; }
+  if ((rx=text.match(/^AUTH_APPLY:(\d+)$/i))) { await applyAuthoritySelection(from,rx[1]); return true; }
+  if ((rx=text.match(/^JOB_STAGE:([A-Z_]+):(\d+)$/i))) { await stageAdminOption(from,'ADMIN_JOB',rx[2],rx[1].toUpperCase(),sendJobScopePicker); return true; }
+  if ((rx=text.match(/^JOB_APPLY:(\d+)$/i))) { await applyJobSelection(from,rx[1]); return true; }
+
   if ((rx=text.match(/^SET RESPONSIBILITY\s+(\d+)$/i))) {
     const u=await byEmp(rx[1]);
     if(!u || u.approval_status!=='approved' || !u.is_active) await sendText(from,'Not found.');
@@ -3230,6 +3430,17 @@ async function processMessage(from, text, rawMessage = null) {
       const rows=(await pool.query(`SELECT contact_name,max_number FROM emergency_contacts WHERE LOWER(contact_name) LIKE LOWER($1) ORDER BY contact_name LIMIT 10`,[`%${cm[1]}%`])).rows;
       await sendText(from,rows.length?rows.map(x=>`${x.contact_name}: ${x.max_number}`).join('\n'):T('notfound',te));return;
     }
+
+    // V7.7.24 equipment-aware dynamic multi-select data menu.
+    if(/^SEARCH_DATA_MENU$/i.test(clean)){await sendEquipmentDataMenu(from,u);return;}
+    if((cm=clean.match(/^DATA_TOGGLE:([A-Z_]+)$/i))){
+      const ctx=await getSearchContext(u);if(!ctx?.equipment_name){await sendText(from,'Select/search an equipment first.');return;}
+      const av=await equipmentDataAvailability(ctx,u);if(!DATA_MENU_OPTIONS.some(x=>x[0]===cm[1].toUpperCase())||!(av.counts[cm[1].toUpperCase()]>0)){await sendText(from,'That option is not available for the current equipment/data.');return;}
+      await selectionToggle(u.employee_number,'EQUIPMENT_DATA',ctx.equipment_name,cm[1].toUpperCase(),[]);
+      await sendEquipmentDataMenu(from,u);return;
+    }
+    if(/^DATA_APPLY$/i.test(clean)){await applyEquipmentDataSelection(from,u);return;}
+
     // V7.7.5: analysis-menu selections act on the active search context before Universal Search.
     try{
       const aa=await analysisAction(clean,u);
@@ -3329,7 +3540,7 @@ app.post('/webhook', (req, res) => {
 app.get('/api/status', (_q, r) =>
   r.status(200).json({
     status: 'ready',
-    registration: 'V7.7.19-governance-authenticity-foundation',
+    registration: 'V7.7.24-project-wide-dynamic-multiselect',
     webhook: '/webhook',
     super_admins_configured: SUPER_ADMIN_NUMBERS.size
   })
