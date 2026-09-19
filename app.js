@@ -1,6 +1,7 @@
 import express from 'express';
 import 'dotenv/config';
 import pg from 'pg';
+import http from 'node:http';
 
 const { Pool } = pg;
 
@@ -29,7 +30,8 @@ function cachedSource(mediaId, employeeNumber){
 const app = express();
 app.use(express.json({ limit: '20mb' }));
 
-const PORT = process.env.PORT || 10000;
+const PORT = Number.parseInt(process.env.PORT || '10000', 10);
+const HOST = process.env.HOST || '0.0.0.0';
 const VERIFY_TOKEN = (process.env.META_VERIFY_TOKEN || '').trim();
 const GRAPH_VERSION = process.env.META_GRAPH_VERSION || 'v26.0';
 const PHONE_NUMBER_ID = process.env.META_PHONE_NUMBER_ID || process.env.PHONE_NUMBER_ID || '';
@@ -2069,6 +2071,14 @@ app.use((_q, r) => r.status(404).send('Not found'));
 
 initDB().catch(e => console.error('[DATABASE INIT ERROR]', e));
 
-app.listen(PORT, '0.0.0.0', () =>
-  console.log(`LMMM AI Maintenance Agent listening on ${PORT}`)
-);
+const server = http.createServer(app);
+server.on('error', (err) => {
+  console.error('[SERVER ERROR]', err);
+  process.exitCode = 1;
+});
+server.listen(PORT, HOST, () => {
+  const address = server.address();
+  console.log(`[SERVER] listening on ${HOST}:${PORT}`);
+  console.log('[SERVER] address:', address);
+  console.log(`[SERVER] health: http://127.0.0.1:${PORT}/health`);
+});
