@@ -423,6 +423,10 @@ async function initDB() {
   await pool.query(`CREATE TABLE IF NOT EXISTS search_context(
     employee_number TEXT PRIMARY KEY, department_code TEXT NOT NULL DEFAULT '35',
     area TEXT, equipment_name TEXT, updated_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
+  await pool.query(`ALTER TABLE search_context ADD COLUMN IF NOT EXISTS module TEXT`);
+  await pool.query(`ALTER TABLE search_context ADD COLUMN IF NOT EXISTS date_from DATE`);
+  await pool.query(`ALTER TABLE search_context ADD COLUMN IF NOT EXISTS date_to DATE`);
+  await pool.query(`ALTER TABLE search_context ADD COLUMN IF NOT EXISTS page_offset INTEGER NOT NULL DEFAULT 0`);
   await pool.query(`CREATE TABLE IF NOT EXISTS search_aliases(
     id BIGSERIAL PRIMARY KEY, department_code TEXT NOT NULL DEFAULT '35', alias_text TEXT NOT NULL,
     canonical_text TEXT NOT NULL, equipment_name TEXT, confidence NUMERIC NOT NULL DEFAULT 0.90,
@@ -1371,7 +1375,7 @@ async function syncBundledLmmmKnowledge(){
     }
   }catch(e){console.error('[V7.5 MASTER SYNC ERROR]',e);}
 }
-async function searchBundledMaster(question,limit=12){
+async function searchBundledMaster(question,limit=20,dateRange=null,offset=0){
   const q=naturalSearchAliases(question), intent=searchIntent(q), entity=stripIntentWords(q);
   const vals=[]; let where='TRUE';
   if(intent==='defect'){vals.push('defect');where+=` AND record_type=$${vals.length}`;}
@@ -1384,8 +1388,10 @@ async function searchBundledMaster(question,limit=12){
     // All entity terms must be represented, but punctuation variants are normalized by naturalSearchAliases first.
     for(const t of terms){vals.push(`%${t}%`);where+=` AND (LOWER(COALESCE(equipment,'')) LIKE LOWER($${vals.length}) OR LOWER(record_text) LIKE LOWER($${vals.length}))`;}
   }
-  vals.push(limit);
-  const rows=(await pool.query(`SELECT uid,record_type,equipment,area,event_date,record_text,source_name,source_payload FROM lmmm_master_records WHERE ${where} ORDER BY event_date DESC NULLS LAST, uid LIMIT $${vals.length}`,vals)).rows;
+  if(dateRange?.from){vals.push(dateRange.from);where+=` AND NULLIF(event_date,'')::date >= $${vals.length}::date`;}
+  if(dateRange?.to){vals.push(dateRange.to);where+=` AND NULLIF(event_date,'')::date <= $${vals.length}::date`;}
+  vals.push(limit); const limP=vals.length; vals.push(Math.max(0,Number(offset)||0)); const offP=vals.length;
+  const rows=(await pool.query(`SELECT uid,record_type,equipment,area,event_date,record_text,source_name,source_payload FROM lmmm_master_records WHERE ${where} ORDER BY NULLIF(event_date,'')::date DESC NULLS LAST, uid LIMIT $${limP} OFFSET $${offP}`,vals)).rows;
   if(rows.length)return rows;
   const ids=[...new Set(String(q).toUpperCase().match(/\b(?:[A-Z]{1,8}[-_/])?[A-Z0-9]{2,}(?:[-_/.][A-Z0-9]+)*\b/g)||[])];
   const kt=queryTokens(q).slice(0,5); if(!ids.length&&!kt.length)return [];
@@ -1397,7 +1403,7 @@ async function searchBundledMaster(question,limit=12){
 }
 function formatBundledResults(rows){
   if(!rows?.length)return null;
-  return rows.slice(0,10).map(r=>{
+  return rows.map(r=>{
     const p=r.source_payload||{};
     const detail=p.description||p.job||p.job_done||p.remarks||p.reason||r.record_text||'';
     const extra=[];
@@ -1413,6 +1419,42 @@ function queryTokens(t=''){
 }
 // V7.4 user-first universal maintenance search. Never guess a specific asset when several match.
 const GENERIC_ASSET_WORDS=/\b(pump|pumps|gear\s*box|gearbox|gearboxes|coupling|couplings|motor|motors|bearing|bearings|valve|valves|pipe|pipes|pipeline|stand|stands|roll|rolls|guide|guides|cylinder|cylinders|fan|fans|blower|blowers|recup|recuperator|compressor|compressors)\b/i;
+function dateRangeFromText(q=''){
+ const t=String(q||'').toLowerCase().trim(), now=plantNow().date;
+ const d0=new Date(now+'T00:00:00Z'), iso=d=>d.toISOString().slice(0,10);
+ const explicit=[...String(q||'').matchAll(/(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[-\/.]\d{1,2}[-\/.]\d{4})/g)].map(m=>isoDate(m[1])).filter(Boolean);
+ if(explicit.length>=2)return {from:explicit[0],to:explicit[1],label:`${explicit[0]} to ${explicit[1]}`};
+ if(explicit.length===1)return {from:explicit[0],to:explicit[0],label:explicit[0]};
+ if(/\btoday\b|ee roju|eroju/.test(t))return {from:now,to:now,label:'Today'};
+ if(/\byesterday\b|ninna/.test(t)){const d=new Date(d0);d.setUTCDate(d.getUTCDate()-1);return {from:iso(d),to:iso(d),label:'Yesterday'};}
+ let m=t.match(/last\s+(\d+)\s+days?/); if(m){const d=new Date(d0);d.setUTCDate(d.getUTCDate()-Math.max(0,Number(m[1])-1));return {from:iso(d),to:now,label:`Last ${m[1]} days`};}
+ if(/\blast\s+7\s+days?|last week\b/.test(t)){const d=new Date(d0);d.setUTCDate(d.getUTCDate()-6);return {from:iso(d),to:now,label:'Last 7 days'};}
+ if(/\blast\s+30\s+days?/.test(t)){const d=new Date(d0);d.setUTCDate(d.getUTCDate()-29);return {from:iso(d),to:now,label:'Last 30 days'};}
+ if(/\bthis month\b/.test(t))return {from:now.slice(0,7)+'-01',to:now,label:'This month'};
+ const months={jan:1,january:1,feb:2,february:2,mar:3,march:3,apr:4,april:4,may:5,jun:6,june:6,jul:7,july:7,aug:8,august:8,sep:9,september:9,oct:10,october:10,nov:11,november:11,dec:12,december:12};
+ m=t.match(/\b(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)\s+(20\d{2})\b/);
+ if(m){const y=Number(m[2]),mo=months[m[1]],last=new Date(Date.UTC(y,mo,0)).getUTCDate();return {from:`${y}-${String(mo).padStart(2,'0')}-01`,to:`${y}-${String(mo).padStart(2,'0')}-${last}`,label:`${m[1]} ${y}`};}
+ return null;
+}
+function wantsOverall(q=''){return /\b(full|all|overall|complete|total|entire)\b/i.test(String(q||''));}
+function wantsMore(q=''){return /^(more|next|next 20|show more)$/i.test(String(q||'').trim());}
+function areaDataQuery(q=''){return /\b(area|bdm|bar mill|finishing)\b/i.test(String(q||'')) && /\b(full|all|overall|complete|data|records?)\b/i.test(String(q||'')) && !/\b(wbf|furnace|equipment|gearbox|motor|pump|shear|door|recup|recuperator)\b/i.test(String(q||''));}
+async function setSearchFilters(u,{module,dateFrom,dateTo,offset}={}){
+ await pool.query(`UPDATE search_context SET module=COALESCE($2,module),date_from=COALESCE($3,date_from),date_to=COALESCE($4,date_to),page_offset=COALESCE($5,page_offset),updated_at=now() WHERE employee_number=$1`,[u.employee_number,module||null,dateFrom||null,dateTo||null,Number.isInteger(offset)?offset:null]);
+}
+async function searchPermissions(u){
+ const a=await effectiveAuthority(u.employee_number); const ps=new Set((a?.special_permissions||[]).map(x=>String(x).toUpperCase()));
+ const full=a?.effective_access==='FULL';
+ return {pdf:full||ps.has('PRINT_EXPORT')||ps.has('PDF_REPORT'),analysis:full||ps.has('ANALYSIS'),rcm:full||ps.has('RCM')||ps.has('ANALYSIS')};
+}
+function actionFooter(perms,hasMore=true){
+ const x=[]; if(hasMore)x.push('More'); x.push('Select Date Range'); if(perms.pdf)x.push('PDF Report'); if(perms.analysis)x.push('Analysis'); if(perms.rcm)x.push('RCM'); return `\n\nOptions: ${x.join(' | ')}`;
+}
+async function areaSearchMenu(q,u){
+ const area=String(q).replace(/\b(full|all|overall|complete|data|records?|details?)\b/ig,' ').replace(/\s+/g,' ').trim();
+ await pool.query(`INSERT INTO search_context(employee_number,department_code,area,equipment_name,module,date_from,date_to,page_offset,updated_at) VALUES($1,'35',$2,NULL,NULL,NULL,NULL,0,now()) ON CONFLICT(employee_number) DO UPDATE SET area=EXCLUDED.area,equipment_name=NULL,module=NULL,date_from=NULL,date_to=NULL,page_offset=0,updated_at=now()`,[u.employee_number,area||null]);
+ return {text:`${area||'Area'} — Maintenance Data\n\n1. Search by Equipment\n2. Select Date / Date Range`};
+}
 function searchIntent(q=''){
  const t=String(q).toLowerCase();
  if(/\b(defect|defects|fault|faults|problem|problems)\b/.test(t))return 'defect';
@@ -1422,6 +1464,9 @@ function searchIntent(q=''){
  if(/\b(history|previous|old|past)\b/.test(t))return 'history';
  if(/\b(spare|spares|inventory|stock)\b/.test(t))return 'spares';
  if(/\b(drawing|drawings|drg)\b/.test(t))return 'drawing';
+ if(/\b(production|blooms|tonnes?|tons?)\b/.test(t))return 'production';
+ if(/\b(delay|delays|downtime)\b/.test(t))return 'delay';
+ if(/\b(mtbf|mtbr|mttr|performance|availability)\b/.test(t))return 'analysis';
  if(/\b(pm|preventive|schedule|scheduled|rcm|reliability)\b/.test(t))return 'maintenance';
  return 'general';
 }
@@ -1468,13 +1513,22 @@ function formatLiveEvents(rows){
 }
 async function universalSearch(q,u){
  const original=String(q||'').trim(); if(!original)return null;
- // Numeric choice is accepted only while an ambiguity prompt is pending.
+ if(areaDataQuery(original)) return await areaSearchMenu(original,u);
+ let ctx=await getSearchContext(u); const range=dateRangeFromText(original);
+ if(range && ctx) {await setSearchFilters(u,{dateFrom:range.from,dateTo:range.to,offset:0});ctx=await getSearchContext(u);}
+ if(/^select date( range)?$/i.test(original))return {text:'Send a date or date range. Examples: Today | Last 7 days | May 2026 | 01/05/2026 to 31/05/2026'};
+ if(/^search by equipment$/i.test(original)){const a=ctx?.area||'';const rows=(await pool.query(`SELECT DISTINCT equipment AS name FROM lmmm_master_records WHERE equipment IS NOT NULL AND ($1::text='' OR LOWER(COALESCE(area,'')) LIKE LOWER('%'||$1||'%')) ORDER BY name LIMIT 10`,[a])).rows;return {text:rows.length?`Select/search equipment:\n${rows.map((x,i)=>`${i+1}. ${x.name}`).join('\n')}\n\nYou can also type the equipment name.`:'Type the equipment name to search.'};}
+ if(wantsMore(original) && ctx?.equipment_name){
+   const next=(Number(ctx.page_offset)||0)+20; await setSearchFilters(u,{offset:next});
+   const dr=ctx.date_from?{from:String(ctx.date_from).slice(0,10),to:String(ctx.date_to||ctx.date_from).slice(0,10)}:null;
+   const rows=await searchBundledMaster(`${ctx.equipment_name} ${ctx.module||''}`,20,dr,next); const perms=await searchPermissions(u);
+   return {text:rows.length?`${ctx.equipment_name}${dr?` | ${dr.from} to ${dr.to}`:''}\nShowing ${next+1}-${next+rows.length}\n\n${formatBundledResults(rows)}${actionFooter(perms,rows.length===20)}`:'No more matching records in the current filters.'};
+ }
  if(/^\d+$/.test(original)){
    const pr=(await pool.query(`SELECT * FROM pending_search_choices WHERE employee_number=$1 AND created_at>now()-interval '30 minutes'`,[u.employee_number])).rows[0];
-   if(pr){const choices=typeof pr.choices==='string'?JSON.parse(pr.choices):pr.choices;const pick=choices[Number(original)-1];if(pick){await setSearchContext(u,pick.name,pick.area||null);await pool.query(`DELETE FROM pending_search_choices WHERE employee_number=$1`,[u.employee_number]);const rows=(await eventSearch(pr.original_query,u,pick.name)).filter(x=>usefulLiveEvent(x,pr.original_query));const master=await searchBundledMaster(`${pick.name} ${pr.original_query}`,12);if(master.length)return {text:formatBundledResults(master)+(rows.length?`\n\nRecent live entries\n${formatLiveEvents(rows)}`:'')};if(rows.length)return {text:`${pick.name}\n\n`+formatLiveEvents(rows)};return {knowledgeQuery:`${pick.name} ${pr.original_query}`};}}
+   if(pr){const choices=typeof pr.choices==='string'?JSON.parse(pr.choices):pr.choices;const pick=choices[Number(original)-1];if(pick){await setSearchContext(u,pick.name,pick.area||null);await pool.query(`DELETE FROM pending_search_choices WHERE employee_number=$1`,[u.employee_number]);return universalSearch(pr.original_query,u);}}
  }
- const ctx=await getSearchContext(u); let entity=stripIntentWords(naturalSearchAliases(original)); const alias=await resolveAlias(entity); if(alias)entity=alias.equipment_name||alias.canonical_text;
- // If the user supplies only an intent after selecting an asset, retain that asset context.
+ ctx=await getSearchContext(u); let entity=stripIntentWords(naturalSearchAliases(original)); const alias=await resolveAlias(entity); if(alias)entity=alias.equipment_name||alias.canonical_text;
  if(!entity && ctx?.equipment_name)entity=ctx.equipment_name;
  const candidates=entity?await equipmentCandidates(entity,ctx):[];
  if(candidates.length>1 && (GENERIC_ASSET_WORDS.test(entity)||candidates.every(x=>String(x.name).toLowerCase()!==String(entity).toLowerCase()))){
@@ -1482,18 +1536,15 @@ async function universalSearch(q,u){
    return {text:`Multiple matches found. Which one?\n\n`+candidates.map((x,i)=>`${i+1}. ${x.name}${x.area?` — ${x.area}`:''}`).join('\n')};
  }
  const equipment=candidates.length===1?candidates[0].name:(ctx?.equipment_name && !entity?ctx.equipment_name:null);
- if(equipment)await setSearchContext(u,equipment,candidates[0]?.area||ctx?.area||null);
- const intent=searchIntent(original);
+ const intent=searchIntent(original); if(equipment){await setSearchContext(u,equipment,candidates[0]?.area||ctx?.area||null);await setSearchFilters(u,{module:intent,offset:0});}
+ ctx=await getSearchContext(u); const dr=range|| (ctx?.date_from?{from:String(ctx.date_from).slice(0,10),to:String(ctx.date_to||ctx.date_from).slice(0,10)}:null);
+ // Totals/trends need a time frame; do not silently calculate lifetime analytics.
+ if(['production','delay','analysis','maintenance','condition'].includes(intent) && !dr && /\b(total|cumulative|mtbf|mtbr|mttr|performance|trend|schedule|scheduled|production|delay|delays)\b/i.test(original)) return {text:'Select a time frame first.\nToday | Last 7 days | Last 30 days | This month | Custom date range'};
+ const limit=wantsOverall(original)?30:20;
  const liveEvents=(await eventSearch(original,u,equipment)).filter(x=>usefulLiveEvent(x,original));
- const masterRows=await searchBundledMaster(original,12);
- // For maintenance retrieval, the clean source-backed master is authoritative historical coverage; live valid entries are supplementary.
- if(masterRows.length){
-   let text=formatBundledResults(masterRows);
-   if(liveEvents.length)text += `\n\nRecent live entries\n${formatLiveEvents(liveEvents)}`;
-   return {text};
- }
- if(liveEvents.length)return {text:(equipment?`${equipment}\n\n`:'')+formatLiveEvents(liveEvents)};
- // Let reference/manual search answer next, but enrich a follow-up with selected equipment.
+ const masterRows=await searchBundledMaster(original,limit,dr,0); const perms=await searchPermissions(u);
+ if(masterRows.length){let text=`${equipment||'LMMM'}${dr?` | ${dr.from} to ${dr.to}`:''}\nShowing latest ${masterRows.length}${wantsOverall(original)?' (overall view max 30)':''}\n\n${formatBundledResults(masterRows)}`;if(liveEvents.length)text+=`\n\nRecent live entries\n${formatLiveEvents(liveEvents)}`;text+=actionFooter(perms,masterRows.length===limit);return {text};}
+ if(liveEvents.length)return {text:(equipment?`${equipment}\n\n`:'')+formatLiveEvents(liveEvents)+actionFooter(perms,false)};
  return {knowledgeQuery:equipment && !original.toLowerCase().includes(equipment.toLowerCase())?`${equipment} ${original}`:original};
 }
 
