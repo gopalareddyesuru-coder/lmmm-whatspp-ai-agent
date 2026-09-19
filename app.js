@@ -3,6 +3,16 @@ import 'dotenv/config';
 import pg from 'pg';
 
 const { Pool } = pg;
+
+const converterHealth = { checked:false, tiff_pdf:false, access_excel:false, errors:{} };
+async function checkConverterHealth(){
+  const errors={}; let tiff=false, access=false;
+  try{ await import('sharp'); await import('pdf-lib'); tiff=true; }catch(e){ errors.tiff_pdf=String(e?.message||e).slice(0,300); }
+  try{ await import('mdb-reader'); await import('xlsx'); access=true; }catch(e){ errors.access_excel=String(e?.message||e).slice(0,300); }
+  Object.assign(converterHealth,{checked:true,tiff_pdf:tiff,access_excel:access,errors});
+  console.log('[CONVERTER HEALTH]', JSON.stringify(converterHealth));
+  return converterHealth;
+}
 // V6.1 ephemeral source cache: conversion/retry convenience without permanent file storage.
 // Buffers expire automatically and are never written to PostgreSQL.
 const recentSourceCache = new Map();
@@ -1991,15 +2001,18 @@ app.get('/', (_q, r) =>
   })
 );
 
-app.get('/health', (_q, r) =>
+app.get('/health', async (_q, r) => {
+  if(!converterHealth.checked) await checkConverterHealth();
   r.status(200).json({
     ok: true,
     database_configured: Boolean(DATABASE_URL),
     phone_number_id_configured: Boolean(PHONE_NUMBER_ID),
     access_token_configured: Boolean(ACCESS_TOKEN),
-    super_admins_configured: SUPER_ADMIN_NUMBERS.size
-  })
-);
+    super_admins_configured: SUPER_ADMIN_NUMBERS.size,
+    converters: { tiff_to_pdf: converterHealth.tiff_pdf, access_to_excel: converterHealth.access_excel },
+    converter_errors: converterHealth.errors
+  });
+});
 
 app.get('/webhook', (req, res) => {
   const mode = req.query['hub.mode'];
