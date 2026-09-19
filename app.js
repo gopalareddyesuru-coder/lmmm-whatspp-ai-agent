@@ -1712,7 +1712,9 @@ async function searchPermissions(u){
  const scope=await effectiveSearchScope(u);
  const override=!!a?.has_access_override;
  const inherited=new Set((a?.default_permissions||[]).map(x=>String(x.permission||'').toUpperCase()));
- const effective=override?ps:new Set([...inherited,...ps]);
+ const effective=override?new Set([...ps]):new Set([...inherited,...ps]);
+ // IMPORTANT: when override=true, hierarchy/default permissions are intentionally ignored.
+ // A Super Admin downgrade therefore removes inherited FULL/REPORT/PDF/ANALYSIS capabilities immediately.
  const full=owner || effective.has('FULL_ACCESS') || effective.has('SUPER_ADMIN') || effective.has('OWNER');
  const canEdit=full || effective.has('EDIT') || effective.has('ENTRY');
  const canView=full || canEdit || effective.has('VIEW');
@@ -2105,6 +2107,8 @@ async function buildMaintenancePdf(ctx,u,codes){
  return {buffer:Buffer.from(await pdf.save()),included:prepared.length,eligible:totalEligible,excluded:totalExcluded};
 }
 async function sendCurrentMaintenancePdf(to,u){
+ const perms=await searchPermissions(u);
+ if(!perms.pdf){await sendText(to,'PDF / Print is not authorised for your current access level.');return {denied:true};}
  const perms=await searchPermissions(u);if(!perms.pdf){await sendText(to,'PDF / Print is not authorised for your access level.');return;}
  const ctx=await getSearchContext(u);if(!ctx?.equipment_name){await sendText(to,'Select/search an equipment first.');return;}
  const st=await selectionGet(u.employee_number,'EQUIPMENT_DATA',ctx.equipment_name,[]);const codes=currentReportCodes(ctx,st.context?.applied?st.selected:[]);
@@ -2490,6 +2494,7 @@ async function commitMedia(u,from,p,status='confirmed',timingSource='media_confi
 
 
 
+// V7.7.30 AUTHORITATIVE ACCESS REPLACEMENT + SERVER-SIDE EXPORT GATE
 // V7.7.29 AUTHORIZATION PRECEDENCE + REPORTS ACCESS
 // Rule: authentication establishes identity; hierarchy establishes default scope/access; explicit Super Admin Access selection replaces defaults for capabilities.
 // V7.7.24 PROJECT-WIDE MENU STANDARD
@@ -2738,19 +2743,36 @@ async function stageAdminOption(from,key,emp,code,sendFn){
  await sendFn(from,emp);
 }
 async function applyAccessSelection(from,emp){
- if(!await requireSuperAdmin(from))return;const st=await selectionGet(from,'ADMIN_ACCESS',emp,[]),sel=new Set(st.selected);
- if(sel.has('EDIT')){sel.add('ENTRY');sel.add('VIEW');}
- // FULL_ACCESS is stored as one authoritative profile. Do not persist its expanded child permissions; this prevents stale rights surviving a later downgrade.
- if(!sel.has('FULL_ACCESS') && sel.has('VIEW') && !sel.has('EDIT')){ sel.delete('ENTRY'); }
+ if(!await requireSuperAdmin(from))return;
+ const st=await selectionGet(from,'ADMIN_ACCESS',emp,[]),sel=new Set(st.selected.map(x=>String(x).toUpperCase()));
+ // Base profiles are exclusive. EDIT means View + Entry; it does NOT imply reports, PDF, analysis or RCM.
+ if(sel.has('FULL_ACCESS')){ sel.clear(); sel.add('FULL_ACCESS'); }
+ else if(sel.has('EDIT')){ sel.delete('FULL_ACCESS'); sel.add('ENTRY'); sel.add('VIEW'); }
+ else if(sel.has('VIEW')){ sel.delete('FULL_ACCESS'); sel.delete('EDIT'); sel.delete('ENTRY'); }
  const persistedCodes=[...new Set([...ACCESS_PERMISSION_OPTIONS.map(x=>x[0]),'ENTRY'])];
- for(const code of persistedCodes){
-  const active=sel.has(code);
-  await pool.query(`INSERT INTO user_special_permissions(employee_number,permission,active,granted_by,reason,updated_at) VALUES($1,$2,$3,$4,$5,now())
-   ON CONFLICT(employee_number,permission) DO UPDATE SET active=EXCLUDED.active,granted_by=EXCLUDED.granted_by,granted_at=now(),reason=EXCLUDED.reason,updated_at=now()`,
-   [emp,code,active,from,'Super Admin staged multi-select']);
- }
- await pool.query(`INSERT INTO authority_audit(employee_number,action,performed_by,details) VALUES($1,'APPLY_PERMISSION_SET',$2,$3::jsonb)`,[emp,from,JSON.stringify({permissions:[...sel]})]);
- await selectionClear(from,'ADMIN_ACCESS',emp);await sendAccessAdminMenu(from,emp);
+ const client=await pool.connect();
+ try{
+  await client.query('BEGIN');
+  // Authoritative replacement: first revoke EVERY persisted capability for this employee.
+  // This is what makes Full -> View/Edit downgrades immediate and prevents stale PDF/Analysis rights.
+  await client.query(`UPDATE user_special_permissions SET active=false,granted_by=$2,reason=$3,updated_at=now() WHERE employee_number=$1`,
+    [emp,from,'Replaced by Super Admin access profile']);
+  for(const code of persistedCodes){
+   const active=sel.has(code);
+   await client.query(`INSERT INTO user_special_permissions(employee_number,permission,active,granted_by,reason,updated_at)
+    VALUES($1,$2,$3,$4,$5,now())
+    ON CONFLICT(employee_number,permission) DO UPDATE SET active=EXCLUDED.active,granted_by=EXCLUDED.granted_by,granted_at=now(),reason=EXCLUDED.reason,updated_at=now()`,
+    [emp,code,active,from,'Super Admin authoritative access profile']);
+  }
+  await client.query(`INSERT INTO authority_audit(employee_number,action,performed_by,details) VALUES($1,'REPLACE_PERMISSION_SET',$2,$3::jsonb)`,
+    [emp,from,JSON.stringify({permissions:[...sel],mode:'AUTHORITATIVE_OVERRIDE'})]);
+  await client.query('COMMIT');
+ }catch(e){await client.query('ROLLBACK');throw e;}finally{client.release();}
+ await selectionClear(from,'ADMIN_ACCESS',emp);
+ // Re-read from PostgreSQL after commit; never trust staged/UI state as authorization state.
+ const verified=await effectiveAuthority(emp); const active=new Set((verified?.special_permissions||[]).map(x=>String(x).toUpperCase()));
+ console.log('[ACCESS APPLY VERIFIED]',emp,[...active].sort().join(','));
+ await sendAccessAdminMenu(from,emp);
 }
 async function applyAuthoritySelection(from,emp){
  if(!await requireSuperAdmin(from))return;const st=await selectionGet(from,'ADMIN_AUTH',emp,[]),sel=new Set(st.selected);
@@ -2929,7 +2951,7 @@ async function ownerCommand(from, text) {
     return true;
   }
 
-  m = text.match(/^(grant|revoke)\s+(\d+)\s+(ENTRY|VIEW|EDIT|DELETE_UNDO|APPROVAL|PRINT_EXPORT|ANALYSIS|RCM|MASTER_EDIT|ACCESS_ADMIN|ADVANCED_REPORTS|FULL_ACCESS)$/i);
+  m = text.match(/^(grant|revoke)\s+(\d+)\s+(ENTRY|VIEW|EDIT|DELETE_UNDO|APPROVAL|PRINT_EXPORT|ANALYSIS|REPORTS|RCM|MASTER_EDIT|ACCESS_ADMIN|ADVANCED_REPORTS|FULL_ACCESS)$/i);
   if (m) {
     const active = m[1].toLowerCase() === 'grant';
 
