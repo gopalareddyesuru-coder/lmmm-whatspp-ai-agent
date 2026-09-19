@@ -393,6 +393,28 @@ async function initDB() {
     action TEXT NOT NULL, before_json JSONB, after_json JSONB, employee_number TEXT,
     changed_by TEXT NOT NULL, changed_at TIMESTAMPTZ NOT NULL DEFAULT now(), reason TEXT
   )`);
+  // V7.1 durable file intake + background jobs. These survive Render restarts.
+  await pool.query(`CREATE TABLE IF NOT EXISTS file_upload_sources(
+    id BIGSERIAL PRIMARY KEY, employee_number TEXT NOT NULL, whatsapp_number TEXT NOT NULL,
+    media_id TEXT NOT NULL, filename TEXT, mime_type TEXT, source_kind TEXT NOT NULL,
+    received_at TIMESTAMPTZ NOT NULL DEFAULT now(), expires_at TIMESTAMPTZ,
+    UNIQUE(employee_number,media_id)
+  )`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_file_source_latest ON file_upload_sources(employee_number,source_kind,received_at DESC)`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS background_jobs(
+    id BIGSERIAL PRIMARY KEY, job_code TEXT UNIQUE, employee_number TEXT NOT NULL,
+    whatsapp_number TEXT NOT NULL, job_type TEXT NOT NULL, media_id TEXT NOT NULL,
+    source_filename TEXT, source_mime_type TEXT, status TEXT NOT NULL DEFAULT 'queued',
+    progress_current INTEGER NOT NULL DEFAULT 0, progress_total INTEGER,
+    attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT, result_meta JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(), started_at TIMESTAMPTZ,
+    heartbeat_at TIMESTAMPTZ, completed_at TIMESTAMPTZ
+  )`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_bg_jobs_status ON background_jobs(status,created_at)`);
+  // A deploy/restart can interrupt an in-process worker. Requeue stale running jobs.
+  await pool.query(`UPDATE background_jobs SET status='queued', started_at=NULL,
+    last_error=CASE WHEN last_error IS NULL OR last_error='' THEN 'Recovered after service restart' ELSE last_error END
+    WHERE status='running'`);
   console.log('[DATABASE] V4.4 hierarchy + authority foundation ready');
   console.log('[ADMIN] configured:', SUPER_ADMIN_NUMBERS.size);
 }
@@ -437,7 +459,7 @@ async function sendDocumentBuffer(to,buf,filename,caption='',mime='application/p
   const r=await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${PHONE_NUMBER_ID}/messages`,{method:'POST',headers:{Authorization:`Bearer ${ACCESS_TOKEN}`,'Content-Type':'application/json'},body:JSON.stringify({messaging_product:'whatsapp',to,type:'document',document:{id,filename,caption:String(caption||'').slice(0,1024)}})});
   const d=await r.json(); if(!r.ok)throw new Error(`WhatsApp document send failed ${r.status}: ${JSON.stringify(d)}`); return d;
 }
-async function tiffToPdfBuffer(buf){
+async function tiffToPdfBuffer(buf,onProgress=null){
   // Native TIFF conversion is optional. Never let a missing native module stop the WhatsApp bot.
   let sharp, PDFDocument;
   try {
@@ -461,6 +483,7 @@ async function tiffToPdfBuffer(buf){
   const pages=Math.max(1,Number(meta.pages)||1);
   if(pages>1000) throw new Error(`TIFF has ${pages} frames; safety limit is 1000.`);
   const pdf=await PDFDocument.create();
+  if(onProgress) await onProgress(0,pages);
   for(let i=0;i<pages;i++){
     const probe=sharp(buf,{page:i,pages:1,limitInputPixels:false,sequentialRead:true,failOn:'none'}).rotate();
     const m=await probe.metadata();
@@ -472,9 +495,71 @@ async function tiffToPdfBuffer(buf){
     const pdfScale=Math.min(1,1440/Math.max(outW,outH));
     const page=pdf.addPage([outW*pdfScale,outH*pdfScale]);
     page.drawImage(emb,{x:0,y:0,width:outW*pdfScale,height:outH*pdfScale});
+    if(onProgress) await onProgress(i+1,pages);
+    // Yield between frames so WhatsApp text/database requests stay responsive.
+    await new Promise(resolve=>setImmediate(resolve));
   }
   return {buffer:Buffer.from(await pdf.save()),pages};
 }
+
+let backgroundWorkerBusy=false;
+function jobCode(id){ return `JOB-${String(id).padStart(6,'0')}`; }
+async function rememberDurableSource(u,from,mediaId,name,mime,kind){
+  if(!pool)return;
+  await pool.query(`INSERT INTO file_upload_sources(employee_number,whatsapp_number,media_id,filename,mime_type,source_kind,expires_at)
+    VALUES($1,$2,$3,$4,$5,$6,now()+interval '6 days') ON CONFLICT(employee_number,media_id)
+    DO UPDATE SET filename=EXCLUDED.filename,mime_type=EXCLUDED.mime_type,source_kind=EXCLUDED.source_kind,received_at=now(),expires_at=EXCLUDED.expires_at`,
+    [u.employee_number,from,String(mediaId),name||null,mime||null,kind]);
+}
+async function enqueueConversionJob(u,from,mediaId,name,mime,kind){
+  const type=kind==='tiff'?'tiff_to_pdf':'access_to_excel';
+  // Prevent accidental duplicate taps from creating duplicate conversions.
+  const ex=await pool.query(`SELECT * FROM background_jobs WHERE employee_number=$1 AND media_id=$2 AND job_type=$3 AND status IN ('queued','running') ORDER BY id DESC LIMIT 1`,[u.employee_number,String(mediaId),type]);
+  if(ex.rows[0]) return ex.rows[0];
+  const q=await pool.query(`INSERT INTO background_jobs(employee_number,whatsapp_number,job_type,media_id,source_filename,source_mime_type)
+    VALUES($1,$2,$3,$4,$5,$6) RETURNING *`,[u.employee_number,from,type,String(mediaId),name||null,mime||null]);
+  const row=q.rows[0], code=jobCode(row.id);
+  await pool.query(`UPDATE background_jobs SET job_code=$2 WHERE id=$1`,[row.id,code]); row.job_code=code;
+  setImmediate(()=>kickBackgroundWorker().catch(e=>console.error('[BG WORKER KICK]',e)));
+  return row;
+}
+async function runBackgroundJob(j){
+  try{
+    await pool.query(`UPDATE background_jobs SET status='running',attempts=attempts+1,started_at=coalesce(started_at,now()),heartbeat_at=now(),last_error=NULL WHERE id=$1`,[j.id]);
+    const meta=await mediaMeta(j.media_id); const buf=await mediaBytes(meta.url);
+    if(j.job_type==='tiff_to_pdf'){
+      let lastWrite=0;
+      const out=await tiffToPdfBuffer(buf,async(cur,total)=>{ const now=Date.now(); if(cur===0||cur===total||now-lastWrite>4000){lastWrite=now;await pool.query(`UPDATE background_jobs SET progress_current=$2,progress_total=$3,heartbeat_at=now() WHERE id=$1`,[j.id,cur,total]);}});
+      const base=String(j.source_filename||'LMMM_TIFF').replace(/\.tiff?$/i,'');
+      await sendDocumentBuffer(j.whatsapp_number,out.buffer,`${base}.pdf`,`✅ TIFF → PDF complete • ${out.pages}/${out.pages} pages • ${j.job_code}`);
+      await pool.query(`UPDATE background_jobs SET status='completed',progress_current=$2,progress_total=$2,result_meta=$3,completed_at=now(),heartbeat_at=now() WHERE id=$1`,[j.id,out.pages,JSON.stringify({pages:out.pages,filename:`${base}.pdf`})]);
+    }else if(j.job_type==='access_to_excel'){
+      const out=await accessToExcelBuffer(buf); const base=String(j.source_filename||'LMMM_Access').replace(/\.(mdb|accdb)$/i,'');
+      await sendDocumentBuffer(j.whatsapp_number,out.buffer,`${base}.xlsx`,`✅ Access → Excel complete • ${out.sheets}/${out.tables} tables • ${j.job_code}`,'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      await pool.query(`UPDATE background_jobs SET status='completed',progress_current=$2,progress_total=$2,result_meta=$3,completed_at=now(),heartbeat_at=now() WHERE id=$1`,[j.id,out.tables,JSON.stringify({tables:out.tables,sheets:out.sheets,rows:out.totalRows,filename:`${base}.xlsx`})]);
+    }
+  }catch(e){
+    const msg=String(e?.message||e).slice(0,500); console.error('[BACKGROUND JOB]',j.job_code,e);
+    const rr=await pool.query(`UPDATE background_jobs SET status=CASE WHEN attempts<3 THEN 'queued' ELSE 'failed' END,last_error=$2,heartbeat_at=now() WHERE id=$1 RETURNING status,attempts`,[j.id,msg]);
+    if(rr.rows[0]?.status==='failed') await sendText(j.whatsapp_number,`⚠️ ${j.job_code} failed after ${rr.rows[0].attempts} attempts: ${msg.slice(0,180)}\nYou can continue using the bot; send RETRY ${j.job_code} to try again.`);
+  }
+}
+async function kickBackgroundWorker(){
+  if(backgroundWorkerBusy||!pool)return; backgroundWorkerBusy=true;
+  try{
+    while(true){
+      const c=await pool.connect(); let j=null;
+      try{await c.query('BEGIN'); const q=await c.query(`SELECT * FROM background_jobs WHERE status='queued' ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1`); j=q.rows[0]; if(j)await c.query(`UPDATE background_jobs SET status='running',heartbeat_at=now() WHERE id=$1`,[j.id]); await c.query('COMMIT');}
+      catch(e){await c.query('ROLLBACK');throw e;}finally{c.release();}
+      if(!j)break; await runBackgroundJob(j);
+    }
+  }finally{backgroundWorkerBusy=false;}
+}
+async function latestDurableSource(employeeNumber,kind){
+  const q=await pool.query(`SELECT * FROM file_upload_sources WHERE employee_number=$1 AND source_kind=$2 AND (expires_at IS NULL OR expires_at>now()) ORDER BY received_at DESC,id DESC LIMIT 1`,[employeeNumber,kind]);
+  return q.rows[0]||null;
+}
+
 async function accessToExcelBuffer(buf){
   let MDBReader, XLSX;
   try{const mod=await import('mdb-reader'); MDBReader=mod.default||mod.MDBReader||mod;}catch(e){throw new Error('Access reader is unavailable on this server.');}
@@ -1803,13 +1888,24 @@ async function processMessage(from, text, rawMessage = null) {
 
     // V7 explicit file-action routing. A document is never indexed/stored merely because it was uploaded.
     const fa=clean.trim().toUpperCase();
+    // Background-job controls stay lightweight and never block normal conversation.
+    if(/^(STATUS|JOBS|MY JOBS)$/i.test(clean.trim())){
+      const q=await pool.query(`SELECT job_code,job_type,status,progress_current,progress_total,source_filename,last_error FROM background_jobs WHERE employee_number=$1 ORDER BY created_at DESC LIMIT 5`,[u.employee_number]);
+      if(!q.rows.length){await sendText(from,'No recent background jobs.');return;}
+      await sendText(from,q.rows.map(j=>`${j.job_code} • ${j.status.toUpperCase()} • ${j.source_filename||j.job_type}${j.progress_total?` • ${j.progress_current}/${j.progress_total}`:''}${j.status==='failed'&&j.last_error?`\n${String(j.last_error).slice(0,120)}`:''}`).join('\n\n'));return;
+    }
+    const retryJob=clean.trim().match(/^RETRY\s+(JOB-\d+)$/i);
+    if(retryJob){const q=await pool.query(`UPDATE background_jobs SET status='queued',last_error=NULL,started_at=NULL,completed_at=NULL WHERE employee_number=$1 AND upper(job_code)=upper($2) AND status='failed' RETURNING *`,[u.employee_number,retryJob[1]]);if(!q.rows[0]){await sendText(from,'Failed job not found. Send STATUS to see recent jobs.');return;}await sendText(from,`🔄 ${q.rows[0].job_code} queued again. You can continue using the bot.`);setImmediate(()=>kickBackgroundWorker().catch(console.error));return;}
+
     const pendingFile=getPendingFileAction(u.employee_number);
     if(pendingFile && /^(FILE_(READ|STORE|READ_STORE|CONVERT|ALL)|READ FILE|STORE FILE|READ AND STORE)$/i.test(fa)){
       if(fa==='FILE_CONVERT'){
         const nm=String(pendingFile.meta.name||'');
-        if(/\.tiff?$/i.test(nm)){ clean='PDF CHEY'; }
-        else if(/\.(mdb|accdb)$/i.test(nm)){ clean='EXCEL CHEY'; }
-        else { await sendText(from,'This file type has no conversion action configured. Choose Read or Store.'); return; }
+        const kind=/\.tiff?$/i.test(nm)?'tiff':/\.(mdb|accdb)$/i.test(nm)?'access':null;
+        if(!kind){ await sendText(from,'This file type has no conversion action configured. Choose Read or Store.'); return; }
+        const pm=pendingFile.meta; await rememberDurableSource(u,from,pm.mediaId,pm.name,pm.mime,kind);
+        const j=await enqueueConversionJob(u,from,pm.mediaId,pm.name,pm.mime,kind); clearPendingFileAction(u.employee_number);
+        await sendText(from,`⏳ ${kind==='tiff'?'TIFF → PDF':'Access → Excel'} started in background • ${j.job_code}\nYou can continue using the bot. Send STATUS anytime.`); return;
       } else {
         // READ means analyse now without permanent knowledge/event storage. STORE/READ_STORE/ALL use the normal
         // guarded ingestion pipeline; reference docs go to knowledge, event docs keep equipment/date/user audit rules.
@@ -1834,36 +1930,39 @@ async function processMessage(from, text, rawMessage = null) {
       }
     }
 
-    // Access -> Excel conversion. Source bytes are temporary only; generated XLSX is returned to WhatsApp.
+    // Natural-language conversion commands use the durable latest source and only enqueue work.
     if(/^(?:ACCESS|MDB|ACCDB)\s*(?:TO|2)\s*(?:EXCEL|XLSX)$|^(?:EXCEL|XLSX)\s*(?:CHEYYI|CHEY|GA CONVERT CHEYYI|CONVERT)$/i.test(clean.trim())){
-      const live=latestConvertible(u.employee_number,'access');
-      const r=live?{rows:[{media_id:live.mediaId,filename:live.name,mime_type:live.mime}]}:await pool.query(`SELECT media_id,filename,mime_type FROM media_ingestion WHERE employee_number=$1 AND (LOWER(coalesce(filename,'')) ~ '\\.(mdb|accdb)$' OR LOWER(coalesce(mime_type,'')) LIKE '%access%') ORDER BY entered_at DESC,id DESC LIMIT 1`,[u.employee_number]);
-      if(!r.rows[0]){await sendText(from,'Access .mdb/.accdb file dorakaledu. Mundu file upload cheyyandi.');return;}
-      try{const m=r.rows[0];let src=cachedSource(m.media_id,u.employee_number);let ab=src?.buf;if(!ab){const meta=await mediaMeta(m.media_id);ab=await mediaBytes(meta.url);}
-        await sendText(from,'⏳ Access → Excel conversion started. Each readable Access table will become a separate Excel sheet.');const out=await accessToExcelBuffer(ab);const base=String(m.filename||'LMMM_Access').replace(/\.(mdb|accdb)$/i,'');
-        await sendDocumentBuffer(from,out.buffer,`${base}.xlsx`,`✅ Access → Excel complete • ${out.sheets}/${out.tables} tables • ${out.totalRows} rows`,'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');clearPendingFileAction(u.employee_number);
-      }catch(e){console.error('[ACCESS->XLSX]',e);await sendText(from,`⚠️ Access → Excel conversion failed: ${String(e?.message||e).slice(0,220)}`);}return;
+      const live=latestConvertible(u.employee_number,'access'); const d=live?null:await latestDurableSource(u.employee_number,'access');
+      const src=live?{media_id:live.mediaId,filename:live.name,mime_type:live.mime}:d;
+      if(!src){await sendText(from,'Access .mdb/.accdb file dorakaledu. Mundu file upload cheyyandi.');return;}
+      const j=await enqueueConversionJob(u,from,src.media_id,src.filename,src.mime_type,'access');
+      await sendText(from,`⏳ Access → Excel started in background • ${j.job_code}\nYou can continue using the bot. Send STATUS anytime.`);return;
     }
-
     if(/^(?:TIFF|TIF)\s*(?:TO|2)\s*PDF$|^PDF\s*(?:CHEYYI|CHEY|GA CONVERT CHEYYI|CONVERT)$/i.test(clean.trim())){
-      const live=latestConvertible(u.employee_number,'tiff');
-      const r=live?{rows:[{media_id:live.mediaId,filename:live.name,mime_type:live.mime}]}:await pool.query(`SELECT media_id,filename,mime_type FROM media_ingestion WHERE employee_number=$1 AND (LOWER(coalesce(mime_type,'')) LIKE '%tiff%' OR LOWER(coalesce(filename,'')) ~ '\\.(tif|tiff)$') ORDER BY entered_at DESC,id DESC LIMIT 1`,[u.employee_number]);
-      if(!r.rows[0]){await sendText(from,'TIFF file dorakaledu. Mundu TIFF/TIF file upload cheyyandi.');return;}
-      try{const m=r.rows[0];await sendText(from,`⏳ TIFF → PDF conversion started: ${m.filename||'latest TIFF'}\nAll frames/pages will be kept in the original order.`);const cached=cachedSource(m.media_id,u.employee_number),meta=cached?null:await mediaMeta(m.media_id),tb=cached?.buf||await mediaBytes(meta.url),out=await tiffToPdfBuffer(tb),base=String(m.filename||'LMMM_TIFF').replace(/\.(tif|tiff)$/i,'');await sendDocumentBuffer(from,out.buffer,`${base}.pdf`,`✅ TIFF → PDF complete • ${out.pages}/${out.pages} pages • Source: ${String(m.filename||'TIFF').slice(0,120)}`);clearPendingFileAction(u.employee_number);}catch(e){console.error('[TIFF->PDF]',e);await sendText(from,`⚠️ TIFF → PDF conversion failed: ${String(e?.message||e).slice(0,180)}`);}return;
+      const live=latestConvertible(u.employee_number,'tiff'); const d=live?null:await latestDurableSource(u.employee_number,'tiff');
+      const src=live?{media_id:live.mediaId,filename:live.name,mime_type:live.mime}:d;
+      if(!src){await sendText(from,'TIFF file dorakaledu. Mundu TIFF/TIF file upload cheyyandi.');return;}
+      const j=await enqueueConversionJob(u,from,src.media_id,src.filename,src.mime_type,'tiff');
+      await sendText(from,`⏳ TIFF → PDF started in background • ${j.job_code}\nYou can continue using the bot. Send STATUS anytime.`);return;
     }
 
     if(rawMessage && (rawMessage.image||rawMessage.audio||rawMessage.voice||rawMessage.document)){
       try{
         if(rawMessage.document){
           const n=rawMessage.document, meta=await mediaMeta(n.id), mime=meta.mime_type||n.mime_type||'', name=n.filename||`document-${n.id}`;
-          const buf=await mediaBytes(meta.url); cacheSource(u.employee_number,n.id,{buf,mime,name,mediaId:n.id,receivedAt:Date.now()});
           const isTiff=/tiff/i.test(mime)||/\.tiff?$/i.test(name), isAccess=/access/i.test(mime)||/\.(mdb|accdb)$/i.test(name);
-          if(isTiff) rememberLatestConvertible(u.employee_number,n.id,{mime,name,kind:'tiff'}); else if(isAccess) rememberLatestConvertible(u.employee_number,n.id,{mime,name,kind:'access'});
-          setPendingFileAction(u.employee_number,from,rawMessage,{mime,name,mediaId:n.id});
-          const rows=[{id:'FILE_READ',title:'Read / Analyse',description:'Read now; do not store'},{id:'FILE_STORE',title:'Store',description:'Classify and store safely'},{id:'FILE_READ_STORE',title:'Read + Store',description:'Analyse and store'}];
-          if(isTiff||isAccess) rows.push({id:'FILE_CONVERT',title:isTiff?'Convert to PDF':'Convert to Excel',description:'Conversion only; no AI indexing'});
-          if(isTiff||isAccess) rows.push({id:'FILE_ALL',title:isTiff?'Store + PDF':'Store + Excel',description:'Store safely and convert'});
-          await sendList(from,`📄 File received: ${name}\nNo AI indexing or permanent storage has started. What would you like to do?`,'Choose action',rows,'File actions');
+          // Fast intake: do not download a potentially huge TIFF/Access file merely to show its action menu.
+          // The selected background/read job downloads the exact media only when needed.
+          if(!(isTiff||isAccess)){ const buf=await mediaBytes(meta.url); cacheSource(u.employee_number,n.id,{buf,mime,name,mediaId:n.id,receivedAt:Date.now()}); }
+          if(isTiff||isAccess){
+            const kind=isTiff?'tiff':'access'; rememberLatestConvertible(u.employee_number,n.id,{mime,name,kind}); await rememberDurableSource(u,from,n.id,name,mime,kind);
+            setPendingFileAction(u.employee_number,from,rawMessage,{mime,name,mediaId:n.id});
+            const rows=[{id:'FILE_READ',title:'Read / Analyse',description:'Read now; do not store'},{id:'FILE_STORE',title:'Store',description:'Classify and store safely'},{id:'FILE_READ_STORE',title:'Read + Store',description:'Analyse and store'},{id:'FILE_CONVERT',title:isTiff?'Convert to PDF':'Convert to Excel',description:'Background conversion only'},{id:'FILE_ALL',title:isTiff?'Store + PDF':'Store + Excel',description:'Store safely and convert'}];
+            await sendList(from,`📄 File received: ${name}\nNothing has been stored/indexed yet. Choose what you need.`,'Choose action',rows,'File actions');
+          } else {
+            // Direct-readable files should feel natural: process normally without an unnecessary conversion menu.
+            await stageMedia(u,from,rawMessage);
+          }
         } else await stageMedia(u,from,rawMessage);
       }catch(e){console.error('[MEDIA]',e);await sendText(from,`⚠️ File handling stopped. ${String(e?.message||'Unknown processing error').slice(0,180)}`);}
       return;
@@ -2156,7 +2255,7 @@ app.post('/webhook', (req, res) => {
 app.get('/api/status', (_q, r) =>
   r.status(200).json({
     status: 'ready',
-    registration: 'V6.5-source-isolated-ingestion',
+    registration: 'V7.1-durable-background-jobs-fast-path',
     webhook: '/webhook',
     super_admins_configured: SUPER_ADMIN_NUMBERS.size
   })
@@ -2164,7 +2263,7 @@ app.get('/api/status', (_q, r) =>
 
 app.use((_q, r) => r.status(404).send('Not found'));
 
-initDB().catch(e => console.error('[DATABASE INIT ERROR]', e));
+initDB().then(()=>setTimeout(()=>kickBackgroundWorker().catch(e=>console.error('[BG STARTUP]',e)),1500)).catch(e => console.error('[DATABASE INIT ERROR]', e));
 
 const server = http.createServer(app);
 server.on('error', (err) => {
