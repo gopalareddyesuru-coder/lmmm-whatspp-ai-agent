@@ -1681,7 +1681,13 @@ function analysisEquipmentKeys(eq=''){
  const raw=String(eq||'').trim(), n=scopeKey(raw), out=new Set([n]);
  // Retrieval aliases only. Canonical stored equipment names/IDs are never changed.
  const m=n.match(/^(?:wbf|furnace|walking beam furnace)\s*([12])$/);
- if(m){const k=m[1];['wbf '+k,'wbf'+k,'furnace '+k,'furnace'+k,'walking beam furnace '+k].forEach(x=>out.add(scopeKey(x)));}
+ if(m){
+   const k=m[1];
+   ['wbf '+k,'wbf'+k,'furnace '+k,'furnace'+k,'walking beam furnace '+k].forEach(x=>out.add(scopeKey(x)));
+   // Explicit Dept-35 parent/child aliases: selecting a furnace must include its own auxiliaries.
+   // These are retrieval aliases only; canonical equipment names are never rewritten.
+   ['ecs '+k,'ecs'+k,'caf '+k,'caf'+k].forEach(x=>out.add(scopeKey(x)));
+ }
  // Conservative punctuation/spacing variants for every equipment name (BDM, FART, ECS-1, TOCB, etc.).
  if(n){
    out.add(n.replace(/\s+/g,''));
@@ -1756,6 +1762,63 @@ async function rowsForContext(ctx,type=null,limit=500,u=null){
  rows.sort((a,b)=>String(b.event_date||'').localeCompare(String(a.event_date||''))||String(a.uid||'').localeCompare(String(b.uid||'')));
  return rows.slice(0,Math.max(1,Number(limit)||500));
 }
+function analysisText(r){return String(`${r?.record_text||''} ${JSON.stringify(r?.source_payload||{})} ${r?.source_name||''}`);}
+function isTrueCbmRow(r){
+ const p=r?.source_payload||{}, t=analysisText(r);
+ if(['vibration_reading','motor_load_reading'].includes(String(r?.record_type||'').toLowerCase()))return true;
+ if(/WBF CONDITION MONITORING|VIBRATIONS ALL|condition monitoring/i.test(String(r?.source_name||'')))return /vibr|mm\/s|mm\/sec|m\/s2|µm|micron|bearing temp|temperature|axial|vertical|horizontal|\bDE\b|\bNDE\b/i.test(t);
+ // History is CBM evidence only when an actual measured value/measurement statement is present.
+ return /(vibr(?:ation|n)?\s*(?:level|reading|value)?|bearing\s*temp|temperature).{0,80}(\d+(?:\.\d+)?\s*(?:mm\/s|mm\/sec|m\/s2|°?c|deg\s*c|micron|µm)|increased|high|low|reduced)/i.test(t)
+   || /\d+(?:\.\d+)?\s*(?:mm\/s|mm\/sec|m\/s2|micron|µm).{0,80}(?:vibr|vertical|horizontal|axial|DE|NDE)/i.test(t);
+}
+function isTruePmRow(r){
+ const p=r?.source_payload||{},t=analysisText(r);
+ if(String(r?.record_type||'').toLowerCase()==='pm')return true;
+ if(/preventive maintenance|PM schedule|scheduled maintenance/i.test(String(r?.source_name||'')))return true;
+ if(/^PM$/i.test(String(p.category||'')))return true;
+ return /\bpreventive(?:ly)?\b|\bplanned maintenance\b|\bscheduled maintenance\b|\bPM\s*(?:done|schedule|job|inspection)\b/i.test(t);
+}
+function isDelayEvidenceRow(r){
+ const t=analysisText(r),p=r?.source_payload||{};
+ if(['delay','breakdown_delay','breakdown'].includes(String(r?.record_type||'').toLowerCase()))return true;
+ if(Number.isFinite(Number(p.delay_minutes))&&Number(p.delay_minutes)>0)return true;
+ return /\b(?:delay(?:ed)?|downtime|breakdown|stoppage)\b.{0,80}\b\d+(?:\.\d+)?\s*(?:min|mins|minutes|hr|hrs|hours|shift|shifts)\b/i.test(t)
+   || /\b\d+(?:\.\d+)?\s*(?:min|mins|minutes|hr|hrs|hours|shift|shifts)\b.{0,80}\b(?:delay|downtime|breakdown|stoppage)\b/i.test(t);
+}
+async function liveAnalysisRows(ctx,u){
+ const keys=analysisEquipmentKeys(ctx.equipment_name),dr=ctxRange(ctx),vals=[];let w=`deleted_at IS NULL`;
+ if(dr?.from){vals.push(dr.from);w+=` AND event_date >= $${vals.length}::date`;}
+ if(dr?.to){vals.push(dr.to);w+=` AND event_date <= $${vals.length}::date`;}
+ vals.push(3000);const rows=(await pool.query(`SELECT 'LIVE:'||id::text uid,event_type record_type,equipment_name equipment,area,event_date::text,event_text record_text,'Live LMMM Entry' source_name,jsonb_build_object('event_shift',event_shift,'event_time',event_time,'status',status) source_payload FROM section_event_log WHERE ${w} ORDER BY event_date DESC,entered_at DESC LIMIT $${vals.length}`,vals)).rows;
+ const sc=await effectiveSearchScope(u);
+ return rows.filter(r=>analysisRowMatchesEquipment(r,keys)&&areaMatchesScope(r.area,sc,r.equipment||r.record_text));
+}
+async function technicalAnalysisRows(ctx,u){
+ const keys=analysisEquipmentKeys(ctx.equipment_name),vals=[5000];
+ const rows=(await pool.query(`SELECT 'DOC:'||id::text uid,LOWER(COALESCE(document_class,'knowledge')) record_type,equipment_name equipment,NULL::text area,NULL::text event_date,COALESCE(section_heading||' — ','')||content_text record_text,source_filename source_name,jsonb_build_object('document_class',document_class,'page_start',page_start,'page_end',page_end,'title',title) source_payload FROM technical_document_chunks ORDER BY id DESC LIMIT $1`,vals)).rows;
+ return rows.filter(r=>analysisRowMatchesEquipment(r,keys));
+}
+async function allAnalysisRows(ctx,u,limit=6000){
+ const [master,live,docs]=await Promise.all([rowsForContext(ctx,null,limit,u),liveAnalysisRows(ctx,u),technicalAnalysisRows(ctx,u)]);
+ const seen=new Set(),out=[];
+ for(const r of [...live,...master,...docs]){const k=scopeKey(`${r.event_date||''}|${r.equipment||''}|${r.record_text||''}`);if(!k||seen.has(k))continue;seen.add(k);out.push(r);}
+ out.sort((a,b)=>String(b.event_date||'').localeCompare(String(a.event_date||'')));
+ return out;
+}
+function performanceSummary(rows){
+ const defects=rows.filter(r=>String(r.record_type).toLowerCase()==='defect');
+ const hist=rows.filter(r=>String(r.record_type).toLowerCase()==='history');
+ const jobs=rows.filter(isJobHistoryRow);
+ const cbm=rows.filter(isTrueCbmRow);
+ const delays=rows.filter(isDelayEvidenceRow);
+ const pm=rows.filter(isTruePmRow);
+ const dated=rows.filter(r=>/^\d{4}-\d{2}-\d{2}$/.test(String(r.event_date||''))).map(r=>r.event_date).sort();
+ const fm=new Map();for(const r of defects){const k=normFailureText(r);if(k){const a=fm.get(k)||[];a.push(r);fm.set(k,a);}}
+ const repeats=[...fm.entries()].filter(([,a])=>a.length>1).sort((a,b)=>b[1].length-a[1].length);
+ const latest=dated.length?dated[dated.length-1]:'Not available',first=dated.length?dated[0]:'Not available';
+ const top=repeats.slice(0,3).map(([k,a])=>`${k} (${a.length})`).join('; ');
+ return {defects,hist,jobs,cbm,delays,pm,latest,first,repeats,top};
+}
 async function analysisAction(q,u){
  const action=analysisActionName(q); if(!action)return null;
  const ctx=await getSearchContext(u); if(!ctx?.equipment_name)return {text:'Select an equipment first, then open Analysis.'};
@@ -1763,8 +1826,9 @@ async function analysisAction(q,u){
  const actionPerm={repeat:'repeat',jobs:'jobs',history:'history',mtbf:'mtbf',performance:'performance',pm:'pm',cbm:'cbm',delay:'delay',pdf:'pdf',rcm:'rcm'}[action];
  if(actionPerm && !perms[actionPerm])return {text:'This option is not authorised for your access level.'};
  const eq=ctx.equipment_name,dr=ctxRange(ctx),period=dr?` | ${dr.from} to ${dr.to}`:'';
+ const all=await allAnalysisRows(ctx,u,6000);
  if(action==='repeat'){
-   const rows=await rowsForContext(ctx,'defect',1000,u); if(!rows.length)return {text:`${eq}${period}\nNo defect records found in the current filters.`};
+   const rows=all.filter(r=>String(r.record_type).toLowerCase()==='defect'); if(!rows.length)return {text:`${eq}${period}\nNo defect records found in the current filters.`};
    const m=new Map();for(const r of rows){const k=normFailureText(r);if(!k)continue;const a=m.get(k)||[];a.push(r);m.set(k,a);}
    const groups=[...m.entries()].filter(([,a])=>a.length>1).sort((a,b)=>b[1].length-a[1].length).slice(0,15);
    if(!groups.length)return {text:`${eq}${period}\nNo repeated defect description was confirmed in the current filtered records.`};
@@ -1772,42 +1836,34 @@ async function analysisAction(q,u){
    return {text:`${eq} — Repeat Failures${period}\n\n${body}\n\nGrouped only from stored defect descriptions; similar wording is not silently merged.`,buttons:await primarySearchButtons(u,false)};
  }
  if(action==='jobs'||action==='history'){
-   let rows=await rowsForContext(ctx,'history',500,u);
-   if(action==='jobs')rows=rows.filter(isJobHistoryRow);
+   let rows=all.filter(r=>String(r.record_type).toLowerCase()==='history'||String(r.record_type).toLowerCase()==='job_action');
+   if(action==='jobs')rows=rows.filter(r=>String(r.record_type).toLowerCase()==='job_action'||isJobHistoryRow(r));
    if(!rows.length)return {text:`${eq}${period}\nNo ${action==='jobs'?'explicit related-job':'maintenance-history'} records found in the current filters.`};
    return {text:`${eq} — ${action==='jobs'?'Related Jobs':'Equipment History'}${period}\n\n${formatBundledResults(rows.slice(0,20))}`,buttons:await primarySearchButtons(u,rows.length>20)};
  }
  if(action==='cbm'){
-   const all=await rowsForContext(ctx,null,500,u);const rows=all.filter(r=>/vibration|cbm|condition|bearing temp|temperature/i.test(String(r.record_text)+' '+JSON.stringify(r.source_payload||{})));
-   return {text:rows.length?`${eq} — Vibration / CBM${period}\n\n${formatBundledResults(rows.slice(0,20))}`:`${eq}${period}\nNo vibration/CBM records were found in the current filtered master data.`,buttons:await primarySearchButtons(u,rows.length>20)};
+   const rows=all.filter(isTrueCbmRow);
+   return {text:rows.length?`${eq} — Vibration / CBM${period}\n\n${formatBundledResults(rows.slice(0,20))}`:`${eq}${period}\nNo actual vibration/CBM measurement records were found in the currently indexed data. Maintenance text containing only the word “vibration” is not shown as a reading.`,buttons:await primarySearchButtons(u,rows.length>20)};
  }
  if(action==='pm'){
-   const all=await rowsForContext(ctx,null,500,u);const rows=all.filter(r=>/preventive|\bpm\b|scheduled|schedule|greasing|lubrication/i.test(String(r.record_text)+' '+JSON.stringify(r.source_payload||{})));
-   return {text:rows.length?`${eq} — Scheduled / Preventive Maintenance${period}\n\n${formatBundledResults(rows.slice(0,20))}`:`${eq}${period}\nNo stored PM/scheduled-maintenance records were found. A maintenance schedule will not be invented.`,buttons:await primarySearchButtons(u,rows.length>20)};
+   const rows=all.filter(isTruePmRow);
+   return {text:rows.length?`${eq} — Scheduled / Preventive Maintenance${period}\n\n${formatBundledResults(rows.slice(0,20))}`:`${eq}${period}\nNo confirmed PM/scheduled-maintenance records were found. Ordinary defect/job records such as greasing are not automatically labelled as scheduled PM.`,buttons:await primarySearchButtons(u,rows.length>20)};
  }
  if(action==='delay'){
-   const all=await rowsForContext(ctx,null,500,u);const rows=all.filter(r=>/delay|downtime|breakdown|stoppage/i.test(String(r.record_text)+' '+JSON.stringify(r.source_payload||{})));
-   return {text:rows.length?`${eq} — Breakdown / Delay Evidence${period}\n\n${formatBundledResults(rows.slice(0,20))}`:`${eq}${period}\nNo linked breakdown/delay records were found in the current filtered data.`,buttons:await primarySearchButtons(u,rows.length>20)};
+   const rows=all.filter(isDelayEvidenceRow);
+   return {text:rows.length?`${eq} — Breakdown / Delay Evidence${period}\n\n${formatBundledResults(rows.slice(0,20))}`:`${eq}${period}\nNo explicit breakdown/delay-duration evidence was found in the current filtered data.`,buttons:await primarySearchButtons(u,rows.length>20)};
  }
  if(action==='mtbf'){
-   const defects=await rowsForContext(ctx,'defect',2000,u);
-   const history=await rowsForContext(ctx,'history',2000,u);
+   const defects=all.filter(r=>String(r.record_type).toLowerCase()==='defect');
    const valid=defects.filter(r=>/^\d{4}-\d{2}-\d{2}$/.test(String(r.event_date||'')));
-   const days=[...new Set(valid.map(r=>r.event_date))].sort();
-   const gaps=[];for(let i=1;i<days.length;i++){const a=new Date(days[i-1]+'T00:00:00Z'),b=new Date(days[i]+'T00:00:00Z');const d=(b-a)/86400000;if(d>=0)gaps.push(d);}
-   const avgGap=gaps.length?(gaps.reduce((a,b)=>a+b,0)/gaps.length):null;
-   const durations=[...defects,...history].map(explicitDurationMinutes).filter(x=>Number.isFinite(x));
-   const avgRepair=durations.length?(durations.reduce((a,b)=>a+b,0)/durations.length):null;
-   const indicator=avgGap!==null?`\nSupporting indicator — average interval between recorded defect dates: ${avgGap.toFixed(1)} days\nThis is NOT MTBF.`:'';
-   const mttr=avgRepair!==null
-     ? `MTTR from ${durations.length} records with explicit stored repair/downtime duration: ${(avgRepair/60).toFixed(2)} hours`
-     : 'MTTR: Not available — no reliable stored failure-to-restoration duration was found.';
-   return {text:`${eq} — MTBF / MTTR${period}\n\nDefect records: ${defects.length}\nRecords with valid event date: ${valid.length}${indicator}\n\nMTBF: Not available — validated operating time / failure-start data is incomplete.\n${mttr}\n\n00:00:00 date placeholders are not treated as failure times. Missing values are not guessed.`};
+   const durations=all.map(explicitDurationMinutes).filter(x=>Number.isFinite(x));
+   const mttr=durations.length?`MTTR from ${durations.length} records with explicit stored repair/downtime duration: ${(durations.reduce((a,b)=>a+b,0)/durations.length/60).toFixed(2)} hours`:'MTTR: Not available — no reliable stored failure-to-restoration duration was found.';
+   return {text:`${eq} — MTBF / MTTR${period}\n\nDefect records: ${defects.length}\nRecords with valid event dates: ${valid.length}\n\nMTBF: Not available — validated operating time and failure-start data are incomplete. Defect-to-defect interval is not reported as MTBF.\n${mttr}\n\nOnly explicit stored timing is used; 00:00:00 date placeholders and missing values are not treated as failure/restoration times.`};
  }
  if(action==='performance'){
-   const all=await rowsForContext(ctx,null,3000,u),def=all.filter(r=>r.record_type==='defect').length,histRows=all.filter(r=>r.record_type==='history'),hist=histRows.length,jobs=histRows.filter(isJobHistoryRow).length;
-   const explicitDurations=all.map(explicitDurationMinutes).filter(x=>Number.isFinite(x));
-   return {text:`${eq} — Equipment Performance${period}\n\nDefect records: ${def}\nMaintenance-history records: ${hist}\nExplicit related-job records: ${jobs}\nTotal linked records: ${all.length}\nRecords with explicit downtime/repair duration: ${explicitDurations.length}\n\nAvailability/MTBF/MTTR are calculated only when their required validated time data exists. Missing KPI inputs are not inferred.`};
+   const x=performanceSummary(all);
+   const span=x.first==='Not available'?'Not available':`${x.first} to ${x.latest}`;
+   return {text:`${eq} — Equipment Performance${period}\n\nRecords analysed: ${all.length}\nDefects: ${x.defects.length}\nMaintenance jobs/history: ${x.jobs.length}\nConfirmed CBM/vibration evidence: ${x.cbm.length}\nConfirmed PM/scheduled records: ${x.pm.length}\nBreakdown/delay evidence: ${x.delays.length}\nData period: ${span}\nRepeat-failure groups: ${x.repeats.length}${x.top?`\nTop repeat patterns: ${x.top}`:''}\n\nAvailability, MTBF and MTTR are shown only when their validated time inputs exist; missing KPI inputs are not inferred.`};
  }
  if(action==='pdf')return {text:`${eq}${period}\nPDF Analysis Report is authorised, but the final report-generation engine is not connected to this action yet. No placeholder PDF was generated.`};
  if(action==='rcm')return {text:`${eq}${period}\nRCM Analysis requires linked failure modes, consequences, existing tasks and historical evidence. The bot will not generate an unsupported RCM conclusion from defect counts alone.`};
