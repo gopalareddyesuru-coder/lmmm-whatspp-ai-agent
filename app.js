@@ -1698,7 +1698,11 @@ function failureFingerprint(r){
  ];
  const comp=(componentRules.find(([,re])=>re.test(raw))||[])[0]||'';
  const mode=(modeRules.find(([,re])=>re.test(raw))||[])[0]||'';
- if(comp&&mode)return {key:`${comp} — ${mode}`,label:`${comp} — ${mode}`,confidence:'semantic'};
+ // Preserve explicit asset/location identity when present so unrelated valves/doors/lines are not merged.
+ const ids=[];
+ for(const re of [/\b(?:DOOR|VALVE|BURNER|PUMP|FAN|BLOWER|RECUPERATOR|RECUP|SKID|ZONE|Z|LINE|HEADER)\s*(?:NO\.?|#)?\s*[- ]?(\d+)\b/ig,/\b(?:L|LEVEL)\s*[- ]?(\d+)\b/ig]){let m;while((m=re.exec(raw))&&ids.length<3)ids.push(m[0].replace(/\s+/g,' ').trim());}
+ const ident=[...new Set(ids)].join(' / ');
+ if(comp&&mode){const label=`${comp}${ident?` [${ident}]`:''} — ${mode}`;return {key:label,label,confidence:ident?'asset-mode':'pattern'};}
  // Conservative normalized fallback: enough detail to avoid merging unrelated defects.
  let x=raw.replace(/\b(?:NO|NUMBER)\s*[-#]?\s*\d+\b/g,' NO')
    .replace(/\b\d+(?:\.\d+)?\s*(?:MM|CM|M|BAR|KG|AMP|A|V)\b/g,' VALUE')
@@ -1812,7 +1816,8 @@ function isTruePmRow(r){
  if(String(r?.record_type||'').toLowerCase()==='pm')return true;
  if(/preventive maintenance|PM schedule|scheduled maintenance/i.test(String(r?.source_name||'')))return true;
  if(/^PM$/i.test(String(p.category||'')))return true;
- return /\bpreventive(?:ly)?\b|\bplanned maintenance\b|\bscheduled maintenance\b|\bPM\s*(?:done|schedule|job|inspection)\b/i.test(t);
+ // A phrase such as "preventive measure" in a defect/job history is NOT proof of a scheduled PM task.
+ return /\bpreventive maintenance\b|\bplanned maintenance\b|\bscheduled maintenance\b|\bPM\s*(?:done|schedule|job|inspection)\b/i.test(t);
 }
 function isDelayEvidenceRow(r){
  const t=analysisText(r),p=r?.source_payload||{};
@@ -1866,8 +1871,8 @@ async function analysisAction(q,u){
    const rows=all.filter(r=>String(r.record_type).toLowerCase()==='defect'); if(!rows.length)return {text:`${eq}${period}\nNo defect records found in the current filters.`};
    const groups=repeatFailureGroups(rows).slice(0,15);
    if(!groups.length)return {text:`${eq}${period}\nNo repeat-failure pattern could be confirmed from the current filtered defect records.`};
-   const body=groups.map((g,i)=>`${i+1}. ${g.label}\nOccurrences: ${g.rows.length}\nDates: ${g.rows.map(x=>x.event_date||'Date unavailable').slice(0,6).join(', ')}${g.rows.length>6?' …':''}`).join('\n\n');
-   return {text:`${eq} — Repeat Failures${period}\n\n${body}\n\nGrouping uses component + failure-mode evidence where explicit; otherwise conservative normalized wording. Stored records and identifiers are never rewritten.`,buttons:await primarySearchButtons(u,false)};
+   const body=groups.map((g,i)=>{const vd=g.rows.map(x=>String(x.event_date||'')).filter(d=>/^\d{4}-\d{2}-\d{2}$/.test(d));const bad=g.rows.length-vd.length;return `${i+1}. ${g.label}\nOccurrences: ${g.rows.length}\nValid dates: ${vd.slice(0,6).join(', ')||'None'}${vd.length>6?' …':''}${bad?`\nDate review required: ${bad} record(s)`:''}`;}).join('\n\n');
+   return {text:`${eq} — Repeat Failures${period}\n\n${body}\n\nGrouping uses explicit asset/location + failure mode where available. If an exact asset identifier is absent, the result is a recurring failure pattern, not proof that the same physical component failed repeatedly. Stored records and identifiers are never rewritten.`,buttons:await primarySearchButtons(u,false)};
  }
  if(action==='jobs'||action==='history'){
    let rows=all.filter(r=>String(r.record_type).toLowerCase()==='history'||String(r.record_type).toLowerCase()==='job_action');
@@ -1897,7 +1902,7 @@ async function analysisAction(q,u){
  if(action==='performance'){
    const x=performanceSummary(all);
    const span=x.first==='Not available'?'Not available':`${x.first} to ${x.latest}`;
-   return {text:`${eq} — Equipment Performance${period}\n\nRecords analysed: ${all.length}\nDefects: ${x.defects.length}\nMaintenance jobs/history evidence: ${x.jobs.length}\nConfirmed CBM/vibration evidence: ${x.cbm.length}\nConfirmed PM/scheduled records: ${x.pm.length}\nBreakdown/delay evidence: ${x.delays.length}\nData period: ${span}\nRepeat-failure groups: ${x.repeats.length}${x.top?`\nTop repeat patterns: ${x.top}`:''}\n\nAvailability, MTBF and MTTR are shown only when their validated time inputs exist; missing KPI inputs are not inferred.`};
+   return {text:`${eq} — Equipment Performance${period}\n\nUnique linked records analysed: ${all.length}\nDefect records: ${x.defects.length}\nMaintenance-history records: ${x.hist.length}\nJob/action evidence (overlapping subset): ${x.jobs.length}\nConfirmed CBM/vibration evidence: ${x.cbm.length}\nConfirmed scheduled/PM records: ${x.pm.length}\nBreakdown/delay evidence: ${x.delays.length}\nData period: ${span}\nRecurring failure-pattern groups: ${x.repeats.length}${x.top?`\nTop recurring patterns: ${x.top}`:''}\n\nCounts can overlap because one historical record may contain job, CBM or delay evidence. Availability, MTBF and MTTR are shown only when validated timing inputs exist; missing KPI inputs are not inferred.`};
  }
  if(action==='pdf')return {text:`${eq}${period}\nPDF Analysis Report is authorised, but the final report-generation engine is not connected to this action yet. No placeholder PDF was generated.`};
  if(action==='rcm')return {text:`${eq}${period}\nRCM Analysis requires linked failure modes, consequences, existing tasks and historical evidence. The bot will not generate an unsupported RCM conclusion from defect counts alone.`};
