@@ -928,28 +928,35 @@ async function effectiveAuthority(employeeNumber) {
   );
 
   const roles = rr.rows.map(x => String(x.responsibility_role || '').trim().toLowerCase());
+  const superAdminRole = roles.includes('super admin') || roles.includes('superadmin') || roles.includes('owner');
   const hod = roles.includes('hod');
   const sectionIncharge = roles.includes('section in-charge') || roles.includes('section incharge');
   const areaIncharge = roles.includes('area in-charge') || roles.includes('area incharge');
   const band = designationBand(u.designation);
   const category = employeeCategory(u.designation);
+  const specialSet = new Set(pr.rows.map(x => String(x.permission||'').toUpperCase()));
 
   let effectiveAccess = category === 'EXECUTIVE' ? 'ENTRY_VIEW' : 'ENTRY';
   let scope = 'REGISTERED_SCOPE';
 
+  // Explicit Super Admin/Owner responsibility or permission is plant-wide full access.
+  if (superAdminRole || specialSet.has('SUPER_ADMIN') || specialSet.has('OWNER')) {
+    effectiveAccess = 'FULL';
+    scope = 'PLANT_WIDE';
+  }
   // DGM gets full access only to the assigned/registered section.
-  if (band === 'DGM') {
+  if (band === 'DGM' && scope !== 'PLANT_WIDE') {
     effectiveAccess = 'FULL';
     scope = 'ASSIGNED_SECTION';
   }
   // Responsibility overrides designation assumptions.
-  if (areaIncharge) scope = 'ASSIGNED_AREA';
-  if (sectionIncharge) {
+  if (areaIncharge && scope !== 'PLANT_WIDE') scope = 'ASSIGNED_AREA';
+  if (sectionIncharge && scope !== 'PLANT_WIDE') {
     effectiveAccess = 'FULL';
     scope = 'ASSIGNED_SECTION';
   }
   // HOD can be DGM, GM, or another authorized designation: HOD responsibility controls scope.
-  if (hod) {
+  if (hod && scope !== 'PLANT_WIDE') {
     effectiveAccess = 'FULL';
     scope = 'ALL_SECTIONS';
   }
@@ -1115,7 +1122,7 @@ function isOperationsSection(u){
 }
 async function productionAuthority(u){
  if(!u)return {enter:false,modify:false};
- const owner=isOwner(u.wa_number);
+ const owner=isOwner(u.whatsapp_number);
  const a=await effectiveAuthority(u.employee_number);
  const roles=(a?.responsibility_roles||[]).map(x=>String(x.responsibility_role||'').toLowerCase());
  const hod=roles.includes('hod');
@@ -1476,15 +1483,33 @@ function areaDataQuery(q=''){return /\b(area|bdm|bar mill|finishing)\b/i.test(St
 async function setSearchFilters(u,{module,dateFrom,dateTo,offset,lastQuery}={}){
  await pool.query(`UPDATE search_context SET module=COALESCE($2,module),date_from=COALESCE($3,date_from),date_to=COALESCE($4,date_to),page_offset=COALESCE($5,page_offset),last_query=COALESCE($6,last_query),updated_at=now() WHERE employee_number=$1`,[u.employee_number,module||null,dateFrom||null,dateTo||null,Number.isInteger(offset)?offset:null,lastQuery||null]);
 }
+function cleanScopeValue(v=''){const x=String(v||'').trim();return (!x||/^not assigned$/i.test(x))?'':x;}
+async function effectiveSearchScope(u){
+ const a=await effectiveAuthority(u.employee_number); if(!a)return null;
+ const ps=new Set((a.special_permissions||[]).map(x=>String(x).toUpperCase()));
+ const roles=(a.responsibilities||[]).map(x=>String(x.responsibility_role||'').toLowerCase());
+ const plantWide=isOwner(u?.whatsapp_number)||a.scope==='PLANT_WIDE'||ps.has('SUPER_ADMIN')||ps.has('OWNER');
+ const sections=new Set(),areas=new Set();
+ const rs=cleanScopeValue(a.registered_section),ra=cleanScopeValue(a.registered_area); if(rs)sections.add(rs);if(ra)areas.add(ra);
+ for(const r of (a.responsibilities||[])){const ss=cleanScopeValue(r.scope_section),sa=cleanScopeValue(r.scope_area);if(ss)sections.add(ss);if(sa)areas.add(sa);}
+ return {plantWide,department_code:'35',sections:[...sections],areas:[...areas],authority:a,roles};
+}
+function areaMatchesScope(area,scope){
+ if(!scope||scope.plantWide)return true;
+ if(!scope.areas?.length)return true; // no mapped area: retain registered-section access without guessing an area mapping
+ const a=String(area||'').toLowerCase(); if(!a)return false;
+ return scope.areas.some(x=>{const y=String(x).toLowerCase();return a===y||a.includes(y)||y.includes(a);});
+}
 async function searchPermissions(u){
  const a=await effectiveAuthority(u.employee_number);
  const ps=new Set((a?.special_permissions||[]).map(x=>String(x).toUpperCase()));
  // Owner/Super Admin is determined from the approved user's WhatsApp number and always has full controls.
- const owner=isOwner(u?.wa_number);
- const full=owner || a?.effective_access==='FULL' || ps.has('FULL_ACCESS');
+ const owner=isOwner(u?.whatsapp_number);
+ const scope=await effectiveSearchScope(u);
+ const full=owner || scope?.plantWide || a?.effective_access==='FULL' || ps.has('FULL_ACCESS') || ps.has('SUPER_ADMIN') || ps.has('OWNER');
  const advanced=full || ps.has('ANALYSIS') || ps.has('ADVANCED_REPORTS');
  return {
-   owner, full,
+   owner, full, scope,
    view: !!a,
    more: !!a,
    date: !!a,
@@ -1525,7 +1550,9 @@ function allowedAnalysisRows(perms){
 }
 function actionFooter(){ return ''; }
 async function areaSearchMenu(q,u){
+ const scope=await effectiveSearchScope(u);
  const area=String(q).replace(/\b(full|all|overall|complete|data|records?|details?)\b/ig,' ').replace(/\s+/g,' ').trim();
+ if(scope && !scope.plantWide && scope.areas?.length && !areaMatchesScope(area,scope)) return {text:'This area is outside your authorised work scope.'};
  await pool.query(`INSERT INTO search_context(employee_number,department_code,area,equipment_name,module,date_from,date_to,page_offset,updated_at) VALUES($1,'35',$2,NULL,NULL,NULL,NULL,0,now()) ON CONFLICT(employee_number) DO UPDATE SET area=EXCLUDED.area,equipment_name=NULL,module=NULL,date_from=NULL,date_to=NULL,page_offset=0,updated_at=now()`,[u.employee_number,area||null]);
  return {text:`${area||'Area'} — Maintenance Data\n\n1. Search by Equipment\n2. Select Date / Date Range`};
 }
@@ -1608,7 +1635,7 @@ function normFailureText(r){
  x=x.replace(/\b(REPLACED|REPLACE|DONE|ATTENDED|RECTIFIED|TIGHTENED|TIGHTEND|GREASING|WELDING|PUTTI|CHECKED)\b.*$/,'');
  return x.replace(/[^A-Z0-9]+/g,' ').replace(/\s+/g,' ').trim().slice(0,120);
 }
-async function rowsForContext(ctx,type=null,limit=500){
+async function rowsForContext(ctx,type=null,limit=500,u=null){
  if(!ctx?.equipment_name)return [];
  const vals=[ctx.equipment_name];let w=`LOWER(COALESCE(equipment,''))=LOWER($1)`;
  if(type){vals.push(type);w+=` AND record_type=$${vals.length}`;}
@@ -1616,7 +1643,9 @@ async function rowsForContext(ctx,type=null,limit=500){
  if(dr?.from){vals.push(dr.from);w+=` AND CASE WHEN event_date ~ '^\\d{4}-\\d{2}-\\d{2}$' THEN event_date::date END >= $${vals.length}::date`;}
  if(dr?.to){vals.push(dr.to);w+=` AND CASE WHEN event_date ~ '^\\d{4}-\\d{2}-\\d{2}$' THEN event_date::date END <= $${vals.length}::date`;}
  vals.push(limit);
- return (await pool.query(`SELECT uid,record_type,equipment,area,event_date,record_text,source_name,source_payload FROM lmmm_master_records WHERE ${w} ORDER BY CASE WHEN event_date ~ '^\\d{4}-\\d{2}-\\d{2}$' THEN event_date::date END DESC NULLS LAST,uid LIMIT $${vals.length}`,vals)).rows;
+ let rows=(await pool.query(`SELECT uid,record_type,equipment,area,event_date,record_text,source_name,source_payload FROM lmmm_master_records WHERE ${w} ORDER BY CASE WHEN event_date ~ '^\\d{4}-\\d{2}-\\d{2}$' THEN event_date::date END DESC NULLS LAST,uid LIMIT $${vals.length}`,vals)).rows;
+ if(u){const sc=await effectiveSearchScope(u);rows=rows.filter(r=>areaMatchesScope(r.area,sc));}
+ return rows;
 }
 async function analysisAction(q,u){
  const action=analysisActionName(q); if(!action)return null;
@@ -1626,7 +1655,7 @@ async function analysisAction(q,u){
  if(actionPerm && !perms[actionPerm])return {text:'This option is not authorised for your access level.'};
  const eq=ctx.equipment_name,dr=ctxRange(ctx),period=dr?` | ${dr.from} to ${dr.to}`:'';
  if(action==='repeat'){
-   const rows=await rowsForContext(ctx,'defect',1000); if(!rows.length)return {text:`${eq}${period}\nNo defect records found in the current filters.`};
+   const rows=await rowsForContext(ctx,'defect',1000,u); if(!rows.length)return {text:`${eq}${period}\nNo defect records found in the current filters.`};
    const m=new Map();for(const r of rows){const k=normFailureText(r);if(!k)continue;const a=m.get(k)||[];a.push(r);m.set(k,a);}
    const groups=[...m.entries()].filter(([,a])=>a.length>1).sort((a,b)=>b[1].length-a[1].length).slice(0,15);
    if(!groups.length)return {text:`${eq}${period}\nNo repeated defect description was confirmed in the current filtered records.`};
@@ -1634,27 +1663,27 @@ async function analysisAction(q,u){
    return {text:`${eq} — Repeat Failures${period}\n\n${body}\n\nGrouped only from stored defect descriptions; similar wording is not silently merged.`,buttons:await primarySearchButtons(u,false)};
  }
  if(action==='jobs'||action==='history'){
-   const rows=await rowsForContext(ctx,'history',60); if(!rows.length)return {text:`${eq}${period}\nNo maintenance-history records found in the current filters.`};
+   const rows=await rowsForContext(ctx,'history',60,u); if(!rows.length)return {text:`${eq}${period}\nNo maintenance-history records found in the current filters.`};
    return {text:`${eq} — ${action==='jobs'?'Related Jobs':'Equipment History'}${period}\n\n${formatBundledResults(rows.slice(0,20))}`,buttons:await primarySearchButtons(u,rows.length>20)};
  }
  if(action==='cbm'){
-   const all=await rowsForContext(ctx,null,500);const rows=all.filter(r=>/vibration|cbm|condition|bearing temp|temperature/i.test(String(r.record_text)+' '+JSON.stringify(r.source_payload||{})));
+   const all=await rowsForContext(ctx,null,500,u);const rows=all.filter(r=>/vibration|cbm|condition|bearing temp|temperature/i.test(String(r.record_text)+' '+JSON.stringify(r.source_payload||{})));
    return {text:rows.length?`${eq} — Vibration / CBM${period}\n\n${formatBundledResults(rows.slice(0,20))}`:`${eq}${period}\nNo vibration/CBM records were found in the current filtered master data.`,buttons:await primarySearchButtons(u,rows.length>20)};
  }
  if(action==='pm'){
-   const all=await rowsForContext(ctx,null,500);const rows=all.filter(r=>/preventive|\bpm\b|scheduled|schedule|greasing|lubrication/i.test(String(r.record_text)+' '+JSON.stringify(r.source_payload||{})));
+   const all=await rowsForContext(ctx,null,500,u);const rows=all.filter(r=>/preventive|\bpm\b|scheduled|schedule|greasing|lubrication/i.test(String(r.record_text)+' '+JSON.stringify(r.source_payload||{})));
    return {text:rows.length?`${eq} — Scheduled / Preventive Maintenance${period}\n\n${formatBundledResults(rows.slice(0,20))}`:`${eq}${period}\nNo stored PM/scheduled-maintenance records were found. A maintenance schedule will not be invented.`,buttons:await primarySearchButtons(u,rows.length>20)};
  }
  if(action==='delay'){
-   const all=await rowsForContext(ctx,null,500);const rows=all.filter(r=>/delay|downtime|breakdown|stoppage/i.test(String(r.record_text)+' '+JSON.stringify(r.source_payload||{})));
+   const all=await rowsForContext(ctx,null,500,u);const rows=all.filter(r=>/delay|downtime|breakdown|stoppage/i.test(String(r.record_text)+' '+JSON.stringify(r.source_payload||{})));
    return {text:rows.length?`${eq} — Breakdown / Delay Evidence${period}\n\n${formatBundledResults(rows.slice(0,20))}`:`${eq}${period}\nNo linked breakdown/delay records were found in the current filtered data.`,buttons:await primarySearchButtons(u,rows.length>20)};
  }
  if(action==='mtbf'){
-   const rows=await rowsForContext(ctx,'defect',1000);const valid=rows.filter(r=>/^\d{4}-\d{2}-\d{2}$/.test(String(r.event_date||'')));
+   const rows=await rowsForContext(ctx,'defect',1000,u);const valid=rows.filter(r=>/^\d{4}-\d{2}-\d{2}$/.test(String(r.event_date||'')));
    return {text:`${eq} — MTBF / MTTR${period}\n\nStored defect records: ${rows.length}\nRecords with valid event date: ${valid.length}\n\nMTBF/MTTR is not calculated unless reliable failure-start and restoration/completion timestamps are available. No value has been guessed.`};
  }
  if(action==='performance'){
-   const all=await rowsForContext(ctx,null,1000),def=all.filter(r=>r.record_type==='defect').length,hist=all.filter(r=>r.record_type==='history').length;
+   const all=await rowsForContext(ctx,null,1000,u),def=all.filter(r=>r.record_type==='defect').length,hist=all.filter(r=>r.record_type==='history').length;
    return {text:`${eq} — Equipment Performance${period}\n\nDefect records: ${def}\nMaintenance-history records: ${hist}\nTotal linked records: ${all.length}\n\nAvailability, MTBF, MTTR and downtime KPIs require validated operating/failure/restoration time data; missing values are not inferred.`};
  }
  if(action==='pdf')return {text:`${eq}${period}\nPDF Analysis Report is authorised, but the final report-generation engine is not connected to this action yet. No placeholder PDF was generated.`};
@@ -1667,12 +1696,13 @@ async function universalSearch(q,u){
  let ctx=await getSearchContext(u); const range=dateRangeFromText(original);
  if(range && ctx) {await setSearchFilters(u,{dateFrom:range.from,dateTo:range.to,offset:0});ctx=await getSearchContext(u);}
  if(/^(select date( range)?|date range|search_date|SEARCH_DATE)$/i.test(original))return {dateMenu:true,text:'Select a time frame'};
+ if(/^CUSTOM_DATE_RANGE$/i.test(original))return {text:'Enter From date and To date.\nExample: 01/05/2026 to 31/05/2026\n\nCurrent equipment/module will be retained.'};
  if(/^(analysis|analysis & maintenance|search_analysis)$/i.test(original) && ctx?.equipment_name){const perms=await searchPermissions(u);if(!perms.analysis)return {text:'Analysis is not available for your access level.'};return {analysisMenu:true,text:`${ctx.equipment_name} — Analysis & Maintenance`};}
  if(/^search by equipment$/i.test(original)){const a=ctx?.area||'';const rows=(await pool.query(`SELECT DISTINCT equipment AS name FROM lmmm_master_records WHERE equipment IS NOT NULL AND ($1::text='' OR LOWER(COALESCE(area,'')) LIKE LOWER('%'||$1||'%')) ORDER BY name LIMIT 10`,[a])).rows;return {text:rows.length?`Select/search equipment:\n${rows.map((x,i)=>`${i+1}. ${x.name}`).join('\n')}\n\nYou can also type the equipment name.`:'Type the equipment name to search.'};}
  if((wantsMore(original)||/^SEARCH_MORE$/i.test(original)) && ctx?.last_query){
    const next=(Number(ctx.page_offset)||0)+20;
    const dr=ctx.date_from?{from:String(ctx.date_from).slice(0,10),to:String(ctx.date_to||ctx.date_from).slice(0,10)}:null;
-   const rows=await searchBundledMaster(ctx.last_query,20,dr,next);
+   const moreScope=await effectiveSearchScope(u); let rows=await searchBundledMaster(ctx.last_query,100,dr,next); rows=rows.filter(r=>areaMatchesScope(r.area,moreScope)).slice(0,20);
    if(rows.length){await setSearchFilters(u,{offset:next}); return {text:`${ctx.equipment_name||'LMMM'}${dr?` | ${dr.from} to ${dr.to}`:''}\nShowing ${next+1}-${next+rows.length}\n\n${formatBundledResults(rows)}`,buttons:await primarySearchButtons(u,rows.length===20)};}
    return {text:'No more matching records in the current filters.',buttons:await primarySearchButtons(u,false)};
  }
@@ -1690,6 +1720,8 @@ async function universalSearch(q,u){
    return {knowledgeQuery:contextual,referenceIntent:intent};
  }
  let candidates=entity?await equipmentCandidates(entity,ctx):[];
+ const searchScope=await effectiveSearchScope(u);
+ candidates=candidates.filter(x=>areaMatchesScope(x.area,searchScope));
  // Exact canonical equipment/known alias always outranks fuzzy contains matches.
  const canonicalEntity=naturalSearchAliases(entity||'').trim().toLowerCase();
  const exact=candidates.filter(x=>String(x.name||'').trim().toLowerCase()===canonicalEntity);
@@ -1698,7 +1730,7 @@ async function universalSearch(q,u){
  // never every part whose description happens to contain the word furnace.
  if(/^furnaces?$/i.test(String(entity||'').trim())){
    const fam=(await pool.query(`SELECT DISTINCT equipment AS name,area FROM lmmm_master_records WHERE LOWER(equipment) IN ('wbf-1','wbf-2') ORDER BY name`)).rows;
-   if(fam.length){candidates=fam;}
+   if(fam.length){candidates=fam.filter(x=>areaMatchesScope(x.area,searchScope));}
  }
  if(candidates.length>1 && (GENERIC_ASSET_WORDS.test(entity)||/^furnaces?$/i.test(String(entity||'').trim())||candidates.every(x=>String(x.name).toLowerCase()!==String(entity).toLowerCase()))){
    await pool.query(`INSERT INTO pending_search_choices(employee_number,original_query,choices,created_at) VALUES($1,$2,$3,now()) ON CONFLICT(employee_number) DO UPDATE SET original_query=EXCLUDED.original_query,choices=EXCLUDED.choices,created_at=now()`,[u.employee_number,original,JSON.stringify(candidates)]);
@@ -1711,7 +1743,7 @@ async function universalSearch(q,u){
  if(['production','delay','analysis','maintenance','condition'].includes(intent) && !dr && /\b(total|cumulative|mtbf|mtbr|mttr|performance|trend|schedule|scheduled|production|delay|delays)\b/i.test(original)) return {text:'Select a time frame first.\nToday | Last 7 days | Last 30 days | This month | Custom date range'};
  const limit=wantsOverall(original)?30:20;
  const liveEvents=(await eventSearch(original,u,equipment)).filter(x=>usefulLiveEvent(x,original));
- const masterRows=await searchBundledMaster(original,limit,dr,0); const perms=await searchPermissions(u);
+ let masterRows=await searchBundledMaster(original,Math.max(limit,200),dr,0); masterRows=masterRows.filter(r=>areaMatchesScope(r.area,searchScope)).slice(0,limit); const perms=await searchPermissions(u);
  if(masterRows.length){if(!equipment){const names=[...new Set(masterRows.map(r=>r.equipment).filter(Boolean))];if(names.length===1){await setSearchContext(u,names[0],masterRows[0]?.area||ctx?.area||null);await setSearchFilters(u,{module:intent,offset:0,lastQuery:original});}} let text=`${equipment||masterRows[0]?.equipment||'LMMM'}${dr?` | ${dr.from} to ${dr.to}`:''}\nShowing latest ${masterRows.length}${wantsOverall(original)?' (overall view max 30)':''}\n\n${formatBundledResults(masterRows)}`;if(liveEvents.length)text+=`\n\nRecent live entries\n${formatLiveEvents(liveEvents)}`;return {text,buttons:await primarySearchButtons(u,masterRows.length===limit)};}
  if(liveEvents.length)return {text:(equipment?`${equipment}\n\n`:'')+formatLiveEvents(liveEvents),buttons:await primarySearchButtons(u,false)};
  return {knowledgeQuery:equipment && !original.toLowerCase().includes(equipment.toLowerCase())?`${equipment} ${original}`:original};
