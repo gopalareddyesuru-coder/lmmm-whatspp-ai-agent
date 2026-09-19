@@ -489,6 +489,34 @@ async function sendText(to, body) {
   return d;
 }
 
+// V7.7.4 WhatsApp-safe search rendering: long result text and interactive controls are sent separately.
+// Interactive body text is limited to 1024 chars by WhatsApp, while normal text can safely carry larger result blocks.
+async function sendLongText(to, body, maxLen=3500){
+  const text=String(body||'').trim();
+  if(!text)return;
+  let rest=text;
+  while(rest.length>maxLen){
+    let cut=rest.lastIndexOf('\n\n',maxLen);
+    if(cut<Math.floor(maxLen*0.55))cut=rest.lastIndexOf('\n',maxLen);
+    if(cut<Math.floor(maxLen*0.55))cut=rest.lastIndexOf(' ',maxLen);
+    if(cut<1)cut=maxLen;
+    await sendText(to,rest.slice(0,cut).trim());
+    rest=rest.slice(cut).trim();
+  }
+  if(rest)await sendText(to,rest);
+}
+async function sendSearchTextAndButtons(to,text,buttons){
+  await sendLongText(to,text);
+  if(buttons?.length){
+    try{ await sendButtons(to,'Search options',buttons); }
+    catch(e){
+      // Never turn a successful database search into a false “No matching record” just because UI controls failed.
+      console.error('[SEARCH OPTIONS SEND]',e);
+      await sendText(to,'Options: '+buttons.map(b=>b.title).join(' | ')).catch(()=>{});
+    }
+  }
+}
+
 async function uploadWhatsAppMedia(buf,mime,filename){
   const fd=new FormData();
   fd.append('messaging_product','whatsapp'); fd.append('type',mime||'application/octet-stream');
@@ -1519,7 +1547,7 @@ async function universalSearch(q,u){
  if(areaDataQuery(original)) return await areaSearchMenu(original,u);
  let ctx=await getSearchContext(u); const range=dateRangeFromText(original);
  if(range && ctx) {await setSearchFilters(u,{dateFrom:range.from,dateTo:range.to,offset:0});ctx=await getSearchContext(u);}
- if(/^(select date( range)?|date range|search_date)$/i.test(original))return {dateMenu:true,text:'Select a time frame'};
+ if(/^(select date( range)?|date range|search_date|SEARCH_DATE)$/i.test(original))return {dateMenu:true,text:'Select a time frame'};
  if(/^(analysis|analysis & maintenance|search_analysis)$/i.test(original) && ctx?.equipment_name)return {analysisMenu:true,text:`${ctx.equipment_name} — Analysis & Maintenance`};
  if(/^search by equipment$/i.test(original)){const a=ctx?.area||'';const rows=(await pool.query(`SELECT DISTINCT equipment AS name FROM lmmm_master_records WHERE equipment IS NOT NULL AND ($1::text='' OR LOWER(COALESCE(area,'')) LIKE LOWER('%'||$1||'%')) ORDER BY name LIMIT 10`,[a])).rows;return {text:rows.length?`Select/search equipment:\n${rows.map((x,i)=>`${i+1}. ${x.name}`).join('\n')}\n\nYou can also type the equipment name.`:'Type the equipment name to search.'};}
  if((wantsMore(original)||/^SEARCH_MORE$/i.test(original)) && ctx?.last_query){
@@ -2523,7 +2551,11 @@ async function processMessage(from, text, rawMessage = null) {
         {id:'AN_MTBF',title:'MTBF / MTTR'},{id:'AN_PERF',title:'Equipment Performance'},{id:'AN_PM',title:'Scheduled Maintenance'},
         {id:'AN_CBM',title:'Vibration / CBM'},{id:'AN_DELAY',title:'Delay Impact'}
       ];if(perms.pdf)rows.push({id:'AN_PDF',title:'PDF Report'});if(perms.rcm)rows.push({id:'AN_RCM',title:'RCM Analysis'});await sendList(from,us.text,'Select',rows.slice(0,10),'Options');return;}
-      if(us?.text){if(us.buttons?.length)await sendButtons(from,us.text,us.buttons);else await sendText(from,us.text);return;}
+      if(us?.text){
+        if(us.buttons?.length) await sendSearchTextAndButtons(from,us.text,us.buttons);
+        else await sendLongText(from,us.text);
+        return;
+      }
       const kq=us?.knowledgeQuery||clean;
       const knowledgeRows=await retrieveReferenceKnowledge(kq,u);
       if(knowledgeRows.length){
