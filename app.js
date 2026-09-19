@@ -1387,9 +1387,15 @@ async function indexFullReferenceDocument(mediaRowId,knowledgeId,buf,mime,u,from
 
 function naturalSearchAliases(q=''){
   let x=String(q).trim();
-  // LMMM user language aliases; only deterministic plant terminology, never identifier rewriting in stored data.
+  // Deterministic user-language aliases only. Never rewrite stored identifiers.
   x=x.replace(/\bfurnace\s*[- ]?1\b/ig,'WBF-1').replace(/\bfurnace\s*[- ]?2\b/ig,'WBF-2');
   x=x.replace(/\bwalking\s+beam\s+furnace\s*[- ]?1\b/ig,'WBF-1').replace(/\bwalking\s+beam\s+furnace\s*[- ]?2\b/ig,'WBF-2');
+  // Conservative maintenance-intent typo normalization. This changes only search intent words, never asset/part/drawing IDs.
+  x=x.replace(/\b(?:dectives?|defectives?|difects?|deffects?)\b/ig,'defects');
+  x=x.replace(/\b(?:viberation|vibrtion|vibratoin)s?\b/ig,'vibration');
+  x=x.replace(/\b(?:maintainance|maintanance)\b/ig,'maintenance');
+  x=x.replace(/\b(?:histroy|histry)\b/ig,'history');
+  x=x.replace(/\b(?:produciton|prodution)\b/ig,'production');
   return x;
 }
 async function syncBundledLmmmKnowledge(){
@@ -1503,11 +1509,30 @@ async function effectiveSearchScope(u){
  for(const r of (a.responsibilities||[])){const ss=cleanScopeValue(r.scope_section),sa=cleanScopeValue(r.scope_area);if(ss)sections.add(ss);if(sa)areas.add(sa);}
  return {plantWide,department_code:'35',sections:[...sections],areas:[...areas],authority:a,roles};
 }
-function areaMatchesScope(area,scope){
+function scopeKey(v=''){return String(v||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();}
+function scopeTokens(v=''){return scopeKey(v).split(/\s+/).filter(Boolean);}
+// Department-35 hierarchy bridge. These are scope relationships, not renames of canonical equipment.
+// Keep this deliberately small and explicit; unknown relationships are never guessed.
+const DEPT35_SCOPE_CHILDREN={
+  'bdm':['bdm','wbf','wbf 1','wbf 2','walking beam furnace','furnace 1','furnace 2','ecs','evaporative cooling system'],
+  'bar mill':['bar mill'],
+  'finishing':['finishing']
+};
+function scopeAreaMatches(scopeArea,recordArea='',equipment=''){
+ const s=scopeKey(scopeArea), a=scopeKey(recordArea), e=scopeKey(equipment);
+ if(!s)return false;
+ if(s==='all areas'||s==='all')return true;
+ if(a && (a===s||a.includes(s)||s.includes(a)))return true;
+ const children=DEPT35_SCOPE_CHILDREN[s]||[];
+ if(children.some(c=>a===c||a.includes(c)||e===c||e.includes(c)))return true;
+ // Equipment master sometimes stores WBF as equipment while the user's registered parent area is BDM.
+ if(s==='bdm' && (/^wbf [12]$/.test(e)||/walking beam furnace/.test(e)))return true;
+ return false;
+}
+function areaMatchesScope(area,scope,equipment=''){
  if(!scope||scope.plantWide)return true;
- if(!scope.areas?.length)return true; // no mapped area: retain registered-section access without guessing an area mapping
- const a=String(area||'').toLowerCase(); if(!a)return false;
- return scope.areas.some(x=>{const y=String(x).toLowerCase();return a===y||a.includes(y)||y.includes(a);});
+ if(!scope.areas?.length)return true;
+ return scope.areas.some(x=>scopeAreaMatches(x,area,equipment));
 }
 async function searchPermissions(u){
  const a=await effectiveAuthority(u.employee_number);
@@ -1700,7 +1725,8 @@ async function analysisAction(q,u){
  return null;
 }
 async function universalSearch(q,u){
- const original=String(q||'').trim(); if(!original)return null;
+ const rawOriginal=String(q||'').trim(); if(!rawOriginal)return null;
+ const original=naturalSearchAliases(rawOriginal);
  if(areaDataQuery(original)) return await areaSearchMenu(original,u);
  let ctx=await getSearchContext(u); const range=dateRangeFromText(original);
  if(/^(select date( range)?|date range|search_date|SEARCH_DATE)$/i.test(original))return {dateMenu:true,text:'Select a time frame'};
@@ -1716,7 +1742,7 @@ async function universalSearch(q,u){
  if((wantsMore(original)||/^SEARCH_MORE$/i.test(original)) && ctx?.last_query){
    const next=(Number(ctx.page_offset)||0)+20;
    const dr=ctx.date_from?{from:String(ctx.date_from).slice(0,10),to:String(ctx.date_to||ctx.date_from).slice(0,10)}:null;
-   const moreScope=await effectiveSearchScope(u); const allMore=await searchBundledMaster(ctx.last_query,100,dr,next); let rows=allMore.filter(r=>areaMatchesScope(r.area,moreScope)).slice(0,20);
+   const moreScope=await effectiveSearchScope(u); const allMore=await searchBundledMaster(ctx.last_query,100,dr,next); let rows=allMore.filter(r=>areaMatchesScope(r.area,moreScope,r.equipment)).slice(0,20);
    if(allMore.length && !rows.length && moreScope && !moreScope.plantWide)return {text:'Additional matching records are outside your authorised work scope.',status:'OUT_OF_SCOPE',buttons:await primarySearchButtons(u,false)};
    if(rows.length){await setSearchFilters(u,{offset:next}); return {text:`${ctx.equipment_name||'LMMM'}${dr?` | ${dr.from} to ${dr.to}`:''}\nShowing ${next+1}-${next+rows.length}\n\n${formatBundledResults(rows)}`,buttons:await primarySearchButtons(u,rows.length===20),status:'OK'};}
    return {text:'No more matching records in the current filters.',buttons:await primarySearchButtons(u,false)};
@@ -1741,8 +1767,9 @@ async function universalSearch(q,u){
  let candidates=entity?await equipmentCandidates(entity,ctx):[];
  const searchScope=await effectiveSearchScope(u);
  const unscopedCandidates=[...candidates];
- candidates=candidates.filter(x=>areaMatchesScope(x.area,searchScope));
+ candidates=candidates.filter(x=>areaMatchesScope(x.area,searchScope,x.name));
  if(unscopedCandidates.length && !candidates.length && searchScope && !searchScope.plantWide){
+   console.log('[SCOPE] OUT_OF_SCOPE candidate',{employee:u.employee_number,areas:searchScope?.areas,entity,candidates:unscopedCandidates.map(x=>({name:x.name,area:x.area}))});
    return {text:'This equipment/area is outside your authorised work scope.',status:'OUT_OF_SCOPE'};
  }
  // Exact canonical equipment/known alias always outranks fuzzy contains matches.
@@ -1753,7 +1780,7 @@ async function universalSearch(q,u){
  // never every part whose description happens to contain the word furnace.
  if(/^furnaces?$/i.test(String(entity||'').trim())){
    const fam=(await pool.query(`SELECT DISTINCT equipment AS name,area FROM lmmm_master_records WHERE LOWER(equipment) IN ('wbf-1','wbf-2') ORDER BY name`)).rows;
-   if(fam.length){candidates=fam.filter(x=>areaMatchesScope(x.area,searchScope));}
+   if(fam.length){candidates=fam.filter(x=>areaMatchesScope(x.area,searchScope,x.name));}
  }
  if(candidates.length>1 && (GENERIC_ASSET_WORDS.test(entity)||/^furnaces?$/i.test(String(entity||'').trim())||candidates.every(x=>String(x.name).toLowerCase()!==String(entity).toLowerCase()))){
    await pool.query(`INSERT INTO pending_search_choices(employee_number,original_query,choices,created_at) VALUES($1,$2,$3,now()) ON CONFLICT(employee_number) DO UPDATE SET original_query=EXCLUDED.original_query,choices=EXCLUDED.choices,created_at=now()`,[u.employee_number,original,JSON.stringify(candidates)]);
@@ -1767,8 +1794,9 @@ async function universalSearch(q,u){
  const limit=wantsOverall(original)?30:20;
  const liveEvents=(await eventSearch(original,u,equipment)).filter(x=>usefulLiveEvent(x,original));
  const unscopedMasterRows=await searchBundledMaster(original,Math.max(limit,200),dr,0);
- let masterRows=unscopedMasterRows.filter(r=>areaMatchesScope(r.area,searchScope)).slice(0,limit); const perms=await searchPermissions(u);
+ let masterRows=unscopedMasterRows.filter(r=>areaMatchesScope(r.area,searchScope,r.equipment)).slice(0,limit); const perms=await searchPermissions(u);
  if(unscopedMasterRows.length && !masterRows.length && searchScope && !searchScope.plantWide){
+   console.log('[SCOPE] OUT_OF_SCOPE records',{employee:u.employee_number,areas:searchScope?.areas,equipment,query:original,sample:unscopedMasterRows.slice(0,5).map(r=>({equipment:r.equipment,area:r.area}))});
    return {text:'Matching LMMM records exist, but they are outside your authorised work scope.',status:'OUT_OF_SCOPE'};
  }
  if(masterRows.length){if(!equipment){const names=[...new Set(masterRows.map(r=>r.equipment).filter(Boolean))];if(names.length===1){await setSearchContext(u,names[0],masterRows[0]?.area||ctx?.area||null);await setSearchFilters(u,{module:intent,offset:0,lastQuery:original});}} let text=`${equipment||masterRows[0]?.equipment||'LMMM'}${dr?` | ${dr.from} to ${dr.to}`:''}\nShowing latest ${masterRows.length}${wantsOverall(original)?' (overall view max 30)':''}\n\n${formatBundledResults(masterRows)}`;if(liveEvents.length)text+=`\n\nRecent live entries\n${formatLiveEvents(liveEvents)}`;return {text,buttons:await primarySearchButtons(u,masterRows.length===limit),status:'OK'};}
