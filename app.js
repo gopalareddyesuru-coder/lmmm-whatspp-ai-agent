@@ -418,6 +418,20 @@ async function initDB() {
     heartbeat_at TIMESTAMPTZ, completed_at TIMESTAMPTZ
   )`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_bg_jobs_status ON background_jobs(status,created_at)`);
+  // V7.4 Universal Search: per-user context, ambiguity choices and safe learned aliases.
+  await pool.query(`CREATE TABLE IF NOT EXISTS search_context(
+    employee_number TEXT PRIMARY KEY, department_code TEXT NOT NULL DEFAULT '35',
+    area TEXT, equipment_name TEXT, updated_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS search_aliases(
+    id BIGSERIAL PRIMARY KEY, department_code TEXT NOT NULL DEFAULT '35', alias_text TEXT NOT NULL,
+    canonical_text TEXT NOT NULL, equipment_name TEXT, confidence NUMERIC NOT NULL DEFAULT 0.90,
+    confirmed BOOLEAN NOT NULL DEFAULT FALSE, usage_count INTEGER NOT NULL DEFAULT 0,
+    learned_from TEXT, created_by TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_used_at TIMESTAMPTZ, UNIQUE(department_code,alias_text,canonical_text))`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS pending_search_choices(
+    employee_number TEXT PRIMARY KEY, original_query TEXT NOT NULL, choices JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_search_alias ON search_aliases(department_code,LOWER(alias_text))`);
   await pool.query(`DELETE FROM file_upload_sources WHERE expires_at IS NOT NULL AND expires_at < now()`);
   // A deploy/restart can interrupt an in-process worker. Requeue stale running jobs.
   await pool.query(`UPDATE background_jobs SET status='queued', started_at=NULL,
@@ -1313,6 +1327,67 @@ async function indexFullReferenceDocument(mediaRowId,knowledgeId,buf,mime,u,from
 function queryTokens(t=''){
  return [...new Set(String(t).toLowerCase().replace(/[^a-z0-9_\-\/\.\s]/g,' ').split(/\s+/).filter(x=>x.length>=2 && !['the','and','for','with','what','tell','about','show','give','please','data','details','lo','ki','ga','ani'].includes(x)))].slice(0,12);
 }
+// V7.4 user-first universal maintenance search. Never guess a specific asset when several match.
+const GENERIC_ASSET_WORDS=/\b(pump|pumps|gear\s*box|gearbox|gearboxes|coupling|couplings|motor|motors|bearing|bearings|valve|valves|pipe|pipes|pipeline|stand|stands|roll|rolls|guide|guides|cylinder|cylinders|fan|fans|blower|blowers|recup|recuperator|compressor|compressors)\b/i;
+function searchIntent(q=''){
+ const t=String(q).toLowerCase();
+ if(/\b(defect|defects|fault|faults|problem|problems)\b/.test(t))return 'defect';
+ if(/\b(job|jobs|work\s*order|maintenance\s*job)\b/.test(t))return 'job_action';
+ if(/\b(inspection|condition|vibration|cbm)\b/.test(t))return 'condition';
+ if(/\b(shutdown)\b/.test(t))return 'shutdown';
+ if(/\b(history|previous|old|past)\b/.test(t))return 'history';
+ if(/\b(spare|spares|inventory|stock)\b/.test(t))return 'spares';
+ if(/\b(drawing|drawings|drg)\b/.test(t))return 'drawing';
+ if(/\b(pm|preventive|schedule|scheduled|rcm|reliability)\b/.test(t))return 'maintenance';
+ return 'general';
+}
+function stripIntentWords(q=''){
+ return String(q).replace(/\b(defects?|faults?|problems?|jobs?|work\s*orders?|history|previous|old|past|inspection|condition|monitoring|vibration|cbm|shutdown|spares?|inventory|stock|drawings?|drg|manuals?|details?|about|tell|show|find|search|cheppu|gurinchi|pm|preventive|scheduled?|maintenance|rcm|reliability)\b/ig,' ').replace(/\s+/g,' ').trim();
+}
+async function getSearchContext(u){return (await pool.query(`SELECT * FROM search_context WHERE employee_number=$1`,[u.employee_number])).rows[0]||null;}
+async function setSearchContext(u,equipment,area=null){await pool.query(`INSERT INTO search_context(employee_number,department_code,area,equipment_name,updated_at) VALUES($1,'35',$2,$3,now()) ON CONFLICT(employee_number) DO UPDATE SET area=COALESCE(EXCLUDED.area,search_context.area),equipment_name=EXCLUDED.equipment_name,updated_at=now()`,[u.employee_number,area,equipment]);}
+async function resolveAlias(term){if(!term)return null;const r=await pool.query(`UPDATE search_aliases SET usage_count=usage_count+1,last_used_at=now() WHERE department_code='35' AND confirmed=TRUE AND LOWER(alias_text)=LOWER($1) RETURNING canonical_text,equipment_name`,[term]);return r.rows[0]||null;}
+async function equipmentCandidates(term,ctx){
+ const vals=[], clauses=[]; let n=1;
+ const add=(x)=>{vals.push(`%${x}%`);return `$${n++}`};
+ if(term){const p=add(term);clauses.push(`LOWER(name) LIKE LOWER(${p})`);}
+ if(!clauses.length)return [];
+ const contextArea=ctx?.area?String(ctx.area):null;
+ vals.push(contextArea); const areaP=`$${n++}`;
+ const sql=`WITH eq AS (\n   SELECT DISTINCT equipment_name AS name, area FROM section_event_log WHERE deleted_at IS NULL AND equipment_name IS NOT NULL\n   UNION SELECT DISTINCT equipment_name AS name, NULL::text AS area FROM technical_document_chunks WHERE equipment_name IS NOT NULL\n ) SELECT name,area FROM eq WHERE (${clauses.join(' OR ')})\n ORDER BY CASE WHEN ${areaP} IS NOT NULL AND LOWER(COALESCE(area,''))=LOWER(${areaP}) THEN 0 ELSE 1 END, name LIMIT 12`;
+ return (await pool.query(sql,vals)).rows;
+}
+async function eventSearch(q,u,equipment=null){
+ const intent=searchIntent(q), terms=queryTokens(stripIntentWords(q)); const vals=[]; let where=`deleted_at IS NULL`;
+ if(equipment){vals.push(equipment);where+=` AND (LOWER(COALESCE(equipment_name,''))=LOWER($${vals.length}) OR LOWER(event_text) LIKE LOWER('%'||$${vals.length}||'%'))`;}
+ for(const t of terms.slice(0,5)){vals.push(t);where+=` AND LOWER(event_text||' '||COALESCE(equipment_name,'')) LIKE LOWER('%'||$${vals.length}||'%')`;}
+ if(intent==='defect'||intent==='job_action'){vals.push(intent);where+=` AND event_type=$${vals.length}`;}
+ const r=await pool.query(`SELECT id,event_type,equipment_name,event_date,event_shift,event_text FROM section_event_log WHERE ${where} ORDER BY event_date DESC,entered_at DESC LIMIT 12`,vals);
+ return r.rows;
+}
+async function universalSearch(q,u){
+ const original=String(q||'').trim(); if(!original)return null;
+ // Numeric choice is accepted only while an ambiguity prompt is pending.
+ if(/^\d+$/.test(original)){
+   const pr=(await pool.query(`SELECT * FROM pending_search_choices WHERE employee_number=$1 AND created_at>now()-interval '30 minutes'`,[u.employee_number])).rows[0];
+   if(pr){const choices=typeof pr.choices==='string'?JSON.parse(pr.choices):pr.choices;const pick=choices[Number(original)-1];if(pick){await setSearchContext(u,pick.name,pick.area||null);await pool.query(`DELETE FROM pending_search_choices WHERE employee_number=$1`,[u.employee_number]);const rows=await eventSearch(pr.original_query,u,pick.name);if(rows.length)return {text:`${pick.name}\n\n`+rows.map(x=>`${x.event_date?.toISOString?.().slice(0,10)||x.event_date} | ${x.event_type}${x.event_shift?` | ${x.event_shift}`:''}\n${x.event_text}`).join('\n\n')};return {rerun:pr.original_query,equipment:pick.name};}}
+ }
+ const ctx=await getSearchContext(u); let entity=stripIntentWords(original); const alias=await resolveAlias(entity); if(alias)entity=alias.equipment_name||alias.canonical_text;
+ // If the user supplies only an intent after selecting an asset, retain that asset context.
+ if(!entity && ctx?.equipment_name)entity=ctx.equipment_name;
+ const candidates=entity?await equipmentCandidates(entity,ctx):[];
+ if(candidates.length>1 && (GENERIC_ASSET_WORDS.test(entity)||candidates.every(x=>String(x.name).toLowerCase()!==String(entity).toLowerCase()))){
+   await pool.query(`INSERT INTO pending_search_choices(employee_number,original_query,choices,created_at) VALUES($1,$2,$3,now()) ON CONFLICT(employee_number) DO UPDATE SET original_query=EXCLUDED.original_query,choices=EXCLUDED.choices,created_at=now()`,[u.employee_number,original,JSON.stringify(candidates)]);
+   return {text:`Multiple matches found. Which one?\n\n`+candidates.map((x,i)=>`${i+1}. ${x.name}${x.area?` — ${x.area}`:''}`).join('\n')};
+ }
+ const equipment=candidates.length===1?candidates[0].name:(ctx?.equipment_name && !entity?ctx.equipment_name:null);
+ if(equipment)await setSearchContext(u,equipment,candidates[0]?.area||ctx?.area||null);
+ const events=await eventSearch(original,u,equipment);
+ if(events.length){return {text:(equipment?`${equipment}\n\n`:'')+events.map(x=>`${x.event_date?.toISOString?.().slice(0,10)||x.event_date} | ${x.event_type}${x.event_shift?` | ${x.event_shift}`:''}\n${x.event_text}`).join('\n\n')};}
+ // Let reference/manual search answer next, but enrich a follow-up with selected equipment.
+ return {knowledgeQuery:equipment && !original.toLowerCase().includes(equipment.toLowerCase())?`${equipment} ${original}`:original};
+}
+
 async function retrieveReferenceKnowledge(question,u){
  const ctx=await currentShiftContext(u);
  let terms=queryTokens(question);
@@ -2140,6 +2215,11 @@ async function processMessage(from, text, rawMessage = null) {
       }
     }
 
+    // Resolve an active Universal Search ambiguity before treating a short numeric reply as anything else.
+    if(/^\d+$/.test(clean)){
+      try{const us=await universalSearch(clean,u);if(us?.text){await sendText(from,us.text);return;}}catch(e){console.error('[SEARCH CHOICE]',e);}
+    }
+
     // Natural inspection / defect / job-action entry for every section.
     const et=classifySectionEvent(clean);
     if(et && !looksLikeRetrievalIntent(clean) && !/^PROD|^DELAY/i.test(clean)){
@@ -2244,15 +2324,17 @@ async function processMessage(from, text, rawMessage = null) {
       const rows=(await pool.query(`SELECT contact_name,max_number FROM emergency_contacts WHERE LOWER(contact_name) LIKE LOWER($1) ORDER BY contact_name LIMIT 10`,[`%${cm[1]}%`])).rows;
       await sendText(from,rows.length?rows.map(x=>`${x.contact_name}: ${x.max_number}`).join('\n'):T('notfound',te));return;
     }
-    // V5.7 natural-language retrieval from fully indexed manuals/SOP/SMP/reference documents.
-    // This is deliberately the final fallback before Not found, so existing commands keep priority.
+    // V7.4 Universal Search: structured history first, ambiguity-safe equipment resolution, then manuals/reference knowledge.
     try{
-      const knowledgeRows=await retrieveReferenceKnowledge(clean,u);
+      const us=await universalSearch(clean,u);
+      if(us?.text){await sendText(from,us.text);return;}
+      const kq=us?.knowledgeQuery||clean;
+      const knowledgeRows=await retrieveReferenceKnowledge(kq,u);
       if(knowledgeRows.length){
-        const answer=await geminiAnswerFromKnowledge(clean,knowledgeRows,u);
+        const answer=await geminiAnswerFromKnowledge(kq,knowledgeRows,u);
         if(answer){await sendText(from,answer);return;}
       }
-    }catch(e){console.error('[KNOWLEDGE RETRIEVAL]',e);}
+    }catch(e){console.error('[UNIVERSAL SEARCH]',e);}
     await sendText(from,ml(languageOf(clean),'No matching stored LMMM record or indexed reference knowledge was found. Try an equipment name, item number, maintenance term, or another date range.','సరిపోలే LMMM రికార్డు లేదా ఇండెక్స్ చేసిన రిఫరెన్స్ సమాచారం దొరకలేదు. Equipment పేరు, item number, maintenance term లేదా మరో date range తో ప్రయత్నించండి.','मिलता हुआ LMMM रिकॉर्ड या indexed reference knowledge नहीं मिला। Equipment name, item number, maintenance term या दूसरी date range से खोजें।'));return;
   }
 
