@@ -1122,6 +1122,15 @@ async function effectiveAuthority(employeeNumber) {
   }
 
   const defaultRows = await defaultPermissionRows(employeeNumber);
+  // V7.7.33: manual access override is authoritative for BOTH runtime permissions and admin summary.
+  // Registration/hierarchy remains the baseline only when no override exists.
+  if (hasAccessOverride) {
+    const os = new Set(overridePermissions);
+    if (os.has('FULL_ACCESS')) effectiveAccess = 'FULL';
+    else if (os.has('EDIT') || os.has('ENTRY')) effectiveAccess = 'ENTRY_VIEW';
+    else if (os.has('VIEW')) effectiveAccess = 'VIEW';
+    else effectiveAccess = 'NONE';
+  }
   // Backfill old approved users on first access without changing explicit grants.
   if (!defaultRows.length) {
     await syncDefaultAccess(employeeNumber,'SYSTEM','Backfilled from approved registration + current hierarchy');
@@ -2648,7 +2657,7 @@ async function sendPermissionAdmin(to,emp,page=1){
  rows.push({id:`ACCESS_APPLY:${emp}`,title:'✓ Apply Selection',description:`${staged.size} manual selection(s)`});
  await sendList(to,`Access • ${emp} • ${page===2?'More':'Main'}
 ↳ Default/Inherited • ✓ Manual override selection • ○ Available
-View Only / View + Edit / Full Access applies immediately. Optional Reports/PDF/Analysis/RCM can be selected together, then tap Apply Selection.`,`Select`,rows,'Access');
+View Only / View + Edit / Full Access applies immediately and replaces the previous base profile. Add Reports/PDF/Analysis only when required, then Apply Selection.`,`Select`,rows,'Access');
 }
 async function togglePermissionAdmin(from,emp,permission){
  if(!await requireSuperAdmin(from))return;if(!ACCESS_PERMISSION_OPTIONS.some(x=>x[0]===permission)){await sendText(from,'Invalid permission.');return;}
@@ -2751,14 +2760,9 @@ async function stageAdminOption(from,key,emp,code,sendFn){
    else if(c==='EDIT'){ set.clear(); set.add('EDIT'); set.add('ENTRY'); set.add('VIEW'); }
    else { if(set.has(c))set.delete(c); else set.add(c); }
    await selectionReset(from,key,emp,[...set],st.context);
-   // V7.7.32 user-first rule: the three base access profiles are authoritative immediately.
-   // Super Admin should never have to remember a second Apply tap just to downgrade/upgrade
-   // Full Access <-> View Only <-> View+Edit. Optional capabilities can still be multi-selected
-   // and committed together with Apply Selection.
-   if(c==='FULL_ACCESS' || c==='VIEW' || c==='EDIT'){
-     await applyAccessSelection(from,emp);
-     return;
-   }
+   // V7.7.33: base access profile changes apply immediately. No second Apply tap required.
+   // Optional capabilities (Reports/PDF/Analysis/etc.) remain multi-select and use Apply Selection.
+   if(['FULL_ACCESS','VIEW','EDIT'].includes(c)){ await applyAccessSelection(from,emp); return; }
  } else await selectionToggle(from,key,emp,code,[]);
  await sendFn(from,emp);
 }
