@@ -301,6 +301,12 @@ async function initDB() {
     calculated_at TIMESTAMPTZ DEFAULT now(), UNIQUE(employee_number,permission)
   )`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_default_permissions_emp ON user_default_permissions(employee_number,active)`);
+  // V7.7.31: one authoritative manual access snapshot per employee. Registration defaults remain separate.
+  await pool.query(`CREATE TABLE IF NOT EXISTS user_access_override(
+    employee_number TEXT PRIMARY KEY, enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    permissions JSONB NOT NULL DEFAULT '[]'::jsonb, updated_by TEXT,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), reason TEXT
+  )`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_authority_grants_emp ON user_authority_grants(employee_number,active)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_data_quality_record ON data_quality_review(record_uid,status)`);
 
@@ -1060,7 +1066,11 @@ async function effectiveAuthority(employeeNumber) {
     [employeeNumber]
   );
   const pr = { rows: prAll.rows.filter(x=>x.active===true) };
-  const hasAccessOverride = prAll.rows.length > 0;
+  // Manual override is explicit state, not inferred from legacy permission rows.
+  // This prevents registration/hierarchy FULL access from leaking back after a Super Admin downgrade.
+  const ovRow=(await pool.query(`SELECT enabled,permissions,updated_by,updated_at FROM user_access_override WHERE employee_number=$1 LIMIT 1`,[employeeNumber])).rows[0]||null;
+  const hasAccessOverride = ovRow?.enabled===true;
+  const overridePermissions = hasAccessOverride && Array.isArray(ovRow.permissions) ? ovRow.permissions.map(x=>String(x).toUpperCase()) : [];
   const agr = await pool.query(
     `SELECT authority_code FROM user_authority_grants
      WHERE employee_number=$1 AND active=true
@@ -1131,6 +1141,7 @@ async function effectiveAuthority(employeeNumber) {
     scope,
     default_permissions: defaultRows,
     special_permissions: pr.rows.map(x => x.permission),
+    override_permissions: overridePermissions,
     has_access_override: hasAccessOverride,
     authority_grants: agr.rows.map(x => String(x.authority_code||'').toUpperCase()),
     operational_role: u.operational_role || 'NORMAL_USER'
@@ -1706,11 +1717,13 @@ function areaMatchesScope(area,scope,equipment=''){
 }
 async function searchPermissions(u){
  const a=await effectiveAuthority(u.employee_number);
- const ps=new Set((a?.special_permissions||[]).map(x=>String(x).toUpperCase()));
+ const legacyPs=new Set((a?.special_permissions||[]).map(x=>String(x).toUpperCase()));
+ const override=!!a?.has_access_override;
+ // Once Super Admin applies a profile, this snapshot is the ONLY feature-right source.
+ const ps=new Set((override?(a?.override_permissions||[]):[...legacyPs]).map(x=>String(x).toUpperCase()));
  // Owner/Super Admin is determined from the approved user's WhatsApp number and always has full controls.
  const owner=isOwner(u?.whatsapp_number);
  const scope=await effectiveSearchScope(u);
- const override=!!a?.has_access_override;
  const inherited=new Set((a?.default_permissions||[]).map(x=>String(x.permission||'').toUpperCase()));
  const effective=override?new Set([...ps]):new Set([...inherited,...ps]);
  // IMPORTANT: when override=true, hierarchy/default permissions are intentionally ignored.
@@ -2625,7 +2638,7 @@ async function sendAccessAdminMenu(to,emp){
 }
 async function sendPermissionAdmin(to,emp,page=1){
  if(!await requireSuperAdmin(to))return; const a=await effectiveAuthority(emp);if(!a){await sendText(to,'Not found.');return;}
- const active=new Set((a.special_permissions||[]).map(x=>String(x).toUpperCase()));
+ const active=new Set(((a.has_access_override?a.override_permissions:a.special_permissions)||[]).map(x=>String(x).toUpperCase()));
  const inherited=new Set((a.default_permissions||[]).map(x=>String(x.permission||'').toUpperCase()));
  let st=await selectionGet(to,'ADMIN_ACCESS',emp,[...active]); const staged=new Set(st.selected);
  const start=page===2?8:0, chunk=ACCESS_PERMISSION_OPTIONS.slice(start,start+8);
@@ -2763,13 +2776,18 @@ async function applyAccessSelection(from,emp){
     ON CONFLICT(employee_number,permission) DO UPDATE SET active=EXCLUDED.active,granted_by=EXCLUDED.granted_by,granted_at=now(),reason=EXCLUDED.reason,updated_at=now()`,
     [emp,code,active,from,'Super Admin authoritative access profile']);
   }
+  // Persist one authoritative snapshot. This is the decisive runtime access state.
+  await client.query(`INSERT INTO user_access_override(employee_number,enabled,permissions,updated_by,updated_at,reason)
+    VALUES($1,true,$2::jsonb,$3,now(),$4)
+    ON CONFLICT(employee_number) DO UPDATE SET enabled=true,permissions=EXCLUDED.permissions,updated_by=EXCLUDED.updated_by,updated_at=now(),reason=EXCLUDED.reason`,
+    [emp,JSON.stringify([...sel]),from,'Super Admin authoritative access profile']);
   await client.query(`INSERT INTO authority_audit(employee_number,action,performed_by,details) VALUES($1,'REPLACE_PERMISSION_SET',$2,$3::jsonb)`,
-    [emp,from,JSON.stringify({permissions:[...sel],mode:'AUTHORITATIVE_OVERRIDE'})]);
+    [emp,from,JSON.stringify({permissions:[...sel],mode:'AUTHORITATIVE_OVERRIDE_V2'})]);
   await client.query('COMMIT');
  }catch(e){await client.query('ROLLBACK');throw e;}finally{client.release();}
  await selectionClear(from,'ADMIN_ACCESS',emp);
  // Re-read from PostgreSQL after commit; never trust staged/UI state as authorization state.
- const verified=await effectiveAuthority(emp); const active=new Set((verified?.special_permissions||[]).map(x=>String(x).toUpperCase()));
+ const verified=await effectiveAuthority(emp); const active=new Set(((verified?.has_access_override?verified?.override_permissions:verified?.special_permissions)||[]).map(x=>String(x).toUpperCase()));
  console.log('[ACCESS APPLY VERIFIED]',emp,[...active].sort().join(','));
  await sendAccessAdminMenu(from,emp);
 }
