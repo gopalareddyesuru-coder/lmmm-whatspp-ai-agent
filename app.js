@@ -2815,6 +2815,21 @@ async function processMessage(from, text, rawMessage = null) {
 
   if (await ownerCommand(from, clean)) return;
 
+  // V7.7.23 routing guard: governance commands are private to Super Admin /
+  // authorised admin routing. Never let a non-admin ACCESS command fall
+  // through into employee/equipment/maintenance search. Silent by design.
+  if (/^(?:ACCESS(?:\s+CONTROL)?|USER\s+CONTROL)(?:\b|:|_)/i.test(clean)) {
+    return;
+  }
+
+  // Conversational acknowledgements must never execute stale equipment/search
+  // context. Explicit follow-ups such as MORE, HISTORY, JOBS etc. continue to
+  // use search context elsewhere in the router.
+  if (/^(?:ok(?:ay)?|thanks?|thank\s+you|done|fine|got\s+it|👍|🙏)[.! ]*$/i.test(clean)) {
+    await sendText(from, 'Is there anything else I can help you with?');
+    return;
+  }
+
   if (/^exit$/i.test(clean)) {
     await sendText(from, T('exit', te));
     return;
