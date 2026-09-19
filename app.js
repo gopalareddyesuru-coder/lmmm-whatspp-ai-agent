@@ -1676,16 +1676,27 @@ function normFailureText(r){
  x=x.replace(/\b(REPLACED|REPLACE|DONE|ATTENDED|RECTIFIED|TIGHTENED|TIGHTEND|GREASING|WELDING|PUTTI|CHECKED)\b.*$/,'');
  return x.replace(/[^A-Z0-9]+/g,' ').replace(/\s+/g,' ').trim().slice(0,120);
 }
+function analysisEquipmentKeys(eq=''){
+ const raw=String(eq||'').trim(), n=scopeKey(raw), out=new Set([n]);
+ // Retrieval aliases only. Canonical stored equipment names/IDs are never changed.
+ const m=n.match(/^(?:wbf|furnace|walking beam furnace)\s*([12])$/);
+ if(m){const k=m[1];['wbf '+k,'wbf'+k,'furnace '+k,'furnace'+k,'walking beam furnace '+k].forEach(x=>out.add(scopeKey(x)));}
+ return [...out].filter(Boolean);
+}
 async function rowsForContext(ctx,type=null,limit=500,u=null){
  if(!ctx?.equipment_name)return [];
- const vals=[ctx.equipment_name];let w=`LOWER(COALESCE(equipment,''))=LOWER($1)`;
+ const perms=u?await searchPermissions(u):null;
+ const keys=(perms?.full||perms?.owner)?analysisEquipmentKeys(ctx.equipment_name):[scopeKey(ctx.equipment_name)];
+ const vals=[keys];
+ // Super Admin/Owner analysis may follow safe display aliases (WBF-2/Furnace-2/WBF2), while normal-user retrieval remains unchanged.
+ let w=`regexp_replace(LOWER(COALESCE(equipment,'')),'[^a-z0-9]+',' ','g') = ANY($1::text[])`;
  if(type){vals.push(type);w+=` AND record_type=$${vals.length}`;}
  const dr=ctxRange(ctx);
  if(dr?.from){vals.push(dr.from);w+=` AND CASE WHEN event_date ~ '^\\d{4}-\\d{2}-\\d{2}$' THEN event_date::date END >= $${vals.length}::date`;}
  if(dr?.to){vals.push(dr.to);w+=` AND CASE WHEN event_date ~ '^\\d{4}-\\d{2}-\\d{2}$' THEN event_date::date END <= $${vals.length}::date`;}
  vals.push(limit);
  let rows=(await pool.query(`SELECT uid,record_type,equipment,area,event_date,record_text,source_name,source_payload FROM lmmm_master_records WHERE ${w} ORDER BY CASE WHEN event_date ~ '^\\d{4}-\\d{2}-\\d{2}$' THEN event_date::date END DESC NULLS LAST,uid LIMIT $${vals.length}`,vals)).rows;
- if(u){const sc=await effectiveSearchScope(u);rows=rows.filter(r=>areaMatchesScope(r.area,sc));}
+ if(u){const sc=await effectiveSearchScope(u);rows=rows.filter(r=>areaMatchesScope(r.area,sc,r.equipment));}
  return rows;
 }
 async function analysisAction(q,u){
