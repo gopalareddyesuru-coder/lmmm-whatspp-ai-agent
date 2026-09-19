@@ -221,6 +221,27 @@ async function initDB() {
 
   await pool.query(`ALTER TABLE authority_audit ADD COLUMN IF NOT EXISTS details JSONB DEFAULT '{}'::jsonb`);
 
+  // V7.7.19 governance: explicit role/authority/access overrides and report-grade data quality state.
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS operational_role TEXT DEFAULT 'NORMAL_USER'`);
+  await pool.query(`ALTER TABLE user_special_permissions ADD COLUMN IF NOT EXISTS valid_from TIMESTAMPTZ DEFAULT now()`);
+  await pool.query(`ALTER TABLE user_special_permissions ADD COLUMN IF NOT EXISTS valid_to TIMESTAMPTZ`);
+  await pool.query(`ALTER TABLE user_special_permissions ADD COLUMN IF NOT EXISTS reason TEXT`);
+  await pool.query(`ALTER TABLE user_special_permissions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT now()`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS user_authority_grants(
+    id BIGSERIAL PRIMARY KEY, employee_number TEXT NOT NULL, authority_code TEXT NOT NULL,
+    active BOOLEAN DEFAULT TRUE, valid_from TIMESTAMPTZ DEFAULT now(), valid_to TIMESTAMPTZ,
+    reason TEXT, granted_by TEXT, updated_at TIMESTAMPTZ DEFAULT now(),
+    UNIQUE(employee_number,authority_code)
+  )`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS data_quality_review(
+    id BIGSERIAL PRIMARY KEY, record_uid TEXT NOT NULL, issue_code TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'NEEDS_REVIEW', notes TEXT, reviewed_by TEXT,
+    reviewed_at TIMESTAMPTZ, created_at TIMESTAMPTZ DEFAULT now(),
+    UNIQUE(record_uid,issue_code)
+  )`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_authority_grants_emp ON user_authority_grants(employee_number,active)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_data_quality_record ON data_quality_review(record_uid,status)`);
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS employee_contacts(
       id BIGSERIAL PRIMARY KEY,
@@ -929,7 +950,16 @@ async function effectiveAuthority(employeeNumber) {
 
   const pr = await pool.query(
     `SELECT permission FROM user_special_permissions
-     WHERE employee_number=$1 AND active=true`,
+     WHERE employee_number=$1 AND active=true
+       AND (valid_from IS NULL OR valid_from<=now())
+       AND (valid_to IS NULL OR valid_to>=now())`,
+    [employeeNumber]
+  );
+  const agr = await pool.query(
+    `SELECT authority_code FROM user_authority_grants
+     WHERE employee_number=$1 AND active=true
+       AND (valid_from IS NULL OR valid_from<=now())
+       AND (valid_to IS NULL OR valid_to>=now())`,
     [employeeNumber]
   );
   const ar = await pool.query(
@@ -986,7 +1016,9 @@ async function effectiveAuthority(employeeNumber) {
     assignments: ar.rows,
     effective_access: effectiveAccess,
     scope,
-    special_permissions: pr.rows.map(x => x.permission)
+    special_permissions: pr.rows.map(x => x.permission),
+    authority_grants: agr.rows.map(x => String(x.authority_code||'').toUpperCase()),
+    operational_role: u.operational_role || 'NORMAL_USER'
   };
 }
 
@@ -2260,81 +2292,93 @@ async function commitMedia(u,from,p,status='confirmed',timingSource='media_confi
 
 
 const ACCESS_PERMISSION_OPTIONS = [
- ['ENTRY','Entry'],['VIEW','View'],['EDIT','Edit'],['DELETE_UNDO','Delete / Undo'],['APPROVAL','Approval'],
- ['PRINT_EXPORT','PDF / Print'],['ANALYSIS','Analysis'],['RCM','RCM'],['MASTER_EDIT','Master Edit'],['ACCESS_ADMIN','Access Admin']
+ ['FULL_ACCESS','Full Access'],['ENTRY','Entry'],['VIEW','View'],['EDIT','Edit'],['DELETE_UNDO','Delete / Undo'],['APPROVAL','Approval'],
+ ['PRINT_EXPORT','PDF / Print'],['ANALYSIS','Analysis'],['ADVANCED_REPORTS','Advanced Reports'],['RCM','RCM Analysis'],
+ ['MASTER_EDIT','Master Edit'],['ACCESS_ADMIN','Access Admin']
+];
+const AUTHORITY_OPTIONS=[
+ ['APPROVE_RECORDS','Approve Records'],['CORRECT_RECORDS','Correct Records'],['DELETE_RESTORE','Delete / Restore'],
+ ['AUTHORISE_REPORTS','Authorise Reports'],['AUTHORISE_PRINTS','Authorise Prints'],['MANAGE_DOCUMENTS','Manage Documents'],
+ ['MANAGE_EMPLOYEES','Manage Employees'],['GRANT_ACCESS','Grant Access'],['REVOKE_ACCESS','Revoke Access'],['MASTER_CHANGE_APPROVAL','Master Change Approval']
+];
+const ROLE_OPTIONS=[
+ ['NORMAL_USER','Normal User'],['SHIFT_INCHARGE','Shift In-charge'],['AREA_INCHARGE','Area In-charge'],
+ ['SECTION_INCHARGE','Section In-charge'],['HOD','HOD'],['DGM','DGM'],['SUPER_ADMIN','Super Admin']
 ];
 const JOB_SCOPE_OPTIONS=[
  ['ALL','All maintenance'],['DEFECTS','Defects'],['JOBS','Jobs / Work Orders'],['PM','PM / Scheduled'],
  ['INSPECTION_CBM','Inspection / CBM'],['BREAKDOWN','Breakdown / Delay'],['HISTORY','History'],['SPARES_DOCS','Spares / Documents']
 ];
+function isSuperAdminWA(wa=''){return SUPER_ADMIN_NUMBERS.has(String(wa).replace(/\D/g,''));}
+async function requireSuperAdmin(to){if(!isSuperAdminWA(to)){await sendText(to,'Not authorized. Super Admin access required.');return false;}return true;}
+async function findAdminEmployees(term){return employeeSearch(term);}
+async function employeeGovernanceSummary(emp){
+ const u=await byEmp(emp),a=await effectiveAuthority(emp); if(!u||!a)return null;
+ const sc=await effectiveSearchScope(u);
+ const perms=(a.special_permissions||[]).join(', ')||'None';
+ const auth=(a.authority_grants||[]).join(', ')||'None';
+ const roles=(a.responsibilities||[]).map(x=>x.responsibility_role).filter(Boolean).join(', ')||u.responsibility||'Normal Employee';
+ const jobs=(sc.jobScopes||[]).join(', ')||'ALL';
+ return `Employee Control\n${u.name} / ${emp}\nDesignation: ${u.designation}\nDepartment/Section: ${u.section_department}\nRegistered Area: ${u.area_of_working}\nOperational Role: ${a.operational_role||'NORMAL_USER'}\nResponsibility: ${roles}\nEffective Access: ${a.effective_access}\nAuthority Scope: ${a.scope}\nEffective Area(s): ${sc.plantWide?'ALL':(sc.areas||[]).join(', ')||'Registered'}\nJob Scope: ${jobs}\nSpecial Access: ${perms}\nAuthority Grants: ${auth}`;
+}
 async function sendAccessAdminMenu(to,emp){
- const u=await byEmp(emp); if(!u||u.approval_status!=='approved'||!u.is_active){await sendText(to,'Not found.');return;}
- const a=await effectiveAuthority(emp);
- const grants=new Set((a?.special_permissions||[]).map(x=>String(x).toUpperCase()));
- const scope=await effectiveSearchScope(u);
- await sendList(to,`Access Control\n${u.name} / ${emp}\n${u.designation}\nSection: ${u.section_department}\nArea: ${u.area_of_working}\nEffective: ${a?.effective_access||'Not found'}\nGranted options: ${grants.size}\nScope: ${scope?.plantWide?'Plant-wide':(scope?.areas||[]).join(', ')||'Registered scope'}`,'Select',[
-  {id:`ACCESS_PERMS:${emp}`,title:'Permissions'},
-  {id:`RESP_CHANGE:${emp}`,title:'Responsibility'},
-  {id:`ACCESS_AREA:${emp}`,title:'Area / Work Scope'},
-  {id:`ACCESS_JOB:${emp}`,title:'Job Responsibility'},
-  {id:`ACCESS_VIEW:${emp}`,title:'View Effective Access'}
- ],'Authority & Responsibility');
+ if(!await requireSuperAdmin(to))return;
+ const u=await byEmp(emp);if(!u||u.approval_status!=='approved'||!u.is_active){await sendText(to,'Employee not found or inactive.');return;}
+ const summary=await employeeGovernanceSummary(emp);
+ await sendList(to,summary,'Manage',[
+  {id:`ACCESS_PERMS:${emp}`,title:'Access'}, {id:`ACCESS_ROLE:${emp}`,title:'Role'}, {id:`ACCESS_AUTH:${emp}`,title:'Authorities'},
+  {id:`RESP_CHANGE:${emp}`,title:'Responsibilities'}, {id:`ACCESS_AREA:${emp}`,title:'Area / Equipment Scope'},
+  {id:`ACCESS_JOB:${emp}`,title:'Job Responsibility'}, {id:`ACCESS_VIEW:${emp}`,title:'Effective Access'}, {id:`ACCESS_AUDIT:${emp}`,title:'Audit History'}
+ ],'User Governance');
 }
 async function sendPermissionAdmin(to,emp){
- const a=await effectiveAuthority(emp); if(!a){await sendText(to,'Not found.');return;}
+ if(!await requireSuperAdmin(to))return; const a=await effectiveAuthority(emp);if(!a){await sendText(to,'Not found.');return;}
  const active=new Set((a.special_permissions||[]).map(x=>String(x).toUpperCase()));
- await sendList(to,`Permissions • ${emp}\n✓ granted • ○ available\nSuper Admin sees every grantable option.`,`Select`,ACCESS_PERMISSION_OPTIONS.map(([code,title])=>({id:`ACCESS_TOGGLE:${code}:${emp}`,title:`${active.has(code)?'✓':'○'} ${title}`.slice(0,24)})),'Permissions');
+ await sendList(to,`Access • ${emp}\n✓ granted • ○ available\nAll grantable options remain visible to Super Admin.`,`Select`,ACCESS_PERMISSION_OPTIONS.map(([code,title])=>({id:`ACCESS_TOGGLE:${code}:${emp}`,title:`${active.has(code)?'✓':'○'} ${title}`.slice(0,24)})),'Access');
 }
 async function togglePermissionAdmin(from,emp,permission){
- if(!ACCESS_PERMISSION_OPTIONS.some(x=>x[0]===permission)){await sendText(from,'Invalid permission.');return;}
- const u=await byEmp(emp); if(!u){await sendText(from,'Not found.');return;}
+ if(!await requireSuperAdmin(from))return;if(!ACCESS_PERMISSION_OPTIONS.some(x=>x[0]===permission)){await sendText(from,'Invalid permission.');return;}
+ const u=await byEmp(emp);if(!u){await sendText(from,'Not found.');return;}
  const r=(await pool.query(`SELECT active FROM user_special_permissions WHERE employee_number=$1 AND permission=$2 LIMIT 1`,[emp,permission])).rows[0];
  const active=!(r?.active===true);
- await pool.query(`INSERT INTO user_special_permissions(employee_number,permission,active,granted_by) VALUES($1,$2,$3,$4) ON CONFLICT(employee_number,permission) DO UPDATE SET active=EXCLUDED.active,granted_by=EXCLUDED.granted_by,granted_at=now()`,[emp,permission,active,from]);
- await pool.query(`INSERT INTO authority_audit(employee_number,action,performed_by,details) VALUES($1,$2,$3,$4::jsonb)`,[emp,active?'GRANT_PERMISSION':'REVOKE_PERMISSION',from,JSON.stringify({permission})]);
+ await pool.query(`INSERT INTO user_special_permissions(employee_number,permission,active,granted_by,reason,updated_at) VALUES($1,$2,$3,$4,$5,now()) ON CONFLICT(employee_number,permission) DO UPDATE SET active=EXCLUDED.active,granted_by=EXCLUDED.granted_by,granted_at=now(),reason=EXCLUDED.reason,updated_at=now()`,[emp,permission,active,from,'Super Admin WhatsApp control']);
+ await pool.query(`INSERT INTO authority_audit(employee_number,action,performed_by,details) VALUES($1,$2,$3,$4::jsonb)`,[emp,active?'GRANT_PERMISSION':'REVOKE_PERMISSION',from,JSON.stringify({permission,reason:'Super Admin WhatsApp control'})]);
  await sendPermissionAdmin(from,emp);
 }
-async function departmentAreaOptions(){
- const r=await pool.query(`SELECT area,COUNT(*) n FROM lmmm_master_records WHERE NULLIF(TRIM(COALESCE(area,'')),'') IS NOT NULL GROUP BY area ORDER BY n DESC,area LIMIT 40`);
- return r.rows.map(x=>String(x.area).trim()).filter(Boolean);
+async function sendRoleAdmin(to,emp){
+ if(!await requireSuperAdmin(to))return;const u=await byEmp(emp);if(!u){await sendText(to,'Not found.');return;}
+ const current=String(u.operational_role||'NORMAL_USER').toUpperCase();
+ await sendList(to,`Operational Role • ${u.name} / ${emp}\nDesignation remains unchanged. Role controls operational authority baseline.`,`Select`,ROLE_OPTIONS.map(([c,t])=>({id:`ACCESS_ROLE_SET:${c}:${emp}`,title:`${current===c?'✓':'○'} ${t}`.slice(0,24)})),'Role');
 }
-async function sendAreaScopePicker(to,emp){
- const u=await byEmp(emp);if(!u){await sendText(to,'Not found.');return;}
- let areas=await departmentAreaOptions(); if(u.area_of_working&&!areas.some(x=>x.toLowerCase()===String(u.area_of_working).toLowerCase()))areas.unshift(u.area_of_working);
- areas=[...new Set(areas)].slice(0,9);
- const rows=[{id:`ACCESS_AREA_SET:REGISTERED:${emp}`,title:'Registered Area'},...areas.map((a,i)=>({id:`ACCESS_AREA_SET:${i}:${emp}`,title:a.slice(0,24)}))].slice(0,10);
- // Keep the exact server-side values for this short-lived admin selection.
- globalThis.__lmmmAreaPickers=globalThis.__lmmmAreaPickers||new Map(); globalThis.__lmmmAreaPickers.set(String(emp),areas);
- await sendList(to,`Area / Work Scope • ${emp}\nSelect from authorised Dept-35 master areas.`,`Select`,rows,'Area Scope');
-}
-async function setAreaScope(from,emp,key){
+async function setRoleAdmin(from,emp,role){
+ if(!await requireSuperAdmin(from))return;if(!ROLE_OPTIONS.some(x=>x[0]===role)){await sendText(from,'Invalid role.');return;}
  const u=await byEmp(emp);if(!u){await sendText(from,'Not found.');return;}
- const areas=globalThis.__lmmmAreaPickers?.get(String(emp))||await departmentAreaOptions();
- const area=key==='REGISTERED'?u.area_of_working:areas[Number(key)]; if(!area){await sendText(from,'Area selection expired. Open Access Control again.');return;}
- await pool.query(`UPDATE user_assignments SET active=false WHERE employee_number=$1 AND active=true`,[emp]);
- await pool.query(`INSERT INTO user_assignments(employee_number,area,section,responsibility,job_scope,assigned_by) VALUES($1,$2,$3,$4,'ALL',$5)`,[emp,area,u.section_department||NA,u.responsibility||NA,from]);
- await pool.query(`INSERT INTO authority_audit(employee_number,action,scope_section,scope_area,performed_by,details) VALUES($1,'SET_WORK_SCOPE',$2,$3,$4,$5::jsonb)`,[emp,u.section_department||NA,area,from,JSON.stringify({area})]);
+ const old=u.operational_role||'NORMAL_USER';
+ await pool.query(`UPDATE users SET operational_role=$2,updated_at=now() WHERE employee_number=$1`,[emp,role]);
+ // Keep responsibility hierarchy synchronized without changing designation.
+ const map={SHIFT_INCHARGE:'Shift In-charge',AREA_INCHARGE:'Area In-charge',SECTION_INCHARGE:'Section In-charge',HOD:'HOD',SUPER_ADMIN:'Super Admin'};
+ if(map[role]){await pool.query(`UPDATE user_responsibilities SET active=false WHERE employee_number=$1 AND active=true`,[emp]);await pool.query(`INSERT INTO user_responsibilities(employee_number,responsibility_role,scope_section,scope_area,assigned_by) VALUES($1,$2,$3,$4,$5)`,[emp,map[role],u.section_department||NA,u.area_of_working||NA,from]);}
+ await pool.query(`INSERT INTO authority_audit(employee_number,action,performed_by,details) VALUES($1,'SET_OPERATIONAL_ROLE',$2,$3::jsonb)`,[emp,from,JSON.stringify({old_role:old,new_role:role})]);
  await sendAccessAdminMenu(from,emp);
 }
-async function sendJobScopePicker(to,emp){
- const a=await effectiveAuthority(emp);if(!a){await sendText(to,'Not found.');return;}
- const current=new Set((a.assignments||[]).map(x=>String(x.job_scope||'ALL').toUpperCase()));
- await sendList(to,`Job Responsibility • ${emp}\nChoose the maintenance work family this employee is responsible for.`,`Select`,JOB_SCOPE_OPTIONS.map(([c,t])=>({id:`ACCESS_JOB_SET:${c}:${emp}`,title:`${current.has(c)?'✓ ':''}${t}`.slice(0,24)})),'Job Scope');
+async function sendAuthorityAdmin(to,emp){
+ if(!await requireSuperAdmin(to))return;const a=await effectiveAuthority(emp);if(!a){await sendText(to,'Not found.');return;}
+ const active=new Set((a.authority_grants||[]).map(x=>String(x).toUpperCase()));
+ await sendList(to,`Authorities • ${emp}\nAuthority is separate from role and responsibility.`,`Select`,AUTHORITY_OPTIONS.map(([c,t])=>({id:`ACCESS_AUTH_TOGGLE:${c}:${emp}`,title:`${active.has(c)?'✓':'○'} ${t}`.slice(0,24)})),'Authorities');
 }
-async function setJobScope(from,emp,jobScope){
- if(!JOB_SCOPE_OPTIONS.some(x=>x[0]===jobScope)){await sendText(from,'Invalid job scope.');return;}
- const u=await byEmp(emp);if(!u){await sendText(from,'Not found.');return;}
- const latest=(await pool.query(`SELECT * FROM user_assignments WHERE employee_number=$1 AND active=true ORDER BY id DESC LIMIT 1`,[emp])).rows[0];
- await pool.query(`UPDATE user_assignments SET active=false WHERE employee_number=$1 AND active=true`,[emp]);
- await pool.query(`INSERT INTO user_assignments(employee_number,area,section,responsibility,sub_area,shift,employment_type,is_additional_charge,job_scope,assigned_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,[emp,latest?.area||u.area_of_working||NA,latest?.section||u.section_department||NA,latest?.responsibility||u.responsibility||NA,latest?.sub_area||NA,latest?.shift||NA,latest?.employment_type||NA,!!latest?.is_additional_charge,jobScope,from]);
- await pool.query(`INSERT INTO authority_audit(employee_number,action,performed_by,details) VALUES($1,'SET_JOB_SCOPE',$2,$3::jsonb)`,[emp,from,JSON.stringify({job_scope:jobScope})]);
- await sendAccessAdminMenu(from,emp);
+async function toggleAuthorityAdmin(from,emp,code){
+ if(!await requireSuperAdmin(from))return;if(!AUTHORITY_OPTIONS.some(x=>x[0]===code)){await sendText(from,'Invalid authority.');return;}
+ const r=(await pool.query(`SELECT active FROM user_authority_grants WHERE employee_number=$1 AND authority_code=$2 LIMIT 1`,[emp,code])).rows[0];const active=!(r?.active===true);
+ await pool.query(`INSERT INTO user_authority_grants(employee_number,authority_code,active,reason,granted_by,updated_at) VALUES($1,$2,$3,$4,$5,now()) ON CONFLICT(employee_number,authority_code) DO UPDATE SET active=EXCLUDED.active,reason=EXCLUDED.reason,granted_by=EXCLUDED.granted_by,updated_at=now()`,[emp,code,active,'Super Admin WhatsApp control',from]);
+ await pool.query(`INSERT INTO authority_audit(employee_number,action,performed_by,details) VALUES($1,$2,$3,$4::jsonb)`,[emp,active?'GRANT_AUTHORITY':'REVOKE_AUTHORITY',from,JSON.stringify({authority:code})]);await sendAuthorityAdmin(from,emp);
 }
-async function sendEffectiveAccess(to,emp){
- const u=await byEmp(emp),a=await effectiveAuthority(emp);if(!u||!a){await sendText(to,'Not found.');return;}
- const sc=await effectiveSearchScope(u); const ps=(a.special_permissions||[]).join(', ')||'None'; const jobs=(sc.jobScopes||[]).join(', ')||'ALL';
- await sendText(to,`Effective Access\n${u.name} / ${emp}\nRole access: ${a.effective_access}\nAuthority scope: ${a.scope}\nSection(s): ${(sc.sections||[]).join(', ')||'Registered'}\nArea(s): ${sc.plantWide?'ALL':(sc.areas||[]).join(', ')||'Registered'}\nJob responsibility: ${jobs}\nSpecial permissions: ${ps}\n\nServer-side checks remain authoritative; WhatsApp buttons do not grant access by themselves.`);
-}
+async function departmentAreaOptions(){const r=await pool.query(`SELECT area,COUNT(*) n FROM lmmm_master_records WHERE NULLIF(TRIM(COALESCE(area,'')),'') IS NOT NULL GROUP BY area ORDER BY n DESC,area LIMIT 40`);return r.rows.map(x=>String(x.area).trim()).filter(Boolean);}
+async function sendAreaScopePicker(to,emp){if(!await requireSuperAdmin(to))return;const u=await byEmp(emp);if(!u){await sendText(to,'Not found.');return;}let areas=await departmentAreaOptions();if(u.area_of_working&&!areas.some(x=>x.toLowerCase()===String(u.area_of_working).toLowerCase()))areas.unshift(u.area_of_working);areas=[...new Set(areas)].slice(0,9);const rows=[{id:`ACCESS_AREA_SET:REGISTERED:${emp}`,title:'Registered Area'},...areas.map((a,i)=>({id:`ACCESS_AREA_SET:${i}:${emp}`,title:a.slice(0,24)}))].slice(0,10);globalThis.__lmmmAreaPickers=globalThis.__lmmmAreaPickers||new Map();globalThis.__lmmmAreaPickers.set(String(emp),areas);await sendList(to,`Area / Equipment Scope • ${emp}\nScope is inherited by equipment, sub-equipment, assembly and parts.`,`Select`,rows,'Area Scope');}
+async function setAreaScope(from,emp,key){if(!await requireSuperAdmin(from))return;const u=await byEmp(emp);if(!u){await sendText(from,'Not found.');return;}const areas=globalThis.__lmmmAreaPickers?.get(String(emp))||await departmentAreaOptions();const area=key==='REGISTERED'?u.area_of_working:areas[Number(key)];if(!area){await sendText(from,'Area selection expired. Open User Control again.');return;}await pool.query(`UPDATE user_assignments SET active=false WHERE employee_number=$1 AND active=true`,[emp]);await pool.query(`INSERT INTO user_assignments(employee_number,area,section,responsibility,job_scope,assigned_by,reason) VALUES($1,$2,$3,$4,'ALL',$5,$6)`,[emp,area,u.section_department||NA,u.responsibility||NA,from,'Super Admin scope assignment']);await pool.query(`INSERT INTO authority_audit(employee_number,action,scope_section,scope_area,performed_by,details) VALUES($1,'SET_WORK_SCOPE',$2,$3,$4,$5::jsonb)`,[emp,u.section_department||NA,area,from,JSON.stringify({area})]);await sendAccessAdminMenu(from,emp);}
+async function sendJobScopePicker(to,emp){if(!await requireSuperAdmin(to))return;const a=await effectiveAuthority(emp);if(!a){await sendText(to,'Not found.');return;}const current=new Set((a.assignments||[]).map(x=>String(x.job_scope||'ALL').toUpperCase()));await sendList(to,`Job Responsibility • ${emp}\nChoose the work family this employee is responsible for.`,`Select`,JOB_SCOPE_OPTIONS.map(([c,t])=>({id:`ACCESS_JOB_SET:${c}:${emp}`,title:`${current.has(c)?'✓ ':''}${t}`.slice(0,24)})),'Job Scope');}
+async function setJobScope(from,emp,jobScope){if(!await requireSuperAdmin(from))return;if(!JOB_SCOPE_OPTIONS.some(x=>x[0]===jobScope)){await sendText(from,'Invalid job scope.');return;}const u=await byEmp(emp);if(!u){await sendText(from,'Not found.');return;}const latest=(await pool.query(`SELECT * FROM user_assignments WHERE employee_number=$1 AND active=true ORDER BY id DESC LIMIT 1`,[emp])).rows[0];await pool.query(`UPDATE user_assignments SET active=false WHERE employee_number=$1 AND active=true`,[emp]);await pool.query(`INSERT INTO user_assignments(employee_number,area,section,responsibility,sub_area,shift,employment_type,is_additional_charge,job_scope,assigned_by,reason) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,[emp,latest?.area||u.area_of_working||NA,latest?.section||u.section_department||NA,latest?.responsibility||u.responsibility||NA,latest?.sub_area||NA,latest?.shift||NA,latest?.employment_type||NA,!!latest?.is_additional_charge,jobScope,from,'Super Admin job responsibility']);await pool.query(`INSERT INTO authority_audit(employee_number,action,performed_by,details) VALUES($1,'SET_JOB_SCOPE',$2,$3::jsonb)`,[emp,from,JSON.stringify({job_scope:jobScope})]);await sendAccessAdminMenu(from,emp);}
+async function sendEffectiveAccess(to,emp){if(!await requireSuperAdmin(to))return;const t=await employeeGovernanceSummary(emp);await sendText(to,t?`${t}\n\nServer-side enforcement is authoritative. Aliases/shortcuts never bypass scope.`:'Not found.');}
+async function sendAccessAudit(to,emp){if(!await requireSuperAdmin(to))return;const r=await pool.query(`SELECT action,performed_by,created_at,details FROM authority_audit WHERE employee_number=$1 ORDER BY created_at DESC LIMIT 15`,[emp]);if(!r.rows.length){await sendText(to,`Audit History • ${emp}\nNo access changes recorded.`);return;}await sendText(to,`Audit History • ${emp}\n\n`+r.rows.map(x=>`${x.created_at?.toISOString?.()||x.created_at} | ${x.action} | by ${x.performed_by}\n${JSON.stringify(x.details||{})}`).join('\n\n').slice(0,3900));}
 
 async function ownerCommand(from, text) {
   const admin = from.replace(/\D/g, '');
@@ -2343,8 +2387,19 @@ async function ownerCommand(from, text) {
   text = String(text || '').replace(/^APPROVE:(\d+)$/i, 'approve $1').replace(/^REJECT:(\d+)$/i, 'reject $1').replace(/^CONFIRM_REMOVE:(\d+)$/i, 'confirm remove $1').replace(/^CANCEL_REMOVE:(\d+)$/i, 'cancel remove $1').replace(/^CONFIRM_RESET$/i, 'confirm reset registrations').replace(/^CANCEL_RESET$/i, 'cancel reset registrations');
 
   let rx;
-  if ((rx=text.match(/^(?:ACCESS|ACCESS CONTROL)\s+(\d+)$/i))) { await sendAccessAdminMenu(from,rx[1]); return true; }
+  if ((rx=text.match(/^(?:ACCESS|ACCESS CONTROL|USER|USER CONTROL)\s+(.+)$/i))) {
+    const rows=await findAdminEmployees(rx[1]);
+    if(!rows.length){await sendText(from,'Employee not found.');return true;}
+    if(rows.length===1){await sendAccessAdminMenu(from,rows[0].employee_number);return true;}
+    await sendList(from,'Select employee','Select',rows.map(x=>({id:`ACCESS:${x.employee_number}`,title:String(x.name).slice(0,24),description:`Emp No: ${x.employee_number}`})),'Employees');return true;
+  }
+  if ((rx=text.match(/^ACCESS:(\d+)$/i))) { await sendAccessAdminMenu(from,rx[1]); return true; }
   if ((rx=text.match(/^ACCESS_PERMS:(\d+)$/i))) { await sendPermissionAdmin(from,rx[1]); return true; }
+  if ((rx=text.match(/^ACCESS_ROLE:(\d+)$/i))) { await sendRoleAdmin(from,rx[1]); return true; }
+  if ((rx=text.match(/^ACCESS_ROLE_SET:([A-Z_]+):(\d+)$/i))) { await setRoleAdmin(from,rx[2],rx[1].toUpperCase()); return true; }
+  if ((rx=text.match(/^ACCESS_AUTH:(\d+)$/i))) { await sendAuthorityAdmin(from,rx[1]); return true; }
+  if ((rx=text.match(/^ACCESS_AUTH_TOGGLE:([A-Z_]+):(\d+)$/i))) { await toggleAuthorityAdmin(from,rx[2],rx[1].toUpperCase()); return true; }
+  if ((rx=text.match(/^ACCESS_AUDIT:(\d+)$/i))) { await sendAccessAudit(from,rx[1]); return true; }
   if ((rx=text.match(/^ACCESS_TOGGLE:([A-Z_]+):(\d+)$/i))) { await togglePermissionAdmin(from,rx[2],rx[1].toUpperCase()); return true; }
   if ((rx=text.match(/^ACCESS_AREA:(\d+)$/i))) { await sendAreaScopePicker(from,rx[1]); return true; }
   if ((rx=text.match(/^ACCESS_AREA_SET:([A-Z0-9_]+):(\d+)$/i))) { await setAreaScope(from,rx[2],rx[1].toUpperCase()); return true; }
@@ -3021,11 +3076,11 @@ async function processMessage(from, text, rawMessage = null) {
     if ((cm=clean.match(/^(.+?)\s+details$/i)) || (cm=clean.match(/^employee\s+(.+)$/i))) {
       const rows=await employeeSearch(cm[1]);
       if(!rows.length){await sendText(from,T('notfound',te));return;}
-      if(rows.length===1){await sendText(from,await profileText(rows[0]));return;}
+      if(rows.length===1){if(isSuperAdminWA(from)){await sendAccessAdminMenu(from,rows[0].employee_number);}else{await sendText(from,await profileText(rows[0]));}return;}
       await sendList(from,'Select employee','Select',rows.map(x=>({id:`EMPDETAIL:${x.employee_number}`,title:String(x.name).slice(0,24),description:`Emp No: ${x.employee_number}`})),'Employees');return;
     }
     if ((cm=clean.match(/^EMPDETAIL:(\d+)$/i))) {
-      const rows=await employeeSearch(cm[1]);await sendText(from,rows[0]?await profileText(rows[0]):T('notfound',te));return;
+      const rows=await employeeSearch(cm[1]);if(!rows[0]){await sendText(from,T('notfound',te));return;}if(isSuperAdminWA(from))await sendAccessAdminMenu(from,rows[0].employee_number);else await sendText(from,await profileText(rows[0]));return;
     }
     if ((cm=clean.match(/^MAX\s+(\d+)\s+(.+)$/i))) {
       await sendText(from,(await saveMax(from,cm[1],cm[2]))?'Saved.':T('notfound',te));return;
@@ -3149,7 +3204,7 @@ app.post('/webhook', (req, res) => {
 app.get('/api/status', (_q, r) =>
   r.status(200).json({
     status: 'ready',
-    registration: 'V7.7.18-authority-responsibility-hardening',
+    registration: 'V7.7.19-governance-authenticity-foundation',
     webhook: '/webhook',
     super_admins_configured: SUPER_ADMIN_NUMBERS.size
   })
