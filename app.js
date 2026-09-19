@@ -1,8 +1,6 @@
 import express from 'express';
 import 'dotenv/config';
 import pg from 'pg';
-import sharp from 'sharp';
-import { PDFDocument } from 'pdf-lib';
 
 const { Pool } = pg;
 const app = express();
@@ -373,11 +371,33 @@ async function sendDocumentBuffer(to,buf,filename,caption=''){
   const d=await r.json(); if(!r.ok)throw new Error(`WhatsApp document send failed ${r.status}: ${JSON.stringify(d)}`); return d;
 }
 async function tiffToPdfBuffer(buf){
-  const meta=await sharp(buf,{pages:-1}).metadata(); const pages=Math.max(1,Number(meta.pages)||1); const pdf=await PDFDocument.create();
+  // Native TIFF conversion is optional. Never let a missing native module stop the WhatsApp bot.
+  let sharp, PDFDocument;
+  try {
+    ({ default: sharp } = await import('sharp'));
+  } catch (e) {
+    const err = new Error('TIFF converter is temporarily unavailable on this server (optional image engine not installed). The maintenance bot remains online.');
+    err.code = 'TIFF_CONVERTER_UNAVAILABLE';
+    throw err;
+  }
+  try {
+    ({ PDFDocument } = await import('pdf-lib'));
+  } catch (e) {
+    const err = new Error('TIFF converter is temporarily unavailable on this server (PDF engine not installed). The maintenance bot remains online.');
+    err.code = 'TIFF_CONVERTER_UNAVAILABLE';
+    throw err;
+  }
+  const meta=await sharp(buf,{pages:-1}).metadata();
+  const pages=Math.max(1,Number(meta.pages)||1);
+  const pdf=await PDFDocument.create();
   for(let i=0;i<pages;i++){
-    const img=sharp(buf,{page:i,pages:1}).rotate(); const m=await img.metadata(); const png=await img.png({compressionLevel:6}).toBuffer(); const emb=await pdf.embedPng(png);
+    const img=sharp(buf,{page:i,pages:1}).rotate();
+    const m=await img.metadata();
+    const png=await img.png({compressionLevel:6}).toBuffer();
+    const emb=await pdf.embedPng(png);
     const w=Math.max(1,Number(m.width)||emb.width),h=Math.max(1,Number(m.height)||emb.height),scale=Math.min(1,1440/Math.max(w,h));
-    const page=pdf.addPage([w*scale,h*scale]); page.drawImage(emb,{x:0,y:0,width:w*scale,height:h*scale});
+    const page=pdf.addPage([w*scale,h*scale]);
+    page.drawImage(emb,{x:0,y:0,width:w*scale,height:h*scale});
   }
   return {buffer:Buffer.from(await pdf.save()),pages};
 }
