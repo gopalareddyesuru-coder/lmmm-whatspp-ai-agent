@@ -155,6 +155,7 @@ async function initDB() {
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS employee_category TEXT DEFAULT 'NOT ASSIGNED'`);
 
 
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS user_assignments(
       id BIGSERIAL PRIMARY KEY,
@@ -172,6 +173,9 @@ async function initDB() {
       assigned_by TEXT
     )
   `);
+
+  await pool.query(`ALTER TABLE user_assignments ADD COLUMN IF NOT EXISTS job_scope TEXT DEFAULT 'ALL'`);
+  await pool.query(`ALTER TABLE user_assignments ADD COLUMN IF NOT EXISTS reason TEXT`);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS user_special_permissions(
@@ -214,6 +218,8 @@ async function initDB() {
       created_at TIMESTAMPTZ DEFAULT now()
     )
   `);
+
+  await pool.query(`ALTER TABLE authority_audit ADD COLUMN IF NOT EXISTS details JSONB DEFAULT '{}'::jsonb`);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS employee_contacts(
@@ -926,6 +932,14 @@ async function effectiveAuthority(employeeNumber) {
      WHERE employee_number=$1 AND active=true`,
     [employeeNumber]
   );
+  const ar = await pool.query(
+    `SELECT * FROM user_assignments
+     WHERE employee_number=$1 AND active=true
+       AND (valid_from IS NULL OR valid_from<=now())
+       AND (valid_to IS NULL OR valid_to>=now())
+     ORDER BY id DESC`,
+    [employeeNumber]
+  );
 
   const roles = rr.rows.map(x => String(x.responsibility_role || '').trim().toLowerCase());
   const superAdminRole = roles.includes('super admin') || roles.includes('superadmin') || roles.includes('owner');
@@ -969,6 +983,7 @@ async function effectiveAuthority(employeeNumber) {
     registered_section: u.section_department,
     registered_area: u.area_of_working,
     responsibilities: rr.rows,
+    assignments: ar.rows,
     effective_access: effectiveAccess,
     scope,
     special_permissions: pr.rows.map(x => x.permission)
@@ -1051,6 +1066,7 @@ async function setResponsibility(from, employeeNumber, code) {
     `Responsibility set\n${u.name} / ${employeeNumber}\n${role}\nSection: ${section}\nArea: ${area}`,
     [
       {id:`RESP_CHANGE:${employeeNumber}`,title:'Change'},
+      {id:`ACCESS_PERMS:${employeeNumber}`,title:'Access Options'},
       {id:`RESP_DONE:${employeeNumber}`,title:'Done'}
     ]
   );
@@ -1066,7 +1082,7 @@ async function employeeSearch(term){
 }
 async function profileText(u){
  const a=await effectiveAuthority(u.employee_number);
- const resp=(a?.responsibility_roles||[])[0]?.responsibility_role||u.responsibility||'Not found';
+ const resp=(a?.responsibilities||[])[0]?.responsibility_role||u.responsibility||'Not found';
  return `${u.name}\nEmployee No: ${u.employee_number}\nDesignation: ${u.designation}\nSection: ${u.section_department}\nArea: ${u.area_of_working}\nResponsibility: ${resp}\nMAX No: ${u.max_number||'Not found'}\nCompany Email: ${u.company_email||'Not found'}`;
 }
 async function saveMax(from,emp,val){
@@ -1124,7 +1140,7 @@ async function productionAuthority(u){
  if(!u)return {enter:false,modify:false};
  const owner=isOwner(u.whatsapp_number);
  const a=await effectiveAuthority(u.employee_number);
- const roles=(a?.responsibility_roles||[]).map(x=>String(x.responsibility_role||'').toLowerCase());
+ const roles=(a?.responsibilities||[]).map(x=>String(x.responsibility_role||'').toLowerCase());
  const hod=roles.includes('hod');
  const opIncharge=isOperationsSection(u) && roles.some(r=>r.includes('in-charge')||r.includes('incharge'));
  const opShift=isOperationsSection(u) && roles.some(r=>r.includes('shift'));
@@ -1171,7 +1187,7 @@ function shiftToken(t=''){
 }
 async function responsibilityName(emp){
   const a=await effectiveAuthority(emp);
-  return (a?.responsibility_roles||[])[0]?.responsibility_role || 'Normal Employee';
+  return (a?.responsibilities||[])[0]?.responsibility_role || 'Normal Employee';
 }
 async function setShiftCheckin(u,shift,from){
   const n=plantNow();
@@ -1508,7 +1524,12 @@ async function effectiveSearchScope(u){
  const sections=new Set(),areas=new Set();
  const rs=cleanScopeValue(a.registered_section),ra=cleanScopeValue(a.registered_area); if(rs)sections.add(rs);if(ra)areas.add(ra);
  for(const r of (a.responsibilities||[])){const ss=cleanScopeValue(r.scope_section),sa=cleanScopeValue(r.scope_area);if(ss)sections.add(ss);if(sa)areas.add(sa);}
- return {plantWide,department_code:'35',sections:[...sections],areas:[...areas],authority:a,roles};
+ const jobScopes=new Set();
+ for(const r of (a.assignments||[])){
+   const ss=cleanScopeValue(r.section),sa=cleanScopeValue(r.area); if(ss)sections.add(ss);if(sa)areas.add(sa);
+   const js=String(r.job_scope||'ALL').trim().toUpperCase(); if(js)jobScopes.add(js);
+ }
+ return {plantWide,department_code:'35',sections:[...sections],areas:[...areas],jobScopes:[...jobScopes],authority:a,roles};
 }
 function scopeKey(v=''){return String(v||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();}
 function scopeTokens(v=''){return scopeKey(v).split(/\s+/).filter(Boolean);}
@@ -1543,20 +1564,23 @@ async function searchPermissions(u){
  const scope=await effectiveSearchScope(u);
  const full=owner || scope?.plantWide || a?.effective_access==='FULL' || ps.has('FULL_ACCESS') || ps.has('SUPER_ADMIN') || ps.has('OWNER');
  const advanced=full || ps.has('ANALYSIS') || ps.has('ADVANCED_REPORTS');
+ const js=new Set((scope?.jobScopes||[]).map(x=>String(x).toUpperCase()));
+ const unrestricted=full || !js.size || js.has('ALL') || js.has('NOT ASSIGNED');
+ const jobAllowed=(...names)=>unrestricted || names.some(n=>js.has(n));
  return {
    owner, full, scope,
    view: !!a,
    more: !!a,
    date: !!a,
    analysis: advanced,
-   repeat: advanced,
-   jobs: !!a,
-   history: !!a,
+   repeat: advanced && jobAllowed('DEFECTS','JOBS','HISTORY'),
+   jobs: !!a && jobAllowed('JOBS','HISTORY'),
+   history: !!a && jobAllowed('HISTORY','JOBS','DEFECTS'),
    mtbf: advanced,
-   performance: advanced,
-   pm: !!a,
-   cbm: !!a,
-   delay: advanced,
+   performance: advanced && jobAllowed('DEFECTS','JOBS','HISTORY','PM','INSPECTION_CBM','BREAKDOWN'),
+   pm: !!a && jobAllowed('PM'),
+   cbm: !!a && jobAllowed('INSPECTION_CBM'),
+   delay: advanced && jobAllowed('BREAKDOWN'),
    pdf: full || ps.has('PRINT_EXPORT') || ps.has('PDF_REPORT') || ps.has('ADVANCED_REPORTS'),
    rcm: full || ps.has('RCM')
  };
@@ -2234,6 +2258,84 @@ async function commitMedia(u,from,p,status='confirmed',timingSource='media_confi
  return saved;
 }
 
+
+const ACCESS_PERMISSION_OPTIONS = [
+ ['ENTRY','Entry'],['VIEW','View'],['EDIT','Edit'],['DELETE_UNDO','Delete / Undo'],['APPROVAL','Approval'],
+ ['PRINT_EXPORT','PDF / Print'],['ANALYSIS','Analysis'],['RCM','RCM'],['MASTER_EDIT','Master Edit'],['ACCESS_ADMIN','Access Admin']
+];
+const JOB_SCOPE_OPTIONS=[
+ ['ALL','All maintenance'],['DEFECTS','Defects'],['JOBS','Jobs / Work Orders'],['PM','PM / Scheduled'],
+ ['INSPECTION_CBM','Inspection / CBM'],['BREAKDOWN','Breakdown / Delay'],['HISTORY','History'],['SPARES_DOCS','Spares / Documents']
+];
+async function sendAccessAdminMenu(to,emp){
+ const u=await byEmp(emp); if(!u||u.approval_status!=='approved'||!u.is_active){await sendText(to,'Not found.');return;}
+ const a=await effectiveAuthority(emp);
+ const grants=new Set((a?.special_permissions||[]).map(x=>String(x).toUpperCase()));
+ const scope=await effectiveSearchScope(u);
+ await sendList(to,`Access Control\n${u.name} / ${emp}\n${u.designation}\nSection: ${u.section_department}\nArea: ${u.area_of_working}\nEffective: ${a?.effective_access||'Not found'}\nGranted options: ${grants.size}\nScope: ${scope?.plantWide?'Plant-wide':(scope?.areas||[]).join(', ')||'Registered scope'}`,'Select',[
+  {id:`ACCESS_PERMS:${emp}`,title:'Permissions'},
+  {id:`RESP_CHANGE:${emp}`,title:'Responsibility'},
+  {id:`ACCESS_AREA:${emp}`,title:'Area / Work Scope'},
+  {id:`ACCESS_JOB:${emp}`,title:'Job Responsibility'},
+  {id:`ACCESS_VIEW:${emp}`,title:'View Effective Access'}
+ ],'Authority & Responsibility');
+}
+async function sendPermissionAdmin(to,emp){
+ const a=await effectiveAuthority(emp); if(!a){await sendText(to,'Not found.');return;}
+ const active=new Set((a.special_permissions||[]).map(x=>String(x).toUpperCase()));
+ await sendList(to,`Permissions • ${emp}\n✓ granted • ○ available\nSuper Admin sees every grantable option.`,`Select`,ACCESS_PERMISSION_OPTIONS.map(([code,title])=>({id:`ACCESS_TOGGLE:${code}:${emp}`,title:`${active.has(code)?'✓':'○'} ${title}`.slice(0,24)})),'Permissions');
+}
+async function togglePermissionAdmin(from,emp,permission){
+ if(!ACCESS_PERMISSION_OPTIONS.some(x=>x[0]===permission)){await sendText(from,'Invalid permission.');return;}
+ const u=await byEmp(emp); if(!u){await sendText(from,'Not found.');return;}
+ const r=(await pool.query(`SELECT active FROM user_special_permissions WHERE employee_number=$1 AND permission=$2 LIMIT 1`,[emp,permission])).rows[0];
+ const active=!(r?.active===true);
+ await pool.query(`INSERT INTO user_special_permissions(employee_number,permission,active,granted_by) VALUES($1,$2,$3,$4) ON CONFLICT(employee_number,permission) DO UPDATE SET active=EXCLUDED.active,granted_by=EXCLUDED.granted_by,granted_at=now()`,[emp,permission,active,from]);
+ await pool.query(`INSERT INTO authority_audit(employee_number,action,performed_by,details) VALUES($1,$2,$3,$4::jsonb)`,[emp,active?'GRANT_PERMISSION':'REVOKE_PERMISSION',from,JSON.stringify({permission})]);
+ await sendPermissionAdmin(from,emp);
+}
+async function departmentAreaOptions(){
+ const r=await pool.query(`SELECT area,COUNT(*) n FROM lmmm_master_records WHERE NULLIF(TRIM(COALESCE(area,'')),'') IS NOT NULL GROUP BY area ORDER BY n DESC,area LIMIT 40`);
+ return r.rows.map(x=>String(x.area).trim()).filter(Boolean);
+}
+async function sendAreaScopePicker(to,emp){
+ const u=await byEmp(emp);if(!u){await sendText(to,'Not found.');return;}
+ let areas=await departmentAreaOptions(); if(u.area_of_working&&!areas.some(x=>x.toLowerCase()===String(u.area_of_working).toLowerCase()))areas.unshift(u.area_of_working);
+ areas=[...new Set(areas)].slice(0,9);
+ const rows=[{id:`ACCESS_AREA_SET:REGISTERED:${emp}`,title:'Registered Area'},...areas.map((a,i)=>({id:`ACCESS_AREA_SET:${i}:${emp}`,title:a.slice(0,24)}))].slice(0,10);
+ // Keep the exact server-side values for this short-lived admin selection.
+ globalThis.__lmmmAreaPickers=globalThis.__lmmmAreaPickers||new Map(); globalThis.__lmmmAreaPickers.set(String(emp),areas);
+ await sendList(to,`Area / Work Scope • ${emp}\nSelect from authorised Dept-35 master areas.`,`Select`,rows,'Area Scope');
+}
+async function setAreaScope(from,emp,key){
+ const u=await byEmp(emp);if(!u){await sendText(from,'Not found.');return;}
+ const areas=globalThis.__lmmmAreaPickers?.get(String(emp))||await departmentAreaOptions();
+ const area=key==='REGISTERED'?u.area_of_working:areas[Number(key)]; if(!area){await sendText(from,'Area selection expired. Open Access Control again.');return;}
+ await pool.query(`UPDATE user_assignments SET active=false WHERE employee_number=$1 AND active=true`,[emp]);
+ await pool.query(`INSERT INTO user_assignments(employee_number,area,section,responsibility,job_scope,assigned_by) VALUES($1,$2,$3,$4,'ALL',$5)`,[emp,area,u.section_department||NA,u.responsibility||NA,from]);
+ await pool.query(`INSERT INTO authority_audit(employee_number,action,scope_section,scope_area,performed_by,details) VALUES($1,'SET_WORK_SCOPE',$2,$3,$4,$5::jsonb)`,[emp,u.section_department||NA,area,from,JSON.stringify({area})]);
+ await sendAccessAdminMenu(from,emp);
+}
+async function sendJobScopePicker(to,emp){
+ const a=await effectiveAuthority(emp);if(!a){await sendText(to,'Not found.');return;}
+ const current=new Set((a.assignments||[]).map(x=>String(x.job_scope||'ALL').toUpperCase()));
+ await sendList(to,`Job Responsibility • ${emp}\nChoose the maintenance work family this employee is responsible for.`,`Select`,JOB_SCOPE_OPTIONS.map(([c,t])=>({id:`ACCESS_JOB_SET:${c}:${emp}`,title:`${current.has(c)?'✓ ':''}${t}`.slice(0,24)})),'Job Scope');
+}
+async function setJobScope(from,emp,jobScope){
+ if(!JOB_SCOPE_OPTIONS.some(x=>x[0]===jobScope)){await sendText(from,'Invalid job scope.');return;}
+ const u=await byEmp(emp);if(!u){await sendText(from,'Not found.');return;}
+ const latest=(await pool.query(`SELECT * FROM user_assignments WHERE employee_number=$1 AND active=true ORDER BY id DESC LIMIT 1`,[emp])).rows[0];
+ await pool.query(`UPDATE user_assignments SET active=false WHERE employee_number=$1 AND active=true`,[emp]);
+ await pool.query(`INSERT INTO user_assignments(employee_number,area,section,responsibility,sub_area,shift,employment_type,is_additional_charge,job_scope,assigned_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,[emp,latest?.area||u.area_of_working||NA,latest?.section||u.section_department||NA,latest?.responsibility||u.responsibility||NA,latest?.sub_area||NA,latest?.shift||NA,latest?.employment_type||NA,!!latest?.is_additional_charge,jobScope,from]);
+ await pool.query(`INSERT INTO authority_audit(employee_number,action,performed_by,details) VALUES($1,'SET_JOB_SCOPE',$2,$3::jsonb)`,[emp,from,JSON.stringify({job_scope:jobScope})]);
+ await sendAccessAdminMenu(from,emp);
+}
+async function sendEffectiveAccess(to,emp){
+ const u=await byEmp(emp),a=await effectiveAuthority(emp);if(!u||!a){await sendText(to,'Not found.');return;}
+ const sc=await effectiveSearchScope(u); const ps=(a.special_permissions||[]).join(', ')||'None'; const jobs=(sc.jobScopes||[]).join(', ')||'ALL';
+ await sendText(to,`Effective Access\n${u.name} / ${emp}\nRole access: ${a.effective_access}\nAuthority scope: ${a.scope}\nSection(s): ${(sc.sections||[]).join(', ')||'Registered'}\nArea(s): ${sc.plantWide?'ALL':(sc.areas||[]).join(', ')||'Registered'}\nJob responsibility: ${jobs}\nSpecial permissions: ${ps}\n\nServer-side checks remain authoritative; WhatsApp buttons do not grant access by themselves.`);
+}
+
 async function ownerCommand(from, text) {
   const admin = from.replace(/\D/g, '');
   if (!SUPER_ADMIN_NUMBERS.has(admin)) return false;
@@ -2241,6 +2343,14 @@ async function ownerCommand(from, text) {
   text = String(text || '').replace(/^APPROVE:(\d+)$/i, 'approve $1').replace(/^REJECT:(\d+)$/i, 'reject $1').replace(/^CONFIRM_REMOVE:(\d+)$/i, 'confirm remove $1').replace(/^CANCEL_REMOVE:(\d+)$/i, 'cancel remove $1').replace(/^CONFIRM_RESET$/i, 'confirm reset registrations').replace(/^CANCEL_RESET$/i, 'cancel reset registrations');
 
   let rx;
+  if ((rx=text.match(/^(?:ACCESS|ACCESS CONTROL)\s+(\d+)$/i))) { await sendAccessAdminMenu(from,rx[1]); return true; }
+  if ((rx=text.match(/^ACCESS_PERMS:(\d+)$/i))) { await sendPermissionAdmin(from,rx[1]); return true; }
+  if ((rx=text.match(/^ACCESS_TOGGLE:([A-Z_]+):(\d+)$/i))) { await togglePermissionAdmin(from,rx[2],rx[1].toUpperCase()); return true; }
+  if ((rx=text.match(/^ACCESS_AREA:(\d+)$/i))) { await sendAreaScopePicker(from,rx[1]); return true; }
+  if ((rx=text.match(/^ACCESS_AREA_SET:([A-Z0-9_]+):(\d+)$/i))) { await setAreaScope(from,rx[2],rx[1].toUpperCase()); return true; }
+  if ((rx=text.match(/^ACCESS_JOB:(\d+)$/i))) { await sendJobScopePicker(from,rx[1]); return true; }
+  if ((rx=text.match(/^ACCESS_JOB_SET:([A-Z_]+):(\d+)$/i))) { await setJobScope(from,rx[2],rx[1].toUpperCase()); return true; }
+  if ((rx=text.match(/^ACCESS_VIEW:(\d+)$/i))) { await sendEffectiveAccess(from,rx[1]); return true; }
   if ((rx=text.match(/^SET RESPONSIBILITY\s+(\d+)$/i))) {
     const u=await byEmp(rx[1]);
     if(!u || u.approval_status!=='approved' || !u.is_active) await sendText(from,'Not found.');
@@ -2293,6 +2403,7 @@ async function ownerCommand(from, text) {
         `Registration approved\n${u.name} / ${u.employee_number}`,
         [
           {id:`RESP_CHANGE:${u.employee_number}`,title:'Set Responsibility'},
+          {id:`ACCESS_PERMS:${u.employee_number}`,title:'Access Options'},
           {id:`RESP_DONE:${u.employee_number}`,title:'Later'}
         ]
       );
@@ -2345,7 +2456,7 @@ async function ownerCommand(from, text) {
     return true;
   }
 
-  m = text.match(/^(grant|revoke)\s+(\d+)\s+(PRINT_EXPORT|ADVANCED_REPORTS|FULL_ACCESS)$/i);
+  m = text.match(/^(grant|revoke)\s+(\d+)\s+(ENTRY|VIEW|EDIT|DELETE_UNDO|APPROVAL|PRINT_EXPORT|ANALYSIS|RCM|MASTER_EDIT|ACCESS_ADMIN|ADVANCED_REPORTS|FULL_ACCESS)$/i);
   if (m) {
     const active = m[1].toLowerCase() === 'grant';
 
@@ -2361,6 +2472,7 @@ async function ownerCommand(from, text) {
       [m[2], m[3].toUpperCase(), active, from]
     );
 
+    await pool.query(`INSERT INTO authority_audit(employee_number,action,performed_by,details) VALUES($1,$2,$3,$4::jsonb)`,[m[2],active?'GRANT_PERMISSION':'REVOKE_PERMISSION',from,JSON.stringify({permission:m[3].toUpperCase(),source:'admin_text_command'})]);
     await sendText(
       from,
       `${m[3].toUpperCase()} ${active ? 'granted' : 'revoked'} for ${m[2]}.`
@@ -3037,7 +3149,7 @@ app.post('/webhook', (req, res) => {
 app.get('/api/status', (_q, r) =>
   r.status(200).json({
     status: 'ready',
-    registration: 'V7.5-master-sync-universal-search',
+    registration: 'V7.7.18-authority-responsibility-hardening',
     webhook: '/webhook',
     super_admins_configured: SUPER_ADMIN_NUMBERS.size
   })
