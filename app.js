@@ -64,6 +64,13 @@ function cachedSource(mediaId, employeeNumber){
 const app = express();
 app.use(express.json({ limit: '20mb' }));
 
+// V7.2 memory hygiene: temporary in-process source buffers are short-lived.
+setInterval(()=>{
+  const now=Date.now();
+  for(const [k,v] of recentSourceCache) if(!v || v.expiresAt<now) recentSourceCache.delete(k);
+  for(const [k,v] of latestConvertibleSource) if(!v || v.expiresAt<now) latestConvertibleSource.delete(k);
+},5*60*1000).unref?.();
+
 const PORT = Number.parseInt(process.env.PORT || '10000', 10);
 const HOST = process.env.HOST || '0.0.0.0';
 const VERIFY_TOKEN = (process.env.META_VERIFY_TOKEN || '').trim();
@@ -411,6 +418,7 @@ async function initDB() {
     heartbeat_at TIMESTAMPTZ, completed_at TIMESTAMPTZ
   )`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_bg_jobs_status ON background_jobs(status,created_at)`);
+  await pool.query(`DELETE FROM file_upload_sources WHERE expires_at IS NOT NULL AND expires_at < now()`);
   // A deploy/restart can interrupt an in-process worker. Requeue stale running jobs.
   await pool.query(`UPDATE background_jobs SET status='queued', started_at=NULL,
     last_error=CASE WHEN last_error IS NULL OR last_error='' THEN 'Recovered after service restart' ELSE last_error END
@@ -488,10 +496,10 @@ async function tiffToPdfBuffer(buf,onProgress=null){
     const probe=sharp(buf,{page:i,pages:1,limitInputPixels:false,sequentialRead:true,failOn:'none'}).rotate();
     const m=await probe.metadata();
     const w0=Math.max(1,Number(m.width)||1),h0=Math.max(1,Number(m.height)||1);
-    const maxSide=2600, resizeScale=Math.min(1,maxSide/Math.max(w0,h0));
+    const maxSide=1400, resizeScale=Math.min(1,maxSide/Math.max(w0,h0));
     const outW=Math.max(1,Math.round(w0*resizeScale)),outH=Math.max(1,Math.round(h0*resizeScale));
-    const png=await probe.resize({width:outW,height:outH,fit:'inside',withoutEnlargement:true}).png({compressionLevel:7}).toBuffer();
-    const emb=await pdf.embedPng(png);
+    const jpg=await probe.resize({width:outW,height:outH,fit:'inside',withoutEnlargement:true}).flatten({background:'#ffffff'}).jpeg({quality:68,mozjpeg:true}).toBuffer();
+    const emb=await pdf.embedJpg(jpg);
     const pdfScale=Math.min(1,1440/Math.max(outW,outH));
     const page=pdf.addPage([outW*pdfScale,outH*pdfScale]);
     page.drawImage(emb,{x:0,y:0,width:outW*pdfScale,height:outH*pdfScale});
@@ -523,6 +531,14 @@ async function enqueueConversionJob(u,from,mediaId,name,mime,kind){
   setImmediate(()=>kickBackgroundWorker().catch(e=>console.error('[BG WORKER KICK]',e)));
   return row;
 }
+async function cleanupCompletedSource(j){
+  // Delete only temporary source metadata/pointers. Structured maintenance data/audit remain permanent.
+  await pool.query(`DELETE FROM file_upload_sources WHERE employee_number=$1 AND media_id=$2`,[j.employee_number,String(j.media_id)]).catch(()=>{});
+  recentSourceCache.delete(String(j.media_id));
+  const latest=latestConvertibleSource.get(String(j.employee_number));
+  if(latest && String(latest.mediaId)===String(j.media_id)) latestConvertibleSource.delete(String(j.employee_number));
+}
+
 async function runBackgroundJob(j){
   try{
     await pool.query(`UPDATE background_jobs SET status='running',attempts=attempts+1,started_at=coalesce(started_at,now()),heartbeat_at=now(),last_error=NULL WHERE id=$1`,[j.id]);
@@ -533,10 +549,12 @@ async function runBackgroundJob(j){
       const base=String(j.source_filename||'LMMM_TIFF').replace(/\.tiff?$/i,'');
       await sendDocumentBuffer(j.whatsapp_number,out.buffer,`${base}.pdf`,`✅ TIFF → PDF complete • ${out.pages}/${out.pages} pages • ${j.job_code}`);
       await pool.query(`UPDATE background_jobs SET status='completed',progress_current=$2,progress_total=$2,result_meta=$3,completed_at=now(),heartbeat_at=now() WHERE id=$1`,[j.id,out.pages,JSON.stringify({pages:out.pages,filename:`${base}.pdf`})]);
+      await cleanupCompletedSource(j);
     }else if(j.job_type==='access_to_excel'){
       const out=await accessToExcelBuffer(buf); const base=String(j.source_filename||'LMMM_Access').replace(/\.(mdb|accdb)$/i,'');
       await sendDocumentBuffer(j.whatsapp_number,out.buffer,`${base}.xlsx`,`✅ Access → Excel complete • ${out.sheets}/${out.tables} tables • ${j.job_code}`,'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
       await pool.query(`UPDATE background_jobs SET status='completed',progress_current=$2,progress_total=$2,result_meta=$3,completed_at=now(),heartbeat_at=now() WHERE id=$1`,[j.id,out.tables,JSON.stringify({tables:out.tables,sheets:out.sheets,rows:out.totalRows,filename:`${base}.xlsx`})]);
+      await cleanupCompletedSource(j);
     }
   }catch(e){
     const msg=String(e?.message||e).slice(0,500); console.error('[BACKGROUND JOB]',j.job_code,e);
@@ -1079,6 +1097,18 @@ function classifySectionEvent(text=''){
   if(/\bdefect|leak|loose|damage|damaged|abnormal|problem|fault|failed|failure\b/i.test(text))return 'defect';
   if(/\bjob|rectified|replaced|attended|repair|repaired|completed|action taken\b/i.test(text))return 'job_action';
   return null;
+}
+
+// V7.2 safety: terse nouns/search phrases are retrieval, never automatic data entry.
+function looksLikeRetrievalIntent(text=''){
+  const t=String(text||'').trim();
+  if(/[?]$/.test(t))return true;
+  if(/\b(show|find|search|list|history|details|data|records?|status|previous|old|tell|cheppu|chupinchu|entha|which|what|where|when)\b/i.test(t))return true;
+  const words=t.split(/\s+/).filter(Boolean);
+  const explicitEventVerb=/\b(is leaking|leaking|found|noticed|observed|has failed|failed at|damaged at|rectified|replaced|repaired|attended|completed|checked at|inspected at)\b/i.test(t);
+  if(words.length<=5 && !explicitEventVerb)return true;
+  if(/\b(defects?|jobs?|inspections?|breakdowns?|history|spares?|drawings?|manuals?|sop|smp)\b/i.test(t) && !explicitEventVerb)return true;
+  return false;
 }
 
 
@@ -2071,7 +2101,7 @@ async function processMessage(from, text, rawMessage = null) {
 
     // Natural inspection / defect / job-action entry for every section.
     const et=classifySectionEvent(clean);
-    if(et && !/^PROD|^DELAY/i.test(clean)){
+    if(et && !looksLikeRetrievalIntent(clean) && !/^PROD|^DELAY/i.test(clean)){
       if(looksLateOrUnclear(clean)){
         await pool.query(`INSERT INTO pending_event_entries(employee_number,event_type,event_text,section,area,responsibility)
           VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(employee_number) DO UPDATE
@@ -2255,7 +2285,7 @@ app.post('/webhook', (req, res) => {
 app.get('/api/status', (_q, r) =>
   r.status(200).json({
     status: 'ready',
-    registration: 'V7.1-durable-background-jobs-fast-path',
+    registration: 'V7.2-memory-safe-intent-safe-cleanup',
     webhook: '/webhook',
     super_admins_configured: SUPER_ADMIN_NUMBERS.size
   })
