@@ -3,6 +3,19 @@ import 'dotenv/config';
 import pg from 'pg';
 
 const { Pool } = pg;
+// V6.1 ephemeral source cache: conversion/retry convenience without permanent file storage.
+// Buffers expire automatically and are never written to PostgreSQL.
+const recentSourceCache = new Map();
+const SOURCE_CACHE_TTL_MS = 30 * 60 * 1000;
+function cacheSource(employeeNumber, mediaId, payload){
+  recentSourceCache.set(String(mediaId), {...payload, employeeNumber:String(employeeNumber), expiresAt:Date.now()+SOURCE_CACHE_TTL_MS});
+  for (const [k,v] of recentSourceCache) if (!v || v.expiresAt < Date.now()) recentSourceCache.delete(k);
+}
+function cachedSource(mediaId, employeeNumber){
+  const v=recentSourceCache.get(String(mediaId));
+  if(!v || v.expiresAt<Date.now() || (employeeNumber && String(v.employeeNumber)!==String(employeeNumber))){ recentSourceCache.delete(String(mediaId)); return null; }
+  return v;
+}
 const app = express();
 app.use(express.json({ limit: '20mb' }));
 
@@ -373,8 +386,8 @@ async function uploadWhatsAppMedia(buf,mime,filename){
   const r=await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${PHONE_NUMBER_ID}/media`,{method:'POST',headers:{Authorization:`Bearer ${ACCESS_TOKEN}`},body:fd});
   const d=await r.json(); if(!r.ok||!d.id)throw new Error(`WhatsApp media upload failed ${r.status}: ${JSON.stringify(d)}`); return d.id;
 }
-async function sendDocumentBuffer(to,buf,filename,caption=''){
-  const id=await uploadWhatsAppMedia(buf,'application/pdf',filename);
+async function sendDocumentBuffer(to,buf,filename,caption='',mime='application/pdf'){
+  const id=await uploadWhatsAppMedia(buf,mime,filename);
   const r=await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${PHONE_NUMBER_ID}/messages`,{method:'POST',headers:{Authorization:`Bearer ${ACCESS_TOKEN}`,'Content-Type':'application/json'},body:JSON.stringify({messaging_product:'whatsapp',to,type:'document',document:{id,filename,caption:String(caption||'').slice(0,1024)}})});
   const d=await r.json(); if(!r.ok)throw new Error(`WhatsApp document send failed ${r.status}: ${JSON.stringify(d)}`); return d;
 }
@@ -409,6 +422,22 @@ async function tiffToPdfBuffer(buf){
   }
   return {buffer:Buffer.from(await pdf.save()),pages};
 }
+async function accessToExcelBuffer(buf){
+  let MDBReader, XLSX;
+  try{const mod=await import('mdb-reader'); MDBReader=mod.default||mod.MDBReader||mod;}catch(e){throw new Error('Access reader is unavailable on this server.');}
+  try{XLSX=await import('xlsx');}catch(e){throw new Error('Excel writer is unavailable on this server.');}
+  const db=new MDBReader(buf), names=db.getTableNames(), wb=XLSX.utils.book_new();
+  let totalRows=0, sheets=0; const errors=[];
+  for(const tableName of names){
+    try{const rows=db.getTable(tableName).getData(); totalRows+=rows.length;
+      const safe=String(tableName||`Table${sheets+1}`).replace(/[\\/?*\[\]:]/g,'_').slice(0,31)||`Table${sheets+1}`;
+      const ws=XLSX.utils.json_to_sheet(rows); XLSX.utils.book_append_sheet(wb,ws,safe); sheets++;
+    }catch(e){errors.push(`${tableName}: ${e.message}`);}
+  }
+  if(!sheets) throw new Error(`No readable Access tables. ${errors.slice(0,2).join('; ')}`);
+  return {buffer:Buffer.from(XLSX.write(wb,{type:'buffer',bookType:'xlsx'})),tables:names.length,sheets,totalRows,errors};
+}
+
 async function sendButtons(to, body, buttons) {
   const safeButtons = (buttons || []).slice(0, 3).map(b => ({
     type: 'reply',
@@ -1173,6 +1202,7 @@ async function stageMedia(u,from,msg){
  const type=msg.image?'image':(msg.audio||msg.voice)?'audio':'document';
  const meta=await mediaMeta(n.id), mime=meta.mime_type||n.mime_type||'', name=n.filename||`${type}-${n.id}`;
  const buf=await mediaBytes(meta.url),ctx=await currentShiftContext(u);
+ cacheSource(u.employee_number,n.id,{buf,mime,name,mediaId:n.id,receivedAt:Date.now()});
  let raw='',obj,geminiFile=null,sourcePart=null;
  const isPdf=/pdf/i.test(mime)||/\.pdf$/i.test(name);
  const isTiff=/tiff?/i.test(mime)||/\.tiff?$/i.test(name);
@@ -1686,10 +1716,45 @@ async function processMessage(from, text, rawMessage = null) {
   if (u.approval_status === 'approved') {
     let cm;
 
+    // V6.1 batch recovery commands. Only failed/review/pending units are selected; completed units are preserved.
+    let rr=clean.match(/^(RETRY|RESUME)\s*(?:UP[- ]?)?(\d+)$/i);
+    if(rr){
+      const mid=Number(rr[2]), m=(await pool.query(`SELECT * FROM media_ingestion WHERE id=$1`,[mid])).rows[0];
+      if(!m || (!isOwner(from) && m.employee_number!==u.employee_number)){await sendText(from,'Batch not found.');return;}
+      const pending=(await pool.query(`SELECT unit_type,unit_start,unit_end,status FROM ingestion_checkpoints WHERE media_ingestion_id=$1 AND status IN ('review','fallback','processing','pending') ORDER BY unit_start`,[mid])).rows;
+      if(!pending.length){await sendText(from,`${m.batch_code||mediaBatchCode(mid)} has no pending/review units.`);return;}
+      const cached=cachedSource(m.media_id,u.employee_number);
+      if(!cached){await sendText(from,`⚠️ ${m.batch_code||mediaBatchCode(mid)} source file is no longer in the temporary cache. Completed indexed data is safe. Upload the same source once; future retries/resume can reuse it during the cache window.`);return;}
+      await sendText(from,`⏳ ${rr[1].toUpperCase()} ${m.batch_code||mediaBatchCode(mid)} started • ${pending.length} pending/review checkpoint(s). Completed units will not be reprocessed.`);
+      // Re-indexing uses existing document metadata and dedupe-safe chunk inserts.
+      const kr=(await pool.query(`SELECT * FROM technical_document_knowledge WHERE media_ingestion_id=$1 ORDER BY id LIMIT 1`,[mid])).rows[0];
+      if(!kr){await sendText(from,'Reference knowledge header not found for this batch.');return;}
+      const obj={document_class:kr.document_class,title:kr.title,equipment_refs:kr.equipment_name?[kr.equipment_name]:[],identifiers:kr.identifiers||[],page_count:Math.max(...pending.map(x=>Number(x.unit_end)||1))};
+      let ok=0,fail=[]; const ctx2=await currentShiftContext(u);
+      for(const cp of pending){for(let p=Number(cp.unit_start);p<=Number(cp.unit_end);p++){
+        try{await checkpoint(mid,cp.unit_type,p,p,'processing');const part=await withRetry(()=>extractReferenceRange(cached.buf,cached.mime,u,ctx2,obj,cached.name,p,p,null),4);
+          for(const item of (part.reference_items||[])){const tx=String(item.text||'').trim();if(!tx)continue;await pool.query(`INSERT INTO technical_document_chunks(media_ingestion_id,knowledge_id,employee_number,document_class,title,equipment_name,identifiers,page_start,page_end,section_heading,content_text,source_filename,entered_by) SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13 WHERE NOT EXISTS(SELECT 1 FROM technical_document_chunks WHERE media_ingestion_id=$1 AND page_start=$8 AND page_end=$9 AND coalesce(section_heading,'')=coalesce($10,'') AND content_text=$11)`,[mid,kr.id,u.employee_number,kr.document_class,kr.title,kr.equipment_name,JSON.stringify(kr.identifiers||[]),p,p,item.heading||null,tx,cached.name,from]);}
+          await checkpoint(mid,cp.unit_type,p,p,'done');ok++;
+        }catch(e){await checkpoint(mid,cp.unit_type,p,p,'review',e.message);fail.push(p);}
+      }}
+      await pool.query(`UPDATE media_ingestion SET review_count=$2,status=$3 WHERE id=$1`,[mid,fail.length,fail.length?'reference_partial':'reference_indexed']);
+      await sendText(from,`✅ ${rr[1].toUpperCase()} complete • recovered ${ok} unit(s)${fail.length?` • ${fail.length} still need review: ${[...new Set(fail)].join(', ')}`:' • 0 review units remaining'}\nBatch ID: ${m.batch_code||mediaBatchCode(mid)}`);return;
+    }
+
+    // Access -> Excel conversion. Source bytes are temporary only; generated XLSX is returned to WhatsApp.
+    if(/^(?:ACCESS|MDB|ACCDB)\s*(?:TO|2)\s*(?:EXCEL|XLSX)$|^(?:EXCEL|XLSX)\s*(?:CHEYYI|CHEY|GA CONVERT CHEYYI|CONVERT)$/i.test(clean.trim())){
+      const r=await pool.query(`SELECT media_id,filename,mime_type FROM media_ingestion WHERE employee_number=$1 AND (LOWER(coalesce(filename,'')) ~ '\\.(mdb|accdb)$' OR LOWER(coalesce(mime_type,'')) LIKE '%access%') ORDER BY id DESC LIMIT 1`,[u.employee_number]);
+      if(!r.rows[0]){await sendText(from,'Access .mdb/.accdb file dorakaledu. Mundu file upload cheyyandi.');return;}
+      try{const m=r.rows[0];let src=cachedSource(m.media_id,u.employee_number);let ab=src?.buf;if(!ab){const meta=await mediaMeta(m.media_id);ab=await mediaBytes(meta.url);}
+        await sendText(from,'⏳ Access → Excel conversion started. Each readable Access table will become a separate Excel sheet.');const out=await accessToExcelBuffer(ab);const base=String(m.filename||'LMMM_Access').replace(/\.(mdb|accdb)$/i,'');
+        await sendDocumentBuffer(from,out.buffer,`${base}.xlsx`,`✅ Access → Excel complete • ${out.sheets}/${out.tables} tables • ${out.totalRows} rows`,'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      }catch(e){console.error('[ACCESS->XLSX]',e);await sendText(from,`⚠️ Access → Excel conversion failed: ${String(e?.message||e).slice(0,220)}`);}return;
+    }
+
     if(/^(?:TIFF|TIF)\s*(?:TO|2)\s*PDF$|^PDF\s*(?:CHEYYI|CHEY|GA CONVERT CHEYYI|CONVERT)$/i.test(clean.trim())){
       const r=await pool.query(`SELECT media_id,filename,mime_type FROM media_ingestion WHERE employee_number=$1 AND (LOWER(coalesce(mime_type,'')) LIKE '%tiff%' OR LOWER(coalesce(filename,'')) ~ '\\.(tif|tiff)$') ORDER BY id DESC LIMIT 1`,[u.employee_number]);
       if(!r.rows[0]){await sendText(from,'TIFF file dorakaledu. Mundu TIFF/TIF file upload cheyyandi.');return;}
-      try{await sendText(from,'⏳ TIFF → PDF conversion started. All frames/pages will be kept in the original order.');const m=r.rows[0],meta=await mediaMeta(m.media_id),tb=await mediaBytes(meta.url),out=await tiffToPdfBuffer(tb),base=String(m.filename||'LMMM_TIFF').replace(/\.(tif|tiff)$/i,'');await sendDocumentBuffer(from,out.buffer,`${base}.pdf`,`✅ TIFF → PDF complete • ${out.pages}/${out.pages} pages`);}catch(e){console.error('[TIFF->PDF]',e);await sendText(from,`⚠️ TIFF → PDF conversion failed: ${String(e?.message||e).slice(0,180)}`);}return;
+      try{await sendText(from,'⏳ TIFF → PDF conversion started. All frames/pages will be kept in the original order.');const m=r.rows[0],cached=cachedSource(m.media_id,u.employee_number),meta=cached?null:await mediaMeta(m.media_id),tb=cached?.buf||await mediaBytes(meta.url),out=await tiffToPdfBuffer(tb),base=String(m.filename||'LMMM_TIFF').replace(/\.(tif|tiff)$/i,'');await sendDocumentBuffer(from,out.buffer,`${base}.pdf`,`✅ TIFF → PDF complete • ${out.pages}/${out.pages} pages`);}catch(e){console.error('[TIFF->PDF]',e);await sendText(from,`⚠️ TIFF → PDF conversion failed: ${String(e?.message||e).slice(0,180)}`);}return;
     }
 
     if(rawMessage && (rawMessage.image||rawMessage.audio||rawMessage.voice||rawMessage.document)){
@@ -1981,7 +2046,7 @@ app.post('/webhook', (req, res) => {
 app.get('/api/status', (_q, r) =>
   r.status(200).json({
     status: 'ready',
-    registration: 'V6.0-universal-maintenance-data-engine',
+    registration: 'V6.1-stabilization-conversion-recovery',
     webhook: '/webhook',
     super_admins_configured: SUPER_ADMIN_NUMBERS.size
   })
