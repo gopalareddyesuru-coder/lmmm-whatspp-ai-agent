@@ -1,6 +1,8 @@
 import express from 'express';
 import 'dotenv/config';
 import pg from 'pg';
+import sharp from 'sharp';
+import { PDFDocument } from 'pdf-lib';
 
 const { Pool } = pg;
 const app = express();
@@ -358,6 +360,27 @@ async function sendText(to, body) {
   return d;
 }
 
+async function uploadWhatsAppMedia(buf,mime,filename){
+  const fd=new FormData();
+  fd.append('messaging_product','whatsapp'); fd.append('type',mime||'application/octet-stream');
+  fd.append('file',new Blob([buf],{type:mime||'application/octet-stream'}),filename||'file');
+  const r=await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${PHONE_NUMBER_ID}/media`,{method:'POST',headers:{Authorization:`Bearer ${ACCESS_TOKEN}`},body:fd});
+  const d=await r.json(); if(!r.ok||!d.id)throw new Error(`WhatsApp media upload failed ${r.status}: ${JSON.stringify(d)}`); return d.id;
+}
+async function sendDocumentBuffer(to,buf,filename,caption=''){
+  const id=await uploadWhatsAppMedia(buf,'application/pdf',filename);
+  const r=await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${PHONE_NUMBER_ID}/messages`,{method:'POST',headers:{Authorization:`Bearer ${ACCESS_TOKEN}`,'Content-Type':'application/json'},body:JSON.stringify({messaging_product:'whatsapp',to,type:'document',document:{id,filename,caption:String(caption||'').slice(0,1024)}})});
+  const d=await r.json(); if(!r.ok)throw new Error(`WhatsApp document send failed ${r.status}: ${JSON.stringify(d)}`); return d;
+}
+async function tiffToPdfBuffer(buf){
+  const meta=await sharp(buf,{pages:-1}).metadata(); const pages=Math.max(1,Number(meta.pages)||1); const pdf=await PDFDocument.create();
+  for(let i=0;i<pages;i++){
+    const img=sharp(buf,{page:i,pages:1}).rotate(); const m=await img.metadata(); const png=await img.png({compressionLevel:6}).toBuffer(); const emb=await pdf.embedPng(png);
+    const w=Math.max(1,Number(m.width)||emb.width),h=Math.max(1,Number(m.height)||emb.height),scale=Math.min(1,1440/Math.max(w,h));
+    const page=pdf.addPage([w*scale,h*scale]); page.drawImage(emb,{x:0,y:0,width:w*scale,height:h*scale});
+  }
+  return {buffer:Buffer.from(await pdf.save()),pages};
+}
 async function sendButtons(to, body, buttons) {
   const safeButtons = (buttons || []).slice(0, 3).map(b => ({
     type: 'reply',
@@ -987,26 +1010,12 @@ async function extractReferenceRange(buf,mime,u,ctx,obj,name,startPage,endPage,s
  ],u,ctx);
 }
 async function indexFullReferenceDocument(mediaRowId,knowledgeId,buf,mime,u,from,obj,name,sourcePart=null){
- const total=Math.max(1,Math.min(Number(obj.page_count)||1,1000));
- const step=total>80?5:10; let chunkCount=0, attemptedPages=0; const failedRanges=[];
- for(let start=1;start<=total;start+=step){
-  const end=Math.min(total,start+step-1); attemptedPages=end;
-  try{
-   const part=await withRetry(async()=>extractReferenceRange(buf,mime,u,await currentShiftContext(u),obj,name,start,end,sourcePart),3);
-   const items=Array.isArray(part.reference_items)?part.reference_items:[];
-   for(const item of items){
-    const text=String(item?.text||'').trim(); if(!text)continue;
-    const ps=Math.max(start,Math.min(end,Number(item.page_number)||start));
-    const pe=Math.max(ps,Math.min(end,Number(item.page_end)||ps));
-    await pool.query(`INSERT INTO technical_document_chunks(media_ingestion_id,knowledge_id,employee_number,document_class,title,equipment_name,identifiers,page_start,page_end,section_heading,content_text,source_filename,entered_by)
-     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
-     [mediaRowId,knowledgeId,u.employee_number,obj.document_class,obj.title||name,(obj.equipment_refs||[])[0]||null,JSON.stringify(obj.identifiers||[]),ps,pe,item.heading||null,text,name,from]);
-    chunkCount++;
-   }
-  }catch(e){console.error(`[REFERENCE RANGE ${start}-${end}]`,e);failedRanges.push([start,end]);}
- }
- const failedPages=failedRanges.reduce((n,[a,b])=>n+(b-a+1),0);
- return {total,indexedPages:Math.max(0,total-failedPages),attemptedPages,chunkCount,failedPages,failedRanges};
+ const total=Math.max(1,Math.min(Number(obj.page_count)||1,2000)),step=total>80?5:10; let chunkCount=0; const failedPages=[],indexed=new Set();
+ async function savePart(part,start,end){for(const item of (Array.isArray(part?.reference_items)?part.reference_items:[])){const text=String(item?.text||'').trim();if(!text)continue;const ps=Math.max(start,Math.min(end,Number(item.page_number)||start)),pe=Math.max(ps,Math.min(end,Number(item.page_end)||ps));await pool.query(`INSERT INTO technical_document_chunks(media_ingestion_id,knowledge_id,employee_number,document_class,title,equipment_name,identifiers,page_start,page_end,section_heading,content_text,source_filename,entered_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,[mediaRowId,knowledgeId,u.employee_number,obj.document_class,obj.title||name,(obj.equipment_refs||[])[0]||null,JSON.stringify(obj.identifiers||[]),ps,pe,item.heading||null,text,name,from]);chunkCount++;for(let p=ps;p<=pe;p++)indexed.add(p);}}
+ async function onePage(p){try{const ctx=await currentShiftContext(u),part=await withRetry(()=>extractReferenceRange(buf,mime,u,ctx,obj,name,p,p,sourcePart),3);await savePart(part,p,p);indexed.add(p);return true;}catch(e){console.error(`[REFERENCE PAGE ${p}]`,e);failedPages.push(p);return false;}}
+ for(let start=1;start<=total;start+=step){const end=Math.min(total,start+step-1);try{const ctx=await currentShiftContext(u),part=await withRetry(()=>extractReferenceRange(buf,mime,u,ctx,obj,name,start,end,sourcePart),3);await savePart(part,start,end);for(let p=start;p<=end;p++)if(!indexed.has(p))await onePage(p);}catch(e){console.error(`[REFERENCE RANGE ${start}-${end}]`,e);for(let p=start;p<=end;p++)await onePage(p);}}
+ const uniqFail=[...new Set(failedPages)].filter(p=>!indexed.has(p)).sort((a,b)=>a-b),failedRanges=[];for(const p of uniqFail){const last=failedRanges.at(-1);if(last&&last[1]===p-1)last[1]=p;else failedRanges.push([p,p]);}
+ return {total,indexedPages:total-uniqFail.length,attemptedPages:total,chunkCount,failedPages:uniqFail.length,failedRanges};
 }
 function queryTokens(t=''){
  return [...new Set(String(t).toLowerCase().replace(/[^a-z0-9_\-\/\.\s]/g,' ').split(/\s+/).filter(x=>x.length>=2 && !['the','and','for','with','what','tell','about','show','give','please','data','details','lo','ki','ga','ani'].includes(x)))].slice(0,12);
@@ -1598,6 +1607,12 @@ async function processMessage(from, text, rawMessage = null) {
 
   if (u.approval_status === 'approved') {
     let cm;
+
+    if(/^(?:TIFF|TIF)\s*(?:TO|2)\s*PDF$|^PDF\s*(?:CHEYYI|CHEY|GA CONVERT CHEYYI|CONVERT)$/i.test(clean.trim())){
+      const r=await pool.query(`SELECT media_id,filename,mime_type FROM media_ingestion WHERE employee_number=$1 AND (LOWER(coalesce(mime_type,'')) LIKE '%tiff%' OR LOWER(coalesce(filename,'')) ~ '\\.(tif|tiff)$') ORDER BY id DESC LIMIT 1`,[u.employee_number]);
+      if(!r.rows[0]){await sendText(from,'TIFF file dorakaledu. Mundu TIFF/TIF file upload cheyyandi.');return;}
+      try{await sendText(from,'⏳ TIFF → PDF conversion started. All frames/pages will be kept in the original order.');const m=r.rows[0],meta=await mediaMeta(m.media_id),tb=await mediaBytes(meta.url),out=await tiffToPdfBuffer(tb),base=String(m.filename||'LMMM_TIFF').replace(/\.(tif|tiff)$/i,'');await sendDocumentBuffer(from,out.buffer,`${base}.pdf`,`✅ TIFF → PDF complete • ${out.pages}/${out.pages} pages`);}catch(e){console.error('[TIFF->PDF]',e);await sendText(from,`⚠️ TIFF → PDF conversion failed: ${String(e?.message||e).slice(0,180)}`);}return;
+    }
 
     if(rawMessage && (rawMessage.image||rawMessage.audio||rawMessage.voice||rawMessage.document)){
       try{await stageMedia(u,from,rawMessage);}catch(e){console.error('[MEDIA]',e);await sendText(from,`⚠️ File processing stopped before completion. ${String(e?.message||'Unknown processing error').slice(0,180)}\nPlease retry the same file; large documents are processed in batches.`);}
