@@ -239,6 +239,13 @@ async function initDB() {
     reviewed_at TIMESTAMPTZ, created_at TIMESTAMPTZ DEFAULT now(),
     UNIQUE(record_uid,issue_code)
   )`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS user_default_permissions(
+    id BIGSERIAL PRIMARY KEY, employee_number TEXT NOT NULL, permission TEXT NOT NULL,
+    source_type TEXT NOT NULL DEFAULT 'REGISTRATION_HIERARCHY', source_detail TEXT,
+    scope_section TEXT, scope_area TEXT, active BOOLEAN DEFAULT TRUE,
+    calculated_at TIMESTAMPTZ DEFAULT now(), UNIQUE(employee_number,permission)
+  )`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_default_permissions_emp ON user_default_permissions(employee_number,active)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_authority_grants_emp ON user_authority_grants(employee_number,active)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_data_quality_record ON data_quality_review(record_uid,status)`);
 
@@ -930,6 +937,44 @@ function designationBand(designation='') {
   return employeeCategory(designation);
 }
 
+function accessLabel(code=''){
+  const m={FULL_ACCESS:'Full Access',ENTRY:'Entry',VIEW:'View',EDIT:'Edit',DELETE_UNDO:'Delete / Undo',APPROVAL:'Approval',PRINT_EXPORT:'PDF / Print',ANALYSIS:'Analysis',ADVANCED_REPORTS:'Advanced Reports',RCM:'RCM Analysis',MASTER_EDIT:'Master Edit',ACCESS_ADMIN:'Access Admin'};
+  return m[String(code).toUpperCase()]||String(code).replaceAll('_',' ');
+}
+function inheritedPermissionCodes({designation='',operationalRole='NORMAL_USER',responsibilities=[]}={}){
+  const category=employeeCategory(designation), band=designationBand(designation);
+  const roles=new Set((responsibilities||[]).map(x=>String(x.responsibility_role||x||'').trim().toUpperCase().replace(/[ -]+/g,'_')));
+  const op=String(operationalRole||'NORMAL_USER').toUpperCase();
+  const out=new Set(category==='EXECUTIVE'?['ENTRY','VIEW']:['ENTRY']);
+  // Only authenticated hierarchy assignments elevate the registration baseline.
+  const full = band==='DGM' || ['HOD','SECTION_INCHARGE','SUPER_ADMIN'].includes(op) || roles.has('HOD') || roles.has('SECTION_IN_CHARGE') || roles.has('SECTION_INCHARGE') || roles.has('SUPER_ADMIN') || roles.has('OWNER');
+  if(full){ ['FULL_ACCESS','ENTRY','VIEW','EDIT','DELETE_UNDO','APPROVAL','PRINT_EXPORT','ANALYSIS','ADVANCED_REPORTS','RCM'].forEach(x=>out.add(x)); }
+  if(op==='SUPER_ADMIN'||roles.has('SUPER_ADMIN')||roles.has('OWNER')){ ['MASTER_EDIT','ACCESS_ADMIN'].forEach(x=>out.add(x)); }
+  return [...out];
+}
+async function syncDefaultAccess(employeeNumber,performedBy='SYSTEM',reason='Registration / hierarchy baseline'){
+  const u=await byEmp(employeeNumber); if(!u)return [];
+  const rr=await pool.query(`SELECT responsibility_role FROM user_responsibilities WHERE employee_number=$1 AND active=true AND (valid_from IS NULL OR valid_from<=now()) AND (valid_to IS NULL OR valid_to>=now())`,[employeeNumber]);
+  const perms=inheritedPermissionCodes({designation:u.designation,operationalRole:u.operational_role,responsibilities:rr.rows});
+  const section=u.section_department||NA, area=u.area_of_working||NA;
+  await pool.query('BEGIN');
+  try{
+    await pool.query(`UPDATE user_default_permissions SET active=false,calculated_at=now() WHERE employee_number=$1`,[employeeNumber]);
+    for(const permission of perms){
+      await pool.query(`INSERT INTO user_default_permissions(employee_number,permission,source_type,source_detail,scope_section,scope_area,active,calculated_at)
+        VALUES($1,$2,'REGISTRATION_HIERARCHY',$3,$4,$5,true,now())
+        ON CONFLICT(employee_number,permission) DO UPDATE SET source_type=EXCLUDED.source_type,source_detail=EXCLUDED.source_detail,scope_section=EXCLUDED.scope_section,scope_area=EXCLUDED.scope_area,active=true,calculated_at=now()`,
+        [employeeNumber,permission,reason,section,area]);
+    }
+    await pool.query(`INSERT INTO authority_audit(employee_number,action,scope_section,scope_area,performed_by,details) VALUES($1,'SYNC_DEFAULT_ACCESS',$2,$3,$4,$5::jsonb)`,[employeeNumber,section,area,performedBy,JSON.stringify({permissions:perms,reason})]);
+    await pool.query('COMMIT');
+  }catch(e){await pool.query('ROLLBACK');throw e;}
+  return perms;
+}
+async function defaultPermissionRows(employeeNumber){
+  return (await pool.query(`SELECT permission,source_type,source_detail,scope_section,scope_area FROM user_default_permissions WHERE employee_number=$1 AND active=true ORDER BY permission`,[employeeNumber])).rows;
+}
+
 async function effectiveAuthority(employeeNumber) {
   const ur = await pool.query(
     `SELECT employee_number,designation,section_department,area_of_working,approval_status,is_active
@@ -1005,6 +1050,13 @@ async function effectiveAuthority(employeeNumber) {
     scope = 'ALL_SECTIONS';
   }
 
+  const defaultRows = await defaultPermissionRows(employeeNumber);
+  // Backfill old approved users on first access without changing explicit grants.
+  if (!defaultRows.length) {
+    await syncDefaultAccess(employeeNumber,'SYSTEM','Backfilled from approved registration + current hierarchy');
+    defaultRows.splice(0,0,...(await defaultPermissionRows(employeeNumber)));
+  }
+
   return {
     employee_number: u.employee_number,
     designation: u.designation,
@@ -1016,6 +1068,7 @@ async function effectiveAuthority(employeeNumber) {
     assignments: ar.rows,
     effective_access: effectiveAccess,
     scope,
+    default_permissions: defaultRows,
     special_permissions: pr.rows.map(x => x.permission),
     authority_grants: agr.rows.map(x => String(x.authority_code||'').toUpperCase()),
     operational_role: u.operational_role || 'NORMAL_USER'
@@ -1093,6 +1146,7 @@ async function setResponsibility(from, employeeNumber, code) {
     await pool.query('COMMIT');
   }catch(e){ await pool.query('ROLLBACK'); throw e; }
 
+  await syncDefaultAccess(employeeNumber,from,'Approved responsibility / hierarchy changed');
   await sendButtons(
     from,
     `Responsibility set\n${u.name} / ${employeeNumber}\n${role}\nSection: ${section}\nArea: ${area}`,
@@ -2319,7 +2373,8 @@ async function employeeGovernanceSummary(emp){
  const auth=(a.authority_grants||[]).join(', ')||'None';
  const roles=(a.responsibilities||[]).map(x=>x.responsibility_role).filter(Boolean).join(', ')||u.responsibility||'Normal Employee';
  const jobs=(sc.jobScopes||[]).join(', ')||'ALL';
- return `Employee Control\n${u.name} / ${emp}\nDesignation: ${u.designation}\nDepartment/Section: ${u.section_department}\nRegistered Area: ${u.area_of_working}\nOperational Role: ${a.operational_role||'NORMAL_USER'}\nResponsibility: ${roles}\nEffective Access: ${a.effective_access}\nAuthority Scope: ${a.scope}\nEffective Area(s): ${sc.plantWide?'ALL':(sc.areas||[]).join(', ')||'Registered'}\nJob Scope: ${jobs}\nSpecial Access: ${perms}\nAuthority Grants: ${auth}`;
+ const inherited=(a.default_permissions||[]).map(x=>accessLabel(x.permission)).join(', ')||'None';
+ return `Employee Control\n${u.name} / ${emp}\nDesignation: ${u.designation}\nDepartment/Section: ${u.section_department}\nRegistered Area: ${u.area_of_working}\nOperational Role: ${String(a.operational_role||'NORMAL_USER').replaceAll('_',' ')}\nResponsibility: ${roles}\n\nDefault / Inherited Access: ${inherited}\nDefault Source: Registration + approved hierarchy\nEffective Access Level: ${String(a.effective_access).replaceAll('_',' + ')}\nAuthority Scope: ${String(a.scope).replaceAll('_',' ')}\nEffective Area(s): ${sc.plantWide?'ALL':(sc.areas||[]).join(', ')||'Registered'}\nJob Scope: ${jobs}\nAdditional / Special Access: ${perms}\nAuthority Grants: ${auth}`;
 }
 async function sendAccessAdminMenu(to,emp){
  if(!await requireSuperAdmin(to))return;
@@ -2334,7 +2389,8 @@ async function sendAccessAdminMenu(to,emp){
 async function sendPermissionAdmin(to,emp){
  if(!await requireSuperAdmin(to))return; const a=await effectiveAuthority(emp);if(!a){await sendText(to,'Not found.');return;}
  const active=new Set((a.special_permissions||[]).map(x=>String(x).toUpperCase()));
- await sendList(to,`Access • ${emp}\n✓ granted • ○ available\nAll grantable options remain visible to Super Admin.`,`Select`,ACCESS_PERMISSION_OPTIONS.map(([code,title])=>({id:`ACCESS_TOGGLE:${code}:${emp}`,title:`${active.has(code)?'✓':'○'} ${title}`.slice(0,24)})),'Access');
+ const inherited=new Set((a.default_permissions||[]).map(x=>String(x.permission||'').toUpperCase()));
+ await sendList(to,`Access • ${emp}\n↳ Default/Inherited • ✓ Additional grant • ○ Available\nRegistration + approved hierarchy defaults are shown; all grantable options remain visible to Super Admin.`,`Select`,ACCESS_PERMISSION_OPTIONS.map(([code,title])=>({id:`ACCESS_TOGGLE:${code}:${emp}`,title:`${active.has(code)?'✓':inherited.has(code)?'↳':'○'} ${title}`.slice(0,24),description:active.has(code)?'Additional grant':inherited.has(code)?'Default / inherited':'Available to grant'})),'Access');
 }
 async function togglePermissionAdmin(from,emp,permission){
  if(!await requireSuperAdmin(from))return;if(!ACCESS_PERMISSION_OPTIONS.some(x=>x[0]===permission)){await sendText(from,'Invalid permission.');return;}
@@ -2359,6 +2415,7 @@ async function setRoleAdmin(from,emp,role){
  const map={SHIFT_INCHARGE:'Shift In-charge',AREA_INCHARGE:'Area In-charge',SECTION_INCHARGE:'Section In-charge',HOD:'HOD',SUPER_ADMIN:'Super Admin'};
  if(map[role]){await pool.query(`UPDATE user_responsibilities SET active=false WHERE employee_number=$1 AND active=true`,[emp]);await pool.query(`INSERT INTO user_responsibilities(employee_number,responsibility_role,scope_section,scope_area,assigned_by) VALUES($1,$2,$3,$4,$5)`,[emp,map[role],u.section_department||NA,u.area_of_working||NA,from]);}
  await pool.query(`INSERT INTO authority_audit(employee_number,action,performed_by,details) VALUES($1,'SET_OPERATIONAL_ROLE',$2,$3::jsonb)`,[emp,from,JSON.stringify({old_role:old,new_role:role})]);
+ await syncDefaultAccess(emp,from,'Operational role / hierarchy changed');
  await sendAccessAdminMenu(from,emp);
 }
 async function sendAuthorityAdmin(to,emp){
@@ -2374,7 +2431,7 @@ async function toggleAuthorityAdmin(from,emp,code){
 }
 async function departmentAreaOptions(){const r=await pool.query(`SELECT area,COUNT(*) n FROM lmmm_master_records WHERE NULLIF(TRIM(COALESCE(area,'')),'') IS NOT NULL GROUP BY area ORDER BY n DESC,area LIMIT 40`);return r.rows.map(x=>String(x.area).trim()).filter(Boolean);}
 async function sendAreaScopePicker(to,emp){if(!await requireSuperAdmin(to))return;const u=await byEmp(emp);if(!u){await sendText(to,'Not found.');return;}let areas=await departmentAreaOptions();if(u.area_of_working&&!areas.some(x=>x.toLowerCase()===String(u.area_of_working).toLowerCase()))areas.unshift(u.area_of_working);areas=[...new Set(areas)].slice(0,9);const rows=[{id:`ACCESS_AREA_SET:REGISTERED:${emp}`,title:'Registered Area'},...areas.map((a,i)=>({id:`ACCESS_AREA_SET:${i}:${emp}`,title:a.slice(0,24)}))].slice(0,10);globalThis.__lmmmAreaPickers=globalThis.__lmmmAreaPickers||new Map();globalThis.__lmmmAreaPickers.set(String(emp),areas);await sendList(to,`Area / Equipment Scope • ${emp}\nScope is inherited by equipment, sub-equipment, assembly and parts.`,`Select`,rows,'Area Scope');}
-async function setAreaScope(from,emp,key){if(!await requireSuperAdmin(from))return;const u=await byEmp(emp);if(!u){await sendText(from,'Not found.');return;}const areas=globalThis.__lmmmAreaPickers?.get(String(emp))||await departmentAreaOptions();const area=key==='REGISTERED'?u.area_of_working:areas[Number(key)];if(!area){await sendText(from,'Area selection expired. Open User Control again.');return;}await pool.query(`UPDATE user_assignments SET active=false WHERE employee_number=$1 AND active=true`,[emp]);await pool.query(`INSERT INTO user_assignments(employee_number,area,section,responsibility,job_scope,assigned_by,reason) VALUES($1,$2,$3,$4,'ALL',$5,$6)`,[emp,area,u.section_department||NA,u.responsibility||NA,from,'Super Admin scope assignment']);await pool.query(`INSERT INTO authority_audit(employee_number,action,scope_section,scope_area,performed_by,details) VALUES($1,'SET_WORK_SCOPE',$2,$3,$4,$5::jsonb)`,[emp,u.section_department||NA,area,from,JSON.stringify({area})]);await sendAccessAdminMenu(from,emp);}
+async function setAreaScope(from,emp,key){if(!await requireSuperAdmin(from))return;const u=await byEmp(emp);if(!u){await sendText(from,'Not found.');return;}const areas=globalThis.__lmmmAreaPickers?.get(String(emp))||await departmentAreaOptions();const area=key==='REGISTERED'?u.area_of_working:areas[Number(key)];if(!area){await sendText(from,'Area selection expired. Open User Control again.');return;}await pool.query(`UPDATE user_assignments SET active=false WHERE employee_number=$1 AND active=true`,[emp]);await pool.query(`INSERT INTO user_assignments(employee_number,area,section,responsibility,job_scope,assigned_by,reason) VALUES($1,$2,$3,$4,'ALL',$5,$6)`,[emp,area,u.section_department||NA,u.responsibility||NA,from,'Super Admin scope assignment']);await pool.query(`INSERT INTO authority_audit(employee_number,action,scope_section,scope_area,performed_by,details) VALUES($1,'SET_WORK_SCOPE',$2,$3,$4,$5::jsonb)`,[emp,u.section_department||NA,area,from,JSON.stringify({area})]);await syncDefaultAccess(emp,from,'Area / work scope changed');await sendAccessAdminMenu(from,emp);}
 async function sendJobScopePicker(to,emp){if(!await requireSuperAdmin(to))return;const a=await effectiveAuthority(emp);if(!a){await sendText(to,'Not found.');return;}const current=new Set((a.assignments||[]).map(x=>String(x.job_scope||'ALL').toUpperCase()));await sendList(to,`Job Responsibility • ${emp}\nChoose the work family this employee is responsible for.`,`Select`,JOB_SCOPE_OPTIONS.map(([c,t])=>({id:`ACCESS_JOB_SET:${c}:${emp}`,title:`${current.has(c)?'✓ ':''}${t}`.slice(0,24)})),'Job Scope');}
 async function setJobScope(from,emp,jobScope){if(!await requireSuperAdmin(from))return;if(!JOB_SCOPE_OPTIONS.some(x=>x[0]===jobScope)){await sendText(from,'Invalid job scope.');return;}const u=await byEmp(emp);if(!u){await sendText(from,'Not found.');return;}const latest=(await pool.query(`SELECT * FROM user_assignments WHERE employee_number=$1 AND active=true ORDER BY id DESC LIMIT 1`,[emp])).rows[0];await pool.query(`UPDATE user_assignments SET active=false WHERE employee_number=$1 AND active=true`,[emp]);await pool.query(`INSERT INTO user_assignments(employee_number,area,section,responsibility,sub_area,shift,employment_type,is_additional_charge,job_scope,assigned_by,reason) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,[emp,latest?.area||u.area_of_working||NA,latest?.section||u.section_department||NA,latest?.responsibility||u.responsibility||NA,latest?.sub_area||NA,latest?.shift||NA,latest?.employment_type||NA,!!latest?.is_additional_charge,jobScope,from,'Super Admin job responsibility']);await pool.query(`INSERT INTO authority_audit(employee_number,action,performed_by,details) VALUES($1,'SET_JOB_SCOPE',$2,$3::jsonb)`,[emp,from,JSON.stringify({job_scope:jobScope})]);await sendAccessAdminMenu(from,emp);}
 async function sendEffectiveAccess(to,emp){if(!await requireSuperAdmin(to))return;const t=await employeeGovernanceSummary(emp);await sendText(to,t?`${t}\n\nServer-side enforcement is authoritative. Aliases/shortcuts never bypass scope.`:'Not found.');}
@@ -2451,6 +2508,7 @@ async function ownerCommand(from, text) {
       ]
     );
 
+    await syncDefaultAccess(m[1],from,'Registration approved: designation + section + registered area baseline');
     await sendText(u.whatsapp_number, 'Welcome to LMMM AI Maintenance.');
     if (from.replace(/\D/g, '') !== u.whatsapp_number.replace(/\D/g, '')) {
       await sendButtons(
