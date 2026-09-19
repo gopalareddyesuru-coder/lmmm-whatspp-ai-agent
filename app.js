@@ -1,3 +1,4 @@
+// V7.7.28 ACCESS AUTHORITY CONSOLIDATED
 import express from 'express';
 import 'dotenv/config';
 import pg from 'pg';
@@ -1047,13 +1048,15 @@ async function effectiveAuthority(employeeNumber) {
     [employeeNumber]
   );
 
-  const pr = await pool.query(
-    `SELECT permission FROM user_special_permissions
-     WHERE employee_number=$1 AND active=true
+  const prAll = await pool.query(
+    `SELECT permission,active FROM user_special_permissions
+     WHERE employee_number=$1
        AND (valid_from IS NULL OR valid_from<=now())
        AND (valid_to IS NULL OR valid_to>=now())`,
     [employeeNumber]
   );
+  const pr = { rows: prAll.rows.filter(x=>x.active===true) };
+  const hasAccessOverride = prAll.rows.length > 0;
   const agr = await pool.query(
     `SELECT authority_code FROM user_authority_grants
      WHERE employee_number=$1 AND active=true
@@ -1124,6 +1127,7 @@ async function effectiveAuthority(employeeNumber) {
     scope,
     default_permissions: defaultRows,
     special_permissions: pr.rows.map(x => x.permission),
+    has_access_override: hasAccessOverride,
     authority_grants: agr.rows.map(x => String(x.authority_code||'').toUpperCase()),
     operational_role: u.operational_role || 'NORMAL_USER'
   };
@@ -1702,27 +1706,34 @@ async function searchPermissions(u){
  // Owner/Super Admin is determined from the approved user's WhatsApp number and always has full controls.
  const owner=isOwner(u?.whatsapp_number);
  const scope=await effectiveSearchScope(u);
- const full=owner || scope?.plantWide || a?.effective_access==='FULL' || ps.has('FULL_ACCESS') || ps.has('SUPER_ADMIN') || ps.has('OWNER');
- const advanced=full || ps.has('ANALYSIS') || ps.has('ADVANCED_REPORTS');
+ const override=!!a?.has_access_override;
+ const inherited=new Set((a?.default_permissions||[]).map(x=>String(x.permission||'').toUpperCase()));
+ const effective=override?ps:new Set([...inherited,...ps]);
+ const full=owner || effective.has('FULL_ACCESS') || effective.has('SUPER_ADMIN') || effective.has('OWNER');
+ const canEdit=full || effective.has('EDIT') || effective.has('ENTRY');
+ const canView=full || canEdit || effective.has('VIEW');
+ const advanced=full || effective.has('ANALYSIS') || effective.has('ADVANCED_REPORTS');
  const js=new Set((scope?.jobScopes||[]).map(x=>String(x).toUpperCase()));
  const unrestricted=full || !js.size || js.has('ALL') || js.has('NOT ASSIGNED');
  const jobAllowed=(...names)=>unrestricted || names.some(n=>js.has(n));
  return {
    owner, full, scope,
-   view: !!a,
-   more: !!a,
-   date: !!a,
+   view: canView,
+   edit: canEdit,
+   entry: canEdit,
+   more: canView,
+   date: canView,
    analysis: advanced,
    repeat: advanced && jobAllowed('DEFECTS','JOBS','HISTORY'),
-   jobs: !!a && jobAllowed('JOBS','HISTORY'),
-   history: !!a && jobAllowed('HISTORY','JOBS','DEFECTS'),
+   jobs: canView && jobAllowed('JOBS','HISTORY'),
+   history: canView && jobAllowed('HISTORY','JOBS','DEFECTS'),
    mtbf: advanced,
    performance: advanced && jobAllowed('DEFECTS','JOBS','HISTORY','PM','INSPECTION_CBM','BREAKDOWN'),
-   pm: !!a && jobAllowed('PM'),
-   cbm: !!a && jobAllowed('INSPECTION_CBM'),
+   pm: canView && jobAllowed('PM'),
+   cbm: canView && jobAllowed('INSPECTION_CBM'),
    delay: advanced && jobAllowed('BREAKDOWN'),
-   pdf: full || ps.has('PRINT_EXPORT') || ps.has('PDF_REPORT') || ps.has('ADVANCED_REPORTS'),
-   rcm: full || ps.has('RCM')
+   pdf: full || effective.has('PRINT_EXPORT') || effective.has('PDF_REPORT') || effective.has('ADVANCED_REPORTS'),
+   rcm: full || effective.has('RCM')
  };
 }
 async function primarySearchButtons(u,hasMore=true){
@@ -2556,9 +2567,7 @@ async function applyEquipmentDataSelection(to,u){
 }
 
 const ACCESS_PERMISSION_OPTIONS = [
- ['FULL_ACCESS','Full Access'],['ENTRY','Entry'],['VIEW','View'],['EDIT','Edit'],['DELETE_UNDO','Delete / Undo'],['APPROVAL','Approval'],
- ['PRINT_EXPORT','PDF / Print'],['ANALYSIS','Analysis'],['ADVANCED_REPORTS','Advanced Reports'],['RCM','RCM Analysis'],
- ['MASTER_EDIT','Master Edit'],['ACCESS_ADMIN','Access Admin']
+ ['FULL_ACCESS','Full Access'],['VIEW','View Only'],['EDIT','View + Edit / Entry'],['PRINT_EXPORT','PDF / Print'],['ANALYSIS','Analysis'],['ADVANCED_REPORTS','Advanced Reports'],['RCM','RCM Analysis'],['DELETE_UNDO','Delete / Undo'],['APPROVAL','Approval'],['MASTER_EDIT','Master Edit'],['ACCESS_ADMIN','Access Admin']
 ];
 const AUTHORITY_OPTIONS=[
  ['APPROVE_RECORDS','Approve Records'],['CORRECT_RECORDS','Correct Records'],['DELETE_RESTORE','Delete / Restore'],
@@ -2584,7 +2593,7 @@ async function employeeGovernanceSummary(emp){
  const roles=(a.responsibilities||[]).map(x=>x.responsibility_role).filter(Boolean).join(', ')||u.responsibility||'Normal Employee';
  const jobs=(sc.jobScopes||[]).join(', ')||'ALL';
  const inherited=(a.default_permissions||[]).map(x=>accessLabel(x.permission)).join(', ')||'None';
- return `Employee Control\n${u.name} / ${emp}\nDesignation: ${u.designation}\nDepartment/Section: ${u.section_department}\nRegistered Area: ${u.area_of_working}\nOperational Role: ${String(a.operational_role||'NORMAL_USER').replaceAll('_',' ')}\nResponsibility: ${roles}\n\nDefault / Inherited Access: ${inherited}\nDefault Source: Registration + approved hierarchy\nEffective Access Level: ${String(a.effective_access).replaceAll('_',' + ')}\nAuthority Scope: ${String(a.scope).replaceAll('_',' ')}\nEffective Area(s): ${sc.plantWide?'ALL':(sc.areas||[]).join(', ')||'Registered'}\nJob Scope: ${jobs}\nAdditional / Special Access: ${perms}\nAuthority Grants: ${auth}`;
+ return `Employee Control\n${u.name} / ${emp}\nDesignation: ${u.designation}\nDepartment/Section: ${u.section_department}\nRegistered Area: ${u.area_of_working}\nOperational Role: ${String(a.operational_role||'NORMAL_USER').replaceAll('_',' ')}\nResponsibility: ${roles}\n\nDefault / Inherited Access: ${inherited}\nDefault Source: Registration + approved hierarchy\nEffective Access Level: ${String(a.effective_access).replaceAll('_',' + ')}\nAuthority Scope: ${String(a.scope).replaceAll('_',' ')}\nEffective Area(s): ${sc.plantWide?'ALL':(sc.areas||[]).join(', ')||'Registered'}\nJob Scope: ${jobs}\nAccess Override: ${a.has_access_override?'YES — Super Admin selection':'NO — hierarchy defaults'}\nAdditional / Special Access: ${perms}\nAuthority Grants: ${auth}`;
 }
 async function sendAccessAdminMenu(to,emp){
  if(!await requireSuperAdmin(to))return;
@@ -2711,7 +2720,10 @@ async function stageAdminOption(from,key,emp,code,sendFn){
 }
 async function applyAccessSelection(from,emp){
  if(!await requireSuperAdmin(from))return;const st=await selectionGet(from,'ADMIN_ACCESS',emp,[]),sel=new Set(st.selected);
- for(const [code] of ACCESS_PERMISSION_OPTIONS){
+ if(sel.has('EDIT')){sel.add('ENTRY');sel.add('VIEW');}
+ if(sel.has('FULL_ACCESS')){['ENTRY','VIEW','EDIT','DELETE_UNDO','APPROVAL','PRINT_EXPORT','ANALYSIS','ADVANCED_REPORTS','RCM'].forEach(x=>sel.add(x));}
+ const persistedCodes=[...new Set([...ACCESS_PERMISSION_OPTIONS.map(x=>x[0]),'ENTRY'])];
+ for(const code of persistedCodes){
   const active=sel.has(code);
   await pool.query(`INSERT INTO user_special_permissions(employee_number,permission,active,granted_by,reason,updated_at) VALUES($1,$2,$3,$4,$5,now())
    ON CONFLICT(employee_number,permission) DO UPDATE SET active=EXCLUDED.active,granted_by=EXCLUDED.granted_by,granted_at=now(),reason=EXCLUDED.reason,updated_at=now()`,
