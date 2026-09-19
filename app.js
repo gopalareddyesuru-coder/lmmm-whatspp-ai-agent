@@ -928,60 +928,85 @@ async function extractAudio(buf,mime,u,ctx){
    {inline_data:{mime_type:mime||'audio/ogg',data:buf.toString('base64')}}
  ],u,ctx);
 }
-async function classifyDocumentGate(buf,mime,u,ctx,name=''){
+
+async function geminiUploadFile(buf,mime,name='document'){
+ if(!GEMINI_API_KEY)throw new Error('GEMINI_API_KEY missing');
+ const start=await fetch(`https://generativelanguage.googleapis.com/upload/v1beta/files?key=${encodeURIComponent(GEMINI_API_KEY)}`,{
+  method:'POST',headers:{'Content-Type':'application/json','X-Goog-Upload-Protocol':'resumable','X-Goog-Upload-Command':'start','X-Goog-Upload-Header-Content-Length':String(buf.length),'X-Goog-Upload-Header-Content-Type':mime||'application/octet-stream'},
+  body:JSON.stringify({file:{display_name:String(name||'document').slice(0,200)}})
+ });
+ if(!start.ok)throw new Error(`Gemini file start ${start.status}: ${await start.text()}`);
+ const uploadUrl=start.headers.get('x-goog-upload-url'); if(!uploadUrl)throw new Error('Gemini upload URL missing');
+ const up=await fetch(uploadUrl,{method:'POST',headers:{'Content-Length':String(buf.length),'X-Goog-Upload-Offset':'0','X-Goog-Upload-Command':'upload, finalize'},body:buf});
+ if(!up.ok)throw new Error(`Gemini file upload ${up.status}: ${await up.text()}`);
+ let out=await up.json(); let f=out.file||out;
+ for(let i=0;i<30 && f?.state==='PROCESSING';i++){
+  await new Promise(r=>setTimeout(r,2000));
+  const gr=await fetch(`https://generativelanguage.googleapis.com/v1beta/${f.name}?key=${encodeURIComponent(GEMINI_API_KEY)}`);
+  if(gr.ok)f=await gr.json();
+ }
+ if(f?.state==='FAILED')throw new Error('Gemini file processing failed');
+ if(!f?.uri)throw new Error('Gemini file URI missing');
+ return f;
+}
+function geminiFilePart(file,mime){return {file_data:{mime_type:mime||file?.mimeType||'application/pdf',file_uri:file.uri}};}
+async function withRetry(fn,attempts=3){let last;for(let i=0;i<attempts;i++){try{return await fn(i);}catch(e){last=e;if(i+1<attempts)await new Promise(r=>setTimeout(r,1200*(i+1)));}}throw last;}
+async function classifyDocumentGate(buf,mime,u,ctx,name='',sourcePart=null){
  // HARD ROUTING GATE: classify the whole document before any event extraction.
  // This prevents imperative words in manuals (check/inspect/replace) from becoming completed events.
  const gate=await geminiGenerate([
    {text:`DOCUMENT TYPE GATE ONLY. Classify the WHOLE source, not individual sentences. Filename: ${name}. If the source is an operation/maintenance instruction manual, O&M/OMI, SOP, SMP, drawing, catalogue or spare/reference document, document_class MUST be the corresponding reference class and needs_event_time=false. Instructions such as "check filter", "inspect", "lubricate", "replace" are NOT evidence that work happened. For this gate return entries=[]; use title/summary/equipment_refs/identifiers/reference_items only.`},
-   {inline_data:{mime_type:mime,data:buf.toString('base64')}}
+   sourcePart||{inline_data:{mime_type:mime,data:buf.toString('base64')}}
  ],u,ctx);
  return gate||{};
 }
-async function extractDocument(buf,mime,u,ctx,name=''){
- const gate=await classifyDocumentGate(buf,mime,u,ctx,name);
+async function extractDocument(buf,mime,u,ctx,name='',sourcePart=null){
+ const gate=await classifyDocumentGate(buf,mime,u,ctx,name,sourcePart);
  const referenceClasses=new Set(['manual','sop','smp','drawing','spares','other_reference']);
  if(referenceClasses.has(gate.document_class)){
    // Reference path is terminal: never send this document through event/history extraction.
    // V5.7: first get reliable document metadata/page count. Full knowledge extraction is done page-range by page-range later.
    const detail=await geminiGenerate([
      {text:`REFERENCE DOCUMENT METADATA PASS. The hard gate classified this source as ${gate.document_class}. Determine the exact title, total page_count, equipment_refs and exact identifiers. Give only a concise overall summary; do NOT attempt to squeeze the whole manual into reference_items. Keep document_class exactly "${gate.document_class}". entries=[]; needs_event_time=false. Filename: ${name}.`},
-     {inline_data:{mime_type:mime,data:buf.toString('base64')}}
+     sourcePart||{inline_data:{mime_type:mime,data:buf.toString('base64')}}
    ],u,ctx);
    return {...detail,document_class:gate.document_class,needs_event_time:false,entries:[],uncertain:false,title:detail?.title||gate.title||null,summary:detail?.summary||gate.summary||'',equipment_refs:detail?.equipment_refs||gate.equipment_refs||[],identifiers:detail?.identifiers||gate.identifiers||[],page_count:Number(detail?.page_count||gate?.page_count||0)||null,reference_items:[]};
  }
  const detail=await geminiGenerate([
    {text:`EVENT/RECORD EXTRACTION. The hard document gate classified this source as ${gate.document_class||'unknown record'}. Extract actual recorded events/readings row-by-row. Each row keeps its own date and equipment. Do not turn instructions into events. Preserve exact identifiers. Filename: ${name}.`},
-   {inline_data:{mime_type:mime,data:buf.toString('base64')}}
+   sourcePart||{inline_data:{mime_type:mime,data:buf.toString('base64')}}
  ],u,ctx);
  // Gate owns top-level class; downstream extraction cannot silently change it.
  return {...detail,document_class:gate.document_class||detail.document_class,title:detail?.title||gate.title||null};
 }
 
-async function extractReferenceRange(buf,mime,u,ctx,obj,name,startPage,endPage){
+async function extractReferenceRange(buf,mime,u,ctx,obj,name,startPage,endPage,sourcePart=null){
  return geminiGenerate([
   {text:`FULL REFERENCE KNOWLEDGE EXTRACTION. Read ONLY pages ${startPage}-${endPage} of this ${obj.document_class} (${obj.title||name}). Extract ALL useful maintenance knowledge from those pages without summarising away technical detail: headings, operating instructions, maintenance instructions, specifications, values/units, tolerances/clearances, lubrication, troubleshooting, warnings, spare/part numbers, drawing references, item/equipment identifiers and notes. Preserve exact identifiers and numeric values. Every reference_items item MUST include its source page_number (and page_end if it spans pages). Do not create historical events. entries=[]; needs_event_time=false. If a page has multiple distinct sections, return multiple reference_items. Do not include content from pages outside ${startPage}-${endPage}.`},
-  {inline_data:{mime_type:mime,data:buf.toString('base64')}}
+  sourcePart||{inline_data:{mime_type:mime,data:buf.toString('base64')}}
  ],u,ctx);
 }
-async function indexFullReferenceDocument(mediaRowId,knowledgeId,buf,mime,u,from,obj,name){
+async function indexFullReferenceDocument(mediaRowId,knowledgeId,buf,mime,u,from,obj,name,sourcePart=null){
  const total=Math.max(1,Math.min(Number(obj.page_count)||1,1000));
- const step=10; let chunkCount=0, indexedPages=0;
+ const step=total>80?5:10; let chunkCount=0, attemptedPages=0; const failedRanges=[];
  for(let start=1;start<=total;start+=step){
-  const end=Math.min(total,start+step-1);
-  const part=await extractReferenceRange(buf,mime,u,await currentShiftContext(u),obj,name,start,end);
-  const items=Array.isArray(part.reference_items)?part.reference_items:[];
-  for(const item of items){
-   const text=String(item?.text||'').trim(); if(!text)continue;
-   const ps=Math.max(start,Math.min(end,Number(item.page_number)||start));
-   const pe=Math.max(ps,Math.min(end,Number(item.page_end)||ps));
-   await pool.query(`INSERT INTO technical_document_chunks(media_ingestion_id,knowledge_id,employee_number,document_class,title,equipment_name,identifiers,page_start,page_end,section_heading,content_text,source_filename,entered_by)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
-    [mediaRowId,knowledgeId,u.employee_number,obj.document_class,obj.title||name,(obj.equipment_refs||[])[0]||null,JSON.stringify(obj.identifiers||[]),ps,pe,item.heading||null,text,name,from]);
-   chunkCount++;
-  }
-  indexedPages=end;
+  const end=Math.min(total,start+step-1); attemptedPages=end;
+  try{
+   const part=await withRetry(async()=>extractReferenceRange(buf,mime,u,await currentShiftContext(u),obj,name,start,end,sourcePart),3);
+   const items=Array.isArray(part.reference_items)?part.reference_items:[];
+   for(const item of items){
+    const text=String(item?.text||'').trim(); if(!text)continue;
+    const ps=Math.max(start,Math.min(end,Number(item.page_number)||start));
+    const pe=Math.max(ps,Math.min(end,Number(item.page_end)||ps));
+    await pool.query(`INSERT INTO technical_document_chunks(media_ingestion_id,knowledge_id,employee_number,document_class,title,equipment_name,identifiers,page_start,page_end,section_heading,content_text,source_filename,entered_by)
+     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+     [mediaRowId,knowledgeId,u.employee_number,obj.document_class,obj.title||name,(obj.equipment_refs||[])[0]||null,JSON.stringify(obj.identifiers||[]),ps,pe,item.heading||null,text,name,from]);
+    chunkCount++;
+   }
+  }catch(e){console.error(`[REFERENCE RANGE ${start}-${end}]`,e);failedRanges.push([start,end]);}
  }
- return {total,indexedPages,chunkCount};
+ const failedPages=failedRanges.reduce((n,[a,b])=>n+(b-a+1),0);
+ return {total,indexedPages:Math.max(0,total-failedPages),attemptedPages,chunkCount,failedPages,failedRanges};
 }
 function queryTokens(t=''){
  return [...new Set(String(t).toLowerCase().replace(/[^a-z0-9_\-\/\.\s]/g,' ').split(/\s+/).filter(x=>x.length>=2 && !['the','and','for','with','what','tell','about','show','give','please','data','details','lo','ki','ga','ani'].includes(x)))].slice(0,12);
@@ -1063,12 +1088,27 @@ async function stageMedia(u,from,msg){
  const type=msg.image?'image':(msg.audio||msg.voice)?'audio':'document';
  const meta=await mediaMeta(n.id), mime=meta.mime_type||n.mime_type||'', name=n.filename||`${type}-${n.id}`;
  const buf=await mediaBytes(meta.url),ctx=await currentShiftContext(u);
- let raw='',obj;
+ let raw='',obj,geminiFile=null,sourcePart=null;
+ const isPdf=/pdf/i.test(mime)||/\.pdf$/i.test(name);
+ const isTiff=/tiff?/i.test(mime)||/\.tiff?$/i.test(name);
+ const isVisualImage=type==='image'||/image\/(?:jpeg|jpg|png|webp|heic|heif)/i.test(mime)||/\.(?:jpe?g|png|webp|heic|heif)$/i.test(name);
+ const isLargeDocument=type==='document' && (buf.length>8*1024*1024 || isTiff);
+ // Multi-page TIFF must use the file pipeline (not the single-photo path) so all frames/pages remain available.
+ if(isLargeDocument){ await sendText(from,`📚 ${isTiff?'Multi-page TIFF / large visual document':'Large document'} received: ${name}\nProcessing the complete file in page batches. Please wait for the final page/index count.`); geminiFile=await geminiUploadFile(buf,mime,name); sourcePart=geminiFilePart(geminiFile,mime); }
  if(type==='audio'){obj=await extractAudio(buf,mime,u,ctx);raw=obj.summary||'';}
- else if(type==='image'){obj=await extractPhoto(buf,mime,u,ctx);raw=obj.summary||'';}
+ else if(type==='image'){
+   // WhatsApp photos are single-image sources. They still use the same classifier/schema so
+   // reference material becomes searchable knowledge and event photos become structured records.
+   obj=await extractPhoto(buf,mime,u,ctx);raw=obj.summary||'';
+   if(!obj.page_count)obj.page_count=1;
+ }
  else if(/text|csv|json|xml/i.test(mime)){raw=buf.toString('utf8').slice(0,150000);obj=await classifyExtracted(raw,u,ctx);}
- else if(/pdf/i.test(mime)){obj=await extractDocument(buf,mime,u,ctx,name);raw=obj.summary||'';}
- else if(/wordprocessingml|spreadsheetml|msword|ms-excel|tiff/i.test(mime) || /\.(docx?|xlsx?|tiff?)$/i.test(name)){obj=await extractDocument(buf,mime,u,ctx,name);raw=obj.summary||'';}
+ else if(/pdf/i.test(mime)){obj=await extractDocument(buf,mime,u,ctx,name,sourcePart);raw=obj.summary||'';}
+ else if(/wordprocessingml|spreadsheetml|msword|ms-excel|tiff/i.test(mime) || /\.(docx?|xlsx?|tiff?)$/i.test(name)){
+   // TIFF/TIF may contain many frames. sourcePart points at the uploaded original when TIFF,
+   // allowing metadata + page-range passes to see the complete source instead of only frame 1.
+   obj=await extractDocument(buf,mime,u,ctx,name,sourcePart);raw=obj.summary||'';
+ }
  else {obj={language:'en',uncertain:true,needs_event_time:false,document_kind:'document',table_has_date_column:false,summary:'File received. This file type is not parsed automatically yet.',entries:[]};}
  // Secondary deterministic safety net for obvious reference-document filenames.
  if(type==='document' && /(?:\bOMI\b|operation[ _-]*(?:and|&)[ _-]*maintenance|\bmanual\b|\bSOP\b|\bSMP\b)/i.test(name||'')){
@@ -1095,19 +1135,21 @@ async function stageMedia(u,from,msg){
  const mediaRowId=q.rows[0].id; await pool.query(`UPDATE media_ingestion SET batch_code=$2 WHERE id=$1`,[mediaRowId,mediaBatchCode(mediaRowId)]);
 
  if(isReference){
+   // Reference photos, PDFs and multi-page TIFFs share one searchable knowledge store.
    const eq=(obj.equipment_refs||[])[0]||null;
    const kr=await pool.query(`INSERT INTO technical_document_knowledge(media_ingestion_id,employee_number,document_class,title,equipment_name,identifiers,content_json,source_filename,entered_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
     [mediaRowId,u.employee_number,obj.document_class,obj.title||name,eq,JSON.stringify(obj.identifiers||[]),obj,name,from]);
    let ix={total:Number(obj.page_count)||1,indexedPages:0,chunkCount:0};
-   try{ix=await indexFullReferenceDocument(mediaRowId,kr.rows[0].id,buf,mime,u,from,obj,name);}
-   catch(e){console.error('[REFERENCE INDEX]',e);await pool.query(`UPDATE media_ingestion SET status='reference_partial' WHERE id=$1`,[mediaRowId]);throw e;}
-   await pool.query(`UPDATE media_ingestion SET status='reference_indexed',record_count=$2 WHERE id=$1`,[mediaRowId,ix.chunkCount]);
+   try{ix=await indexFullReferenceDocument(mediaRowId,kr.rows[0].id,buf,mime,u,from,obj,name,sourcePart);}
+   catch(e){console.error('[REFERENCE INDEX]',e);ix={...ix,failedPages:ix.total||Number(obj.page_count)||1,failedRanges:[[1,ix.total||Number(obj.page_count)||1]]};}
+   const refStatus=ix.failedPages?'reference_partial':'reference_indexed';
+   await pool.query(`UPDATE media_ingestion SET status=$3,record_count=$2,review_count=$4 WHERE id=$1`,[mediaRowId,ix.chunkCount,refStatus,ix.failedPages||0]);
    await sendText(from,`📘 ${String(obj.document_class).toUpperCase()} identified${obj.title?` — ${obj.title}`:''}
-✅ ${ix.indexedPages}/${ix.total} pages processed
-📚 ${ix.chunkCount} searchable knowledge sections indexed
+✅ ${ix.indexedPages}/${ix.total} ${isTiff?'TIFF page/frame(s)':'page(s)'} indexed
+📚 ${ix.chunkCount} searchable knowledge sections indexed${ix.failedPages?`\n⚠️ ${ix.failedPages} ${isTiff?'TIFF page/frame(s)':'page(s)'} need review: ${ix.failedRanges.map(r=>r[0]===r[1]?r[0]:`${r[0]}-${r[1]}`).join(', ')}`:'\n✅ 0 failed pages'}
 Batch ID: ${mediaBatchCode(mediaRowId)}
 
-You can now ask questions from this document in English, Telugu or Hindi.`);
+You can now ask questions from this source in English, Telugu or Hindi. Stored answers retain the verified source file and page/frame reference.`);
    return;
  }
 
@@ -1558,7 +1600,7 @@ async function processMessage(from, text, rawMessage = null) {
     let cm;
 
     if(rawMessage && (rawMessage.image||rawMessage.audio||rawMessage.voice||rawMessage.document)){
-      try{await stageMedia(u,from,rawMessage);}catch(e){console.error('[MEDIA]',e);await sendText(from,'Could not process this file.');}
+      try{await stageMedia(u,from,rawMessage);}catch(e){console.error('[MEDIA]',e);await sendText(from,`⚠️ File processing stopped before completion. ${String(e?.message||'Unknown processing error').slice(0,180)}\nPlease retry the same file; large documents are processed in batches.`);}
       return;
     }
     // Resolve date replies for pending media (e.g. Today / Yesterday / DD-MM-YYYY).
@@ -1846,7 +1888,7 @@ app.post('/webhook', (req, res) => {
 app.get('/api/status', (_q, r) =>
   r.status(200).json({
     status: 'ready',
-    registration: 'V5.7-full-document-knowledge',
+    registration: 'V5.8.1-universal-visual-ingestion',
     webhook: '/webhook',
     super_admins_configured: SUPER_ADMIN_NUMBERS.size
   })
