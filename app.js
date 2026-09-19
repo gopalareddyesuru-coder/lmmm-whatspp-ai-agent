@@ -908,11 +908,32 @@ async function extractAudio(buf,mime,u,ctx){
    {inline_data:{mime_type:mime||'audio/ogg',data:buf.toString('base64')}}
  ],u,ctx);
 }
-async function extractDocument(buf,mime,u,ctx){
- return geminiGenerate([
-   {text:'Understand this document first, classify it, then extract all supported information. Reference manuals/SOP/SMP/drawings must remain reference knowledge and must NOT be treated as completed maintenance events. Actual history/inspection/defect/job/vibration/motor-load tables must be extracted row-by-row with each row own date and equipment. Do not guess unreadable identifiers.'},
+async function classifyDocumentGate(buf,mime,u,ctx,name=''){
+ // HARD ROUTING GATE: classify the whole document before any event extraction.
+ // This prevents imperative words in manuals (check/inspect/replace) from becoming completed events.
+ const gate=await geminiGenerate([
+   {text:`DOCUMENT TYPE GATE ONLY. Classify the WHOLE source, not individual sentences. Filename: ${name}. If the source is an operation/maintenance instruction manual, O&M/OMI, SOP, SMP, drawing, catalogue or spare/reference document, document_class MUST be the corresponding reference class and needs_event_time=false. Instructions such as "check filter", "inspect", "lubricate", "replace" are NOT evidence that work happened. For this gate return entries=[]; use title/summary/equipment_refs/identifiers/reference_items only.`},
    {inline_data:{mime_type:mime,data:buf.toString('base64')}}
  ],u,ctx);
+ return gate||{};
+}
+async function extractDocument(buf,mime,u,ctx,name=''){
+ const gate=await classifyDocumentGate(buf,mime,u,ctx,name);
+ const referenceClasses=new Set(['manual','sop','smp','drawing','spares','other_reference']);
+ if(referenceClasses.has(gate.document_class)){
+   // Reference path is terminal: never send this document through event/history extraction.
+   const detail=await geminiGenerate([
+     {text:`REFERENCE DOCUMENT EXTRACTION. The hard gate classified this source as ${gate.document_class}. Extract useful reference knowledge faithfully: title, summary, equipment_refs, exact identifiers and reference_items. Keep document_class exactly "${gate.document_class}". entries MUST be []; needs_event_time MUST be false; table_has_date_column MUST be false unless it is merely descriptive metadata. Do not create inspection/defect/job/history events from instructions. Filename: ${name}.`},
+     {inline_data:{mime_type:mime,data:buf.toString('base64')}}
+   ],u,ctx);
+   return {...detail,document_class:gate.document_class,needs_event_time:false,entries:[],uncertain:Boolean(detail?.uncertain),title:detail?.title||gate.title||null,summary:detail?.summary||gate.summary||'',equipment_refs:detail?.equipment_refs||gate.equipment_refs||[],identifiers:detail?.identifiers||gate.identifiers||[],reference_items:detail?.reference_items||gate.reference_items||[]};
+ }
+ const detail=await geminiGenerate([
+   {text:`EVENT/RECORD EXTRACTION. The hard document gate classified this source as ${gate.document_class||'unknown record'}. Extract actual recorded events/readings row-by-row. Each row keeps its own date and equipment. Do not turn instructions into events. Preserve exact identifiers. Filename: ${name}.`},
+   {inline_data:{mime_type:mime,data:buf.toString('base64')}}
+ ],u,ctx);
+ // Gate owns top-level class; downstream extraction cannot silently change it.
+ return {...detail,document_class:gate.document_class||detail.document_class,title:detail?.title||gate.title||null};
 }
 async function repairTableDates(buf,mime,u,ctx,obj){
  const entries=Array.isArray(obj?.entries)?obj.entries:[];
@@ -958,9 +979,14 @@ async function stageMedia(u,from,msg){
  if(type==='audio'){obj=await extractAudio(buf,mime,u,ctx);raw=obj.summary||'';}
  else if(type==='image'){obj=await extractPhoto(buf,mime,u,ctx);raw=obj.summary||'';}
  else if(/text|csv|json|xml/i.test(mime)){raw=buf.toString('utf8').slice(0,150000);obj=await classifyExtracted(raw,u,ctx);}
- else if(/pdf/i.test(mime)){obj=await extractDocument(buf,mime,u,ctx);raw=obj.summary||'';}
- else if(/wordprocessingml|spreadsheetml|msword|ms-excel|tiff/i.test(mime) || /\.(docx?|xlsx?|tiff?)$/i.test(name)){obj=await extractDocument(buf,mime,u,ctx);raw=obj.summary||'';}
+ else if(/pdf/i.test(mime)){obj=await extractDocument(buf,mime,u,ctx,name);raw=obj.summary||'';}
+ else if(/wordprocessingml|spreadsheetml|msword|ms-excel|tiff/i.test(mime) || /\.(docx?|xlsx?|tiff?)$/i.test(name)){obj=await extractDocument(buf,mime,u,ctx,name);raw=obj.summary||'';}
  else {obj={language:'en',uncertain:true,needs_event_time:false,document_kind:'document',table_has_date_column:false,summary:'File received. This file type is not parsed automatically yet.',entries:[]};}
+ // Secondary deterministic safety net for obvious reference-document filenames.
+ if(type==='document' && /(?:\bOMI\b|operation[ _-]*(?:and|&)[ _-]*maintenance|\bmanual\b|\bSOP\b|\bSMP\b)/i.test(name||'')){
+   const hinted=/\bSOP\b/i.test(name)?'sop':/\bSMP\b/i.test(name)?'smp':'manual';
+   obj={...obj,document_class:hinted,needs_event_time:false,entries:[]};
+ }
  if((type==='image'||type==='document') && obj?.table_has_date_column && (obj.entries||[]).some(e=>!e?.event_date)) obj=await repairTableDates(buf,mime,u,ctx,obj);
  obj=normalizeMediaDates(obj).obj;
  const lang=obj.language||languageOf(raw);
