@@ -1729,8 +1729,9 @@ async function primarySearchButtons(u,hasMore=true){
  const perms=await searchPermissions(u);
  const b=[{id:'SEARCH_DATA_MENU',title:'Select Data'}];
  if(hasMore && perms.more)b.push({id:'SEARCH_MORE',title:'More'});
- if(perms.date)b.push({id:'SEARCH_DATE',title:'Date Range'});
- else if(perms.analysis)b.push({id:'SEARCH_ANALYSIS',title:'Analysis'});
+ if(perms.analysis)b.push({id:'SEARCH_ANALYSIS',title:'Analysis'});
+ else if(perms.pdf)b.push({id:'AN_PDF',title:'PDF Report'});
+ else if(perms.date)b.push({id:'SEARCH_DATE',title:'Date Range'});
  return b.slice(0,3);
 }
 function allowedAnalysisRows(perms){
@@ -2023,6 +2024,55 @@ function performanceSummary(rows){
  const top=repeats.slice(0,3).map(g=>`${g.label} (${g.rows.length})`).join('; ');
  return {defects,hist,jobs,cbm,delays,pm,latest,first,repeats,top};
 }
+
+function pdfSafeText(v=''){return String(v??'').replace(/[\u0000-\u001f\u007f]/g,' ').replace(/[^\x20-\x7E]/g,'?').replace(/\s+/g,' ').trim();}
+function officialEventEligible(r,code){
+ const eventCodes=new Set(['DEFECTS','JOBS','HISTORY','PM','CBM','BREAKDOWN']);
+ if(!eventCodes.has(code))return true;
+ return /^\d{4}-\d{2}-\d{2}$/.test(String(r?.event_date||''));
+}
+function currentReportCodes(ctx,selected=[]){
+ if(selected?.length)return selected.filter(c=>DATA_MENU_OPTIONS.some(x=>x[0]===c));
+ const m=String(ctx?.module||'').toLowerCase();
+ if(m==='defect')return ['DEFECTS']; if(m==='job_action')return ['JOBS']; if(m==='history')return ['HISTORY'];
+ if(m==='condition')return ['CBM']; if(m==='delay')return ['BREAKDOWN']; if(m==='spares'||m==='drawing'||m==='procedure')return ['SPARES'];
+ return ['DEFECTS','JOBS','HISTORY','PM','CBM','BREAKDOWN','SPARES'];
+}
+async function buildMaintenancePdf(ctx,u,codes){
+ let PDFDocument,StandardFonts,rgb;
+ ({PDFDocument,StandardFonts,rgb}=await import('pdf-lib'));
+ const all=await allAnalysisRows(ctx,u,12000), dr=ctxRange(ctx), pdf=await PDFDocument.create();
+ const font=await pdf.embedFont(StandardFonts.Helvetica), bold=await pdf.embedFont(StandardFonts.HelveticaBold);
+ const W=595,H=842,M=42,FS=8.5,LH=11; let page,y;
+ function addPage(){page=pdf.addPage([W,H]);y=H-M;page.drawText('LMMM AI Maintenance - Verified Maintenance Report',{x:M,y,font:bold,size:13});y-=20;}
+ function wrap(text,max=92){const words=pdfSafeText(text).split(' ');const out=[];let line='';for(const w of words){if((line+' '+w).trim().length>max){if(line)out.push(line);line=w}else line=(line+' '+w).trim()}if(line)out.push(line);return out.length?out:[''];}
+ function line(text,opts={}){const f=opts.bold?bold:font,sz=opts.size||FS,indent=opts.indent||0;for(const ln of wrap(text,opts.max||92)){if(y<M+25)addPage();page.drawText(ln,{x:M+indent,y,font:f,size:sz});y-=opts.lh||LH;}if(opts.gap)y-=opts.gap;}
+ addPage();
+ line(`Equipment: ${ctx.equipment_name||'LMMM'}${ctx.area?` | Area: ${ctx.area}`:''}`,{bold:true,size:10});
+ line(`Period: ${dr?`${dr.from} to ${dr.to}`:'All available validated records'} | Department: 35`);
+ line(`Generated: ${new Date().toISOString()} | Employee: ${u.employee_number||''}`);
+ line('Report basis: deduplicated indexed/live records. Event rows with invalid or malformed dates are excluded from official event sections. Missing KPI inputs are never inferred.',{gap:8});
+ let totalIncluded=0,totalExcluded=0;
+ for(const code of codes){
+   const title=(DATA_MENU_OPTIONS.find(x=>x[0]===code)||[code,code])[1]; const raw=dataRowsForCode(all,code); const good=raw.filter(r=>officialEventEligible(r,code)); const excluded=raw.length-good.length;
+   totalIncluded+=good.length; totalExcluded+=excluded;
+   line(`${title} - ${good.length} verified record(s)${excluded?` | ${excluded} excluded for date/data review`:''}`,{bold:true,size:10,gap:3});
+   if(!good.length){line('No verified matching records.',{gap:5});continue;}
+   let n=0;for(const r of good){n++;const p=r.source_payload||{};line(`${n}. ${r.event_date||'Reference'} | ${r.equipment||ctx.equipment_name||''} | ${String(r.record_type||code).toUpperCase()}`,{bold:true});line(r.record_text||'');line(`Source: ${r.source_name||'Stored LMMM record'}${p.page_start?` | Page ${p.page_start}${p.page_end&&p.page_end!==p.page_start?`-${p.page_end}`:''}`:''}`,{size:7.5,gap:3});}
+ }
+ line(`Report totals: ${totalIncluded} verified row(s) included; ${totalExcluded} row(s) excluded/review-required.`,{bold:true,size:9,gap:3});
+ line('This report reflects authorised stored/indexed evidence for the selected scope. Source records remain the audit reference.',{size:7.5});
+ return {buffer:Buffer.from(await pdf.save()),included:totalIncluded,excluded:totalExcluded};
+}
+async function sendCurrentMaintenancePdf(to,u){
+ const perms=await searchPermissions(u);if(!perms.pdf){await sendText(to,'PDF / Print is not authorised for your access level.');return;}
+ const ctx=await getSearchContext(u);if(!ctx?.equipment_name){await sendText(to,'Select/search an equipment first.');return;}
+ const st=await selectionGet(u.employee_number,'EQUIPMENT_DATA',ctx.equipment_name,[]);const codes=currentReportCodes(ctx,st.context?.applied?st.selected:[]);
+ await sendText(to,`${ctx.equipment_name} PDF report is being prepared from the full validated matching set.`);
+ const out=await buildMaintenancePdf(ctx,u,codes);const safe=String(ctx.equipment_name).replace(/[^A-Za-z0-9_-]+/g,'_').slice(0,40)||'LMMM';
+ await sendDocumentBuffer(to,out.buffer,`${safe}_Maintenance_Report.pdf`,`Verified maintenance report • ${out.included} included • ${out.excluded} review/excluded • ${codes.join(', ')}`,'application/pdf');
+}
+
 async function analysisAction(q,u){
  const action=analysisActionName(q); if(!action)return null;
  const ctx=await getSearchContext(u); if(!ctx?.equipment_name)return {text:'Select an equipment first, then open Analysis.'};
@@ -2068,7 +2118,7 @@ async function analysisAction(q,u){
    const span=x.first==='Not available'?'Not available':`${x.first} to ${x.latest}`;
    return {text:`${eq} — Equipment Performance${period}\n\nUnique linked records analysed: ${all.length}\nDefect records: ${x.defects.length}\nMaintenance-history records: ${x.hist.length}\nJob/action evidence (overlapping subset): ${x.jobs.length}\nConfirmed CBM/vibration evidence: ${x.cbm.length}\nConfirmed scheduled/PM records: ${x.pm.length}\nBreakdown/delay evidence: ${x.delays.length}\nData period: ${span}\nRecurring failure-pattern groups: ${x.repeats.length}${x.top?`\nTop recurring patterns: ${x.top}`:''}\n\nCounts can overlap because one historical record may contain job, CBM or delay evidence. Availability, MTBF and MTTR are shown only when validated timing inputs exist; missing KPI inputs are not inferred.`};
  }
- if(action==='pdf')return {text:`${eq}${period}\nPDF Analysis Report is authorised, but the final report-generation engine is not connected to this action yet. No placeholder PDF was generated.`};
+ if(action==='pdf'){await sendCurrentMaintenancePdf(u.whatsapp_number,u);return {handled:true};}
  if(action==='rcm')return {text:`${eq}${period}\nRCM Analysis requires linked failure modes, consequences, existing tasks and historical evidence. The bot will not generate an unsupported RCM conclusion from defect counts alone.`};
  return null;
 }
@@ -2450,8 +2500,11 @@ async function sendEquipmentDataMenu(to,u){
   if(selected.length!==st.selected.length)await selectionReset(u.employee_number,'EQUIPMENT_DATA',ctx.equipment_name,selected,{});
   const rows=opts.map(([c,t])=>({id:`DATA_TOGGLE:${c}`,title:`${selected.includes(c)?'✓':'○'} ${t}`.slice(0,24),description:`${av.counts[c]} available record(s)`}));
   rows.push({id:'DATA_APPLY',title:'✓ Continue / Apply',description:`${selected.length} selected`});
-  if(rows.length<=10)await sendList(to,`${ctx.equipment_name} • Select Data\nSelect one or more. Tap options to toggle, then Continue.`,`Select`,rows,'Equipment Data');
-  else await sendList(to,`${ctx.equipment_name} • Select Data`,`Select`,rows.slice(0,10),'Equipment Data');
+  // Context actions stay reachable even when WhatsApp only allows three reply buttons on search results.
+  if(perms.analysis)rows.push({id:'SEARCH_ANALYSIS',title:'Analysis',description:'Maintenance analysis options'});
+  else if(perms.pdf)rows.push({id:'AN_PDF',title:'PDF Report',description:'Full validated matching report'});
+  rows.push({id:'SEARCH_DATE',title:'Date Range',description:'Apply one period to all selected data'});
+  await sendList(to,`${ctx.equipment_name} • Select Data\nSelect one or more. Tap options to toggle, then Continue.`,`Select`,rows.slice(0,10),'Equipment Data');
 }
 function dataRowsForCode(all,code){
   if(code==='DEFECTS')return all.filter(r=>String(r.record_type).toLowerCase()==='defect');
@@ -2467,6 +2520,7 @@ async function applyEquipmentDataSelection(to,u){
   const ctx=await getSearchContext(u);if(!ctx?.equipment_name){await sendText(to,'Select/search an equipment first.');return;}
   const st=await selectionGet(u.employee_number,'EQUIPMENT_DATA',ctx.equipment_name,[]);
   if(!st.selected.length){await sendText(to,'Select at least one data option, then Continue.');return;}
+  await selectionReset(u.employee_number,'EQUIPMENT_DATA',ctx.equipment_name,st.selected,{applied:true,applied_at:new Date().toISOString()});
   const {all}=await equipmentDataAvailability(ctx,u), dr=ctxRange(ctx), period=dr?` | ${dr.from} to ${dr.to}`:'';
   const sections=[]; let hidden=0;
   for(const code of st.selected){
@@ -2475,7 +2529,7 @@ async function applyEquipmentDataSelection(to,u){
     sections.push(`${title} — ${rows.length}\n${formatBundledResults(show)}`);
   }
   const perms=await searchPermissions(u);
-  const footer=`\n\nSelected: ${st.selected.join(', ')}${hidden?`\n${hidden} additional matching record(s) available.`:''}${perms.pdf?'\nPDF/Print access can use the full validated matching set when the report engine is connected.':''}`;
+  const footer=`\n\nSelected: ${st.selected.join(', ')}${hidden?`\n${hidden} additional matching record(s) available.`:''}${perms.pdf?'\nPDF/Print access: full validated matching set is available from PDF Report.':''}`;
   await sendLongText(to,`${ctx.equipment_name} — Selected Maintenance Data${period}\n\n${sections.join('\n\n──────────\n\n')}${footer}`);
 }
 
@@ -3436,7 +3490,8 @@ async function processMessage(from, text, rawMessage = null) {
     if((cm=clean.match(/^DATA_TOGGLE:([A-Z_]+)$/i))){
       const ctx=await getSearchContext(u);if(!ctx?.equipment_name){await sendText(from,'Select/search an equipment first.');return;}
       const av=await equipmentDataAvailability(ctx,u);if(!DATA_MENU_OPTIONS.some(x=>x[0]===cm[1].toUpperCase())||!(av.counts[cm[1].toUpperCase()]>0)){await sendText(from,'That option is not available for the current equipment/data.');return;}
-      await selectionToggle(u.employee_number,'EQUIPMENT_DATA',ctx.equipment_name,cm[1].toUpperCase(),[]);
+      const picked=await selectionToggle(u.employee_number,'EQUIPMENT_DATA',ctx.equipment_name,cm[1].toUpperCase(),[]);
+      await selectionReset(u.employee_number,'EQUIPMENT_DATA',ctx.equipment_name,picked,{applied:false});
       await sendEquipmentDataMenu(from,u);return;
     }
     if(/^DATA_APPLY$/i.test(clean)){await applyEquipmentDataSelection(from,u);return;}
@@ -3444,6 +3499,7 @@ async function processMessage(from, text, rawMessage = null) {
     // V7.7.5: analysis-menu selections act on the active search context before Universal Search.
     try{
       const aa=await analysisAction(clean,u);
+      if(aa?.handled)return;
       if(aa?.text){ if(aa.buttons?.length) await sendSearchTextAndButtons(from,aa.text,aa.buttons); else await sendLongText(from,aa.text); return; }
     }catch(e){console.error('[ANALYSIS ACTION]',e); await sendText(from,'Analysis could not be completed safely for the current filters.'); return;}
     // V7.4 Universal Search: structured history first, ambiguity-safe equipment resolution, then manuals/reference knowledge.
