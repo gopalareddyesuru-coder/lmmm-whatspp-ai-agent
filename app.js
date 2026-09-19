@@ -1729,8 +1729,8 @@ async function primarySearchButtons(u,hasMore=true){
  const perms=await searchPermissions(u);
  const b=[{id:'SEARCH_DATA_MENU',title:'Select Data'}];
  if(hasMore && perms.more)b.push({id:'SEARCH_MORE',title:'More'});
- if(perms.analysis)b.push({id:'SEARCH_ANALYSIS',title:'Analysis'});
- else if(perms.pdf)b.push({id:'AN_PDF',title:'PDF Report'});
+ if(perms.pdf)b.push({id:'AN_PDF',title:'PDF List'});
+ else if(perms.analysis)b.push({id:'SEARCH_ANALYSIS',title:'Analysis'});
  else if(perms.date)b.push({id:'SEARCH_DATE',title:'Date Range'});
  return b.slice(0,3);
 }
@@ -1744,7 +1744,6 @@ function allowedAnalysisRows(perms){
  if(perms.pm)rows.push({id:'AN_PM',title:'Scheduled Maintenance'});
  if(perms.cbm)rows.push({id:'AN_CBM',title:'Vibration / CBM'});
  if(perms.delay)rows.push({id:'AN_DELAY',title:'Delay Impact'});
- if(perms.pdf)rows.push({id:'AN_PDF',title:'PDF Report'});
  if(perms.rcm)rows.push({id:'AN_RCM',title:'RCM Analysis'});
  return rows;
 }
@@ -2043,34 +2042,44 @@ async function buildMaintenancePdf(ctx,u,codes){
  ({PDFDocument,StandardFonts,rgb}=await import('pdf-lib'));
  const all=await allAnalysisRows(ctx,u,12000), dr=ctxRange(ctx), pdf=await PDFDocument.create();
  const font=await pdf.embedFont(StandardFonts.Helvetica), bold=await pdf.embedFont(StandardFonts.HelveticaBold);
- const W=595,H=842,M=42,FS=8.5,LH=11; let page,y;
- function addPage(){page=pdf.addPage([W,H]);y=H-M;page.drawText('LMMM AI Maintenance - Verified Maintenance Report',{x:M,y,font:bold,size:13});y-=20;}
- function wrap(text,max=92){const words=pdfSafeText(text).split(' ');const out=[];let line='';for(const w of words){if((line+' '+w).trim().length>max){if(line)out.push(line);line=w}else line=(line+' '+w).trim()}if(line)out.push(line);return out.length?out:[''];}
- function line(text,opts={}){const f=opts.bold?bold:font,sz=opts.size||FS,indent=opts.indent||0;for(const ln of wrap(text,opts.max||92)){if(y<M+25)addPage();page.drawText(ln,{x:M+indent,y,font:f,size:sz});y-=opts.lh||LH;}if(opts.gap)y-=opts.gap;}
- addPage();
- line(`Equipment: ${ctx.equipment_name||'LMMM'}${ctx.area?` | Area: ${ctx.area}`:''}`,{bold:true,size:10});
- line(`Period: ${dr?`${dr.from} to ${dr.to}`:'All available validated records'} | Department: 35`);
- line(`Generated: ${new Date().toISOString()} | Employee: ${u.employee_number||''}`);
- line('Report basis: deduplicated indexed/live records. Event rows with invalid or malformed dates are excluded from official event sections. Missing KPI inputs are never inferred.',{gap:8});
- let totalIncluded=0,totalExcluded=0;
- for(const code of codes){
-   const title=(DATA_MENU_OPTIONS.find(x=>x[0]===code)||[code,code])[1]; const raw=dataRowsForCode(all,code); const good=raw.filter(r=>officialEventEligible(r,code)); const excluded=raw.length-good.length;
-   totalIncluded+=good.length; totalExcluded+=excluded;
-   line(`${title} - ${good.length} verified record(s)${excluded?` | ${excluded} excluded for date/data review`:''}`,{bold:true,size:10,gap:3});
-   if(!good.length){line('No verified matching records.',{gap:5});continue;}
-   let n=0;for(const r of good){n++;const p=r.source_payload||{};line(`${n}. ${r.event_date||'Reference'} | ${r.equipment||ctx.equipment_name||''} | ${String(r.record_type||code).toUpperCase()}`,{bold:true});line(r.record_text||'');line(`Source: ${r.source_name||'Stored LMMM record'}${p.page_start?` | Page ${p.page_start}${p.page_end&&p.page_end!==p.page_start?`-${p.page_end}`:''}`:''}`,{size:7.5,gap:3});}
+ const W=842,H=595,M=28,FS=6.4,LH=8.2; let page,y; const MAX_ROWS=100;
+ const cols=[28,48,88,82,360,150]; // No, Date, Equipment, Type, Details/Action, Source
+ const xs=[M]; for(let i=0;i<cols.length-1;i++)xs.push(xs[i]+cols[i]);
+ function addPage(){page=pdf.addPage([W,H]);y=H-M;page.drawText('LMMM AI Maintenance - Verified Record List',{x:M,y,font:bold,size:12});y-=17;}
+ function txt(v){return pdfSafeText(v||'');}
+ function fit(v,n){const t=txt(v);return t.length<=n?t:t.slice(0,Math.max(1,n-3))+'...';}
+ function header(){
+   const names=['No.','Date','Equipment','Type','Defect / Job / History / Details','Source'];
+   page.drawRectangle({x:M,y:y-12,width:W-2*M,height:14,borderWidth:0.5,borderColor:rgb(0,0,0),color:rgb(0.92,0.92,0.92)});
+   names.forEach((n,i)=>page.drawText(n,{x:xs[i]+2,y:y-9,font:bold,size:FS})); y-=14;
  }
- line(`Report totals: ${totalIncluded} verified row(s) included; ${totalExcluded} row(s) excluded/review-required.`,{bold:true,size:9,gap:3});
- line('This report reflects authorised stored/indexed evidence for the selected scope. Source records remain the audit reference.',{size:7.5});
- return {buffer:Buffer.from(await pdf.save()),included:totalIncluded,excluded:totalExcluded};
+ function row(cells){
+   const h=18;if(y<M+30){addPage();header();}
+   page.drawRectangle({x:M,y:y-h,width:W-2*M,height:h,borderWidth:0.35,borderColor:rgb(0.55,0.55,0.55)});
+   for(let i=1;i<xs.length;i++)page.drawLine({start:{x:xs[i],y},end:{x:xs[i],y:y-h},thickness:0.3,color:rgb(0.65,0.65,0.65)});
+   const lens=[5,10,14,12,66,24]; cells.forEach((c,i)=>page.drawText(fit(c,lens[i]),{x:xs[i]+2,y:y-11,font,size:FS}));y-=h;
+ }
+ addPage();
+ page.drawText(`Equipment: ${txt(ctx.equipment_name||'LMMM')} | Dept: 35 | Period: ${dr?`${dr.from} to ${dr.to}`:'All available'}`,{x:M,y,font:bold,size:8});y-=12;
+ page.drawText(`Generated: ${new Date().toISOString()} | Requested by: ${txt(u.employee_number||'')}`,{x:M,y,font,size:7});y-=15;
+ let totalEligible=0,totalExcluded=0,remaining=MAX_ROWS,n=0; const prepared=[];
+ for(const code of codes){
+   const raw=dataRowsForCode(all,code); const good=raw.filter(r=>officialEventEligible(r,code)); totalEligible+=good.length;totalExcluded+=raw.length-good.length;
+   for(const r of good){if(remaining<=0)break;prepared.push({code,r});remaining--;}
+   if(remaining<=0)break;
+ }
+ page.drawText(`Showing ${prepared.length} of ${totalEligible} validated matching record(s). ${totalExcluded} excluded/review-required. Maximum 100 rows per PDF list.`,{x:M,y,font:bold,size:7.3});y-=16;header();
+ for(const x of prepared){n++;const r=x.r,p=r.source_payload||{};const detail=p.description||p.job||p.job_done||p.remarks||p.reason||r.record_text||'';row([String(n),r.event_date||'',r.equipment||ctx.equipment_name||'',String(r.record_type||x.code).toUpperCase(),detail,r.source_name||'Stored LMMM record']);}
+ if(totalEligible>prepared.length){if(y<M+42)addPage();y-=5;page.drawText(`Note: ${totalEligible-prepared.length} additional validated matching record(s) are not included because this PDF list is capped at 100 rows. Use Date Range or a narrower data selection for the next report.`,{x:M,y,font:bold,size:7});}
+ return {buffer:Buffer.from(await pdf.save()),included:prepared.length,eligible:totalEligible,excluded:totalExcluded};
 }
 async function sendCurrentMaintenancePdf(to,u){
  const perms=await searchPermissions(u);if(!perms.pdf){await sendText(to,'PDF / Print is not authorised for your access level.');return;}
  const ctx=await getSearchContext(u);if(!ctx?.equipment_name){await sendText(to,'Select/search an equipment first.');return;}
  const st=await selectionGet(u.employee_number,'EQUIPMENT_DATA',ctx.equipment_name,[]);const codes=currentReportCodes(ctx,st.context?.applied?st.selected:[]);
- await sendText(to,`${ctx.equipment_name} PDF report is being prepared from the full validated matching set.`);
+ await sendText(to,`${ctx.equipment_name} PDF list is being prepared (maximum 100 validated matching records).`);
  const out=await buildMaintenancePdf(ctx,u,codes);const safe=String(ctx.equipment_name).replace(/[^A-Za-z0-9_-]+/g,'_').slice(0,40)||'LMMM';
- await sendDocumentBuffer(to,out.buffer,`${safe}_Maintenance_Report.pdf`,`Verified maintenance report • ${out.included} included • ${out.excluded} review/excluded • ${codes.join(', ')}`,'application/pdf');
+ await sendDocumentBuffer(to,out.buffer,`${safe}_Maintenance_List.pdf`,`Validated maintenance list • ${out.included}/${out.eligible} shown • ${out.excluded} review/excluded • ${codes.join(', ')}`,'application/pdf');
 }
 
 async function analysisAction(q,u){
@@ -2500,9 +2509,9 @@ async function sendEquipmentDataMenu(to,u){
   if(selected.length!==st.selected.length)await selectionReset(u.employee_number,'EQUIPMENT_DATA',ctx.equipment_name,selected,{});
   const rows=opts.map(([c,t])=>({id:`DATA_TOGGLE:${c}`,title:`${selected.includes(c)?'✓':'○'} ${t}`.slice(0,24),description:`${av.counts[c]} available record(s)`}));
   rows.push({id:'DATA_APPLY',title:'✓ Continue / Apply',description:`${selected.length} selected`});
-  // Context actions stay reachable even when WhatsApp only allows three reply buttons on search results.
+  // Keep Analysis and Print as separate actions. PDF is never nested inside Analysis.
   if(perms.analysis)rows.push({id:'SEARCH_ANALYSIS',title:'Analysis',description:'Maintenance analysis options'});
-  else if(perms.pdf)rows.push({id:'AN_PDF',title:'PDF Report',description:'Full validated matching report'});
+  if(perms.pdf)rows.push({id:'AN_PDF',title:'PDF List',description:'Up to 100 validated rows for current selection'});
   rows.push({id:'SEARCH_DATE',title:'Date Range',description:'Apply one period to all selected data'});
   await sendList(to,`${ctx.equipment_name} • Select Data\nSelect one or more. Tap options to toggle, then Continue.`,`Select`,rows.slice(0,10),'Equipment Data');
 }
@@ -2529,7 +2538,7 @@ async function applyEquipmentDataSelection(to,u){
     sections.push(`${title} — ${rows.length}\n${formatBundledResults(show)}`);
   }
   const perms=await searchPermissions(u);
-  const footer=`\n\nSelected: ${st.selected.join(', ')}${hidden?`\n${hidden} additional matching record(s) available.`:''}${perms.pdf?'\nPDF/Print access: full validated matching set is available from PDF Report.':''}`;
+  const footer=`\n\nSelected: ${st.selected.join(', ')}${hidden?`\n${hidden} additional matching record(s) available.`:''}${perms.pdf?'\nPDF/Print access: up to 100 validated matching rows can be exported as a table.':''}`;
   await sendLongText(to,`${ctx.equipment_name} — Selected Maintenance Data${period}\n\n${sections.join('\n\n──────────\n\n')}${footer}`);
 }
 
