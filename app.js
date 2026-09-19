@@ -552,7 +552,7 @@ async function runBackgroundJob(j){
       await cleanupCompletedSource(j);
     }else if(j.job_type==='access_to_excel'){
       const out=await accessToExcelBuffer(buf); const base=String(j.source_filename||'LMMM_Access').replace(/\.(mdb|accdb)$/i,'');
-      await sendDocumentBuffer(j.whatsapp_number,out.buffer,`${base}.xlsx`,`✅ Access → Excel complete • ${out.sheets}/${out.tables} tables • ${j.job_code}`,'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      await sendDocumentBuffer(j.whatsapp_number,out.buffer,`${base}.xlsx`,`${out.errors?.length?'⚠️ Access → Excel partial':'✅ Access → Excel complete'} • ${out.sheets}/${out.tables} tables • ${out.totalRows} rows • ${j.job_code}${out.errors?.length?' • Failed: '+out.errors.slice(0,3).join(' | '):''}`,'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
       await pool.query(`UPDATE background_jobs SET status='completed',progress_current=$2,progress_total=$2,result_meta=$3,completed_at=now(),heartbeat_at=now() WHERE id=$1`,[j.id,out.tables,JSON.stringify({tables:out.tables,sheets:out.sheets,rows:out.totalRows,filename:`${base}.xlsx`})]);
       await cleanupCompletedSource(j);
     }
@@ -582,19 +582,41 @@ async function accessToExcelBuffer(buf){
   let MDBReader, XLSX;
   try{const mod=await import('mdb-reader'); MDBReader=mod.default||mod.MDBReader||mod;}catch(e){throw new Error('Access reader is unavailable on this server.');}
   try{XLSX=await import('xlsx');}catch(e){throw new Error('Excel writer is unavailable on this server.');}
-  const db=new MDBReader(buf), names=db.getTableNames(), wb=XLSX.utils.book_new();
-  let totalRows=0, sheets=0; const errors=[];
-  for(const tableName of names){
-    try{const rows=db.getTable(tableName).getData(); totalRows+=rows.length;
-      let safe=String(tableName||`Table${sheets+1}`).replace(/[\\/?*\[\]:]/g,'_').slice(0,31)||`Table${sheets+1}`;
-      let suffix=2, base=safe.slice(0,27); while(wb.SheetNames.includes(safe)) safe=(base+'_'+suffix++).slice(0,31);
-      const ws=XLSX.utils.json_to_sheet(rows); const keys=rows.length?Object.keys(rows[0]):[]; ws['!cols']=keys.map(k=>({wch:Math.min(45,Math.max(12,String(k).length+2,...rows.slice(0,200).map(r=>String(r?.[k]??'').length+2)))})); XLSX.utils.book_append_sheet(wb,ws,safe); sheets++;
-    }catch(e){errors.push(`${tableName}: ${e.message}`);}
-  }
-  if(!sheets) throw new Error(`No readable Access tables. ${errors.slice(0,2).join('; ')}`);
-  return {buffer:Buffer.from(XLSX.write(wb,{type:'buffer',bookType:'xlsx'})),tables:names.length,sheets,totalRows,errors};
-}
+  const db=new MDBReader(buf), wb=XLSX.utils.book_new();
 
+  // ACCDB/MDB may contain normal + linked user tables.  Never stop at the
+  // first table and never report COMPLETE until every discovered user table
+  // has either become a worksheet or is reported as failed.
+  const discovered=[];
+  const addNames=(v)=>{for(const n of (Array.isArray(v)?v:[])){const x=String(n||'').trim();if(x&&!discovered.includes(x))discovered.push(x);}};
+  try{addNames(db.getTableNames());}catch{}
+  try{addNames(db.getTableNames({normalTables:true,systemTables:false,linkedTables:true}));}catch{}
+  if(!discovered.length) throw new Error('No Access user tables were discovered.');
+
+  let totalRows=0, sheets=0; const errors=[], tableStats=[];
+  const used=new Set();
+  const safeSheet=(raw)=>{
+    let base=String(raw||`Table${sheets+1}`).replace(/[\\/?*\[\]:]/g,'_').trim().slice(0,31)||`Table${sheets+1}`;
+    let name=base,n=2; while(used.has(name.toLowerCase())) name=(base.slice(0,27)+'_'+n++).slice(0,31);
+    used.add(name.toLowerCase()); return name;
+  };
+  for(const tableName of discovered){
+    try{
+      const table=db.getTable(tableName);
+      const rows=table.getData()||[];
+      let headers=[];
+      try{ if(typeof table.getColumnNames==='function') headers=table.getColumnNames()||[]; }catch{}
+      if(!headers.length&&rows.length) headers=Object.keys(rows[0]);
+      const ws=rows.length?XLSX.utils.json_to_sheet(rows,{header:headers.length?headers:undefined}):XLSX.utils.aoa_to_sheet(headers.length?[headers]:[]);
+      ws['!cols']=headers.map(k=>({wch:Math.min(45,Math.max(12,String(k).length+2,...rows.slice(0,200).map(r=>String(r?.[k]??'').length+2)))}));
+      const sheetName=safeSheet(tableName); XLSX.utils.book_append_sheet(wb,ws,sheetName);
+      totalRows+=rows.length; sheets++; tableStats.push({table:tableName,sheet:sheetName,rows:rows.length,status:'converted'});
+    }catch(e){errors.push(`${tableName}: ${String(e?.message||e).slice(0,180)}`);tableStats.push({table:tableName,rows:0,status:'failed'});}
+  }
+  if(!sheets) throw new Error(`No readable Access tables. ${errors.slice(0,3).join('; ')}`);
+  const status=errors.length?'partial':'complete';
+  return {buffer:Buffer.from(XLSX.write(wb,{type:'buffer',bookType:'xlsx'})),tables:discovered.length,sheets,totalRows,errors,tableStats,status};
+}
 
 async function spreadsheetConvertBuffer(buf, sourceName, target){
   let XLSX; try{XLSX=await import('xlsx');}catch(e){throw new Error('Spreadsheet converter is unavailable on this server.');}
@@ -1971,7 +1993,7 @@ async function processMessage(from, text, rawMessage = null) {
           const nm=String(allMeta.name||''); const src=cachedSource(allMeta.mediaId,u.employee_number);
           try{
             if(/\.tiff?$/i.test(nm)){const out=await tiffToPdfBuffer(src.buf);await sendDocumentBuffer(from,out.buffer,nm.replace(/\.tiff?$/i,'.pdf'),`✅ TIFF → PDF complete • ${out.pages}/${out.pages} pages`);}
-            else if(/\.(mdb|accdb)$/i.test(nm)){const out=await accessToExcelBuffer(src.buf);await sendDocumentBuffer(from,out.buffer,nm.replace(/\.(mdb|accdb)$/i,'.xlsx'),`✅ Access → Excel complete • ${out.sheets}/${out.tables} tables`,'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');}
+            else if(/\.(mdb|accdb)$/i.test(nm)){const out=await accessToExcelBuffer(src.buf);await sendDocumentBuffer(from,out.buffer,nm.replace(/\.(mdb|accdb)$/i,'.xlsx'),`${out.errors?.length?'⚠️ Access → Excel partial':'✅ Access → Excel complete'} • ${out.sheets}/${out.tables} tables • ${out.totalRows} rows${out.errors?.length?' • Failed: '+out.errors.slice(0,3).join(' | '):''}`,'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');}
           }catch(e){await sendText(from,`⚠️ Storage completed, but conversion failed: ${String(e?.message||e).slice(0,180)}`);}
         }
         return;
