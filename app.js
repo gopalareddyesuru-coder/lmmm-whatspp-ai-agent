@@ -865,8 +865,16 @@ function classifySectionEvent(text=''){
 
 
 function languageOf(t=''){
- if(/[\u0C00-\u0C7F]/.test(t))return 'te';
- if(/[\u0900-\u097F]/.test(t))return 'hi';
+ const raw=String(t||'').trim();
+ if(/[\u0C00-\u0C7F]/.test(raw))return 'te';
+ if(/[\u0900-\u097F]/.test(raw))return 'hi';
+ // V5.7.1: recognise common Roman-Telugu/Tenglish maintenance questions.
+ // Technical English nouns (air valve, motor, bearing, etc.) may remain English,
+ // but Telugu conversational words decide the reply language.
+ const x=raw.toLowerCase().replace(/[^a-z0-9\s]/g,' ');
+ const teWords=['gurunchi','gurinchi','cheppu','cheppandi','enti','enduku','endhuku','ela','ekkada','eppudu','emiti','emaina','kavali','kaavali','ivvu','ivvandi','chupinchu','chupinchandi','undha','unda','unnaya','undi','ledha','leda','naaku','naku','manaki','mana','dheeniki','deeniki','dani','dhani','yokka','tho','lo','nunchi','nundi','aithe','ayithe','chesaru','cheyyali','cheyali'];
+ const words=x.split(/\s+/).filter(Boolean);
+ if(words.some(w=>teWords.includes(w)))return 'te';
  return 'en';
 }
 function ml(lang,en,te,hi){return lang==='te'?te:lang==='hi'?hi:en;}
@@ -995,11 +1003,24 @@ async function retrieveReferenceKnowledge(question,u){
 async function geminiAnswerFromKnowledge(question,rows,u){
  const lang=languageOf(question), ctx=await currentShiftContext(u);
  const source=rows.map((r,i)=>`[${i+1}] ${r.title||r.source_filename} | page ${r.page_start}${r.page_end&&r.page_end!==r.page_start?'-'+r.page_end:''} | ${r.section_heading||''}\n${r.content_text}`).join('\n\n');
- const prompt=`You are the LMMM maintenance knowledge assistant. Answer ONLY from the supplied indexed source excerpts. Do not invent missing values or procedures. If the answer is incomplete, say which part is not available in the indexed source. Reply in ${lang==='te'?'Telugu':lang==='hi'?'Hindi':'English'} because that is the user's language. Keep exact equipment/item/SAP/CAT/drawing/part identifiers unchanged. Be maintenance-friendly and concise. Include source page number(s) at the end. User question: ${question}\n\nSOURCE EXCERPTS:\n${source}`;
+ const prompt=`You are the LMMM maintenance knowledge assistant. Answer ONLY from the supplied indexed source excerpts. Do not invent missing values or procedures. If the answer is incomplete, say which part is not available in the indexed source. Reply in ${lang==='te'?'Telugu (Telugu script; keep necessary technical terms/identifiers in English)':lang==='hi'?'Hindi':'English'} because that is the user's language. Keep exact equipment/item/SAP/CAT/drawing/part identifiers unchanged. Be maintenance-friendly and concise. IMPORTANT: bracket labels such as [1], [2], [3] are excerpt IDs, NOT page numbers. Do NOT output bracket citation numbers and do NOT write a Source/Source page line; the application will append verified PDF page metadata. User question: ${question}\n\nSOURCE EXCERPTS:\n${source}`;
  const url=`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`;
  const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{role:'user',parts:[{text:prompt}]}],generationConfig:{temperature:0.1}})});
  if(!r.ok)throw new Error(`Gemini answer ${r.status}: ${await r.text()}`);
- const j=await r.json(); return (j.candidates?.[0]?.content?.parts||[]).map(p=>p.text||'').join('').trim();
+ const j=await r.json();
+ let answer=(j.candidates?.[0]?.content?.parts||[]).map(p=>p.text||'').join('').trim();
+ // V5.7.1: source pages come only from DB metadata, never from model citation labels.
+ answer=answer.replace(/\n?\s*(?:Source(?: page(?: number)?s?)?|మూలం|स्रोत)\s*[:：].*$/gim,'').trim();
+ const pageKeys=[];
+ for(const row of rows){
+   const a=Number(row.page_start), b=Number(row.page_end||row.page_start);
+   if(Number.isFinite(a)&&a>0){ const key=(Number.isFinite(b)&&b>a)?`${a}-${b}`:`${a}`; if(!pageKeys.includes(key))pageKeys.push(key); }
+ }
+ if(pageKeys.length){
+   const label=lang==='te'?'మూల పేజీ':lang==='hi'?'स्रोत पृष्ठ':'Source page';
+   answer += `\n\n${label}: ${pageKeys.join(', ')}`;
+ }
+ return answer;
 }
 
 async function repairTableDates(buf,mime,u,ctx,obj){
