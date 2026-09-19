@@ -95,6 +95,11 @@ const SUPER_ADMIN_NUMBERS = new Set(
     .filter(Boolean)
 );
 
+function isOwner(value='') {
+  const n=String(value||'').replace(/\D/g,'');
+  return !!n && SUPER_ADMIN_NUMBERS.has(n);
+}
+
 const pool = DATABASE_URL
   ? new Pool({
       connectionString: DATABASE_URL,
@@ -1472,12 +1477,51 @@ async function setSearchFilters(u,{module,dateFrom,dateTo,offset,lastQuery}={}){
  await pool.query(`UPDATE search_context SET module=COALESCE($2,module),date_from=COALESCE($3,date_from),date_to=COALESCE($4,date_to),page_offset=COALESCE($5,page_offset),last_query=COALESCE($6,last_query),updated_at=now() WHERE employee_number=$1`,[u.employee_number,module||null,dateFrom||null,dateTo||null,Number.isInteger(offset)?offset:null,lastQuery||null]);
 }
 async function searchPermissions(u){
- const a=await effectiveAuthority(u.employee_number); const ps=new Set((a?.special_permissions||[]).map(x=>String(x).toUpperCase()));
- const full=a?.effective_access==='FULL';
- return {pdf:full||ps.has('PRINT_EXPORT')||ps.has('PDF_REPORT'),analysis:full||ps.has('ANALYSIS'),rcm:full||ps.has('RCM')||ps.has('ANALYSIS')};
+ const a=await effectiveAuthority(u.employee_number);
+ const ps=new Set((a?.special_permissions||[]).map(x=>String(x).toUpperCase()));
+ // Owner/Super Admin is determined from the approved user's WhatsApp number and always has full controls.
+ const owner=isOwner(u?.wa_number);
+ const full=owner || a?.effective_access==='FULL' || ps.has('FULL_ACCESS');
+ const advanced=full || ps.has('ANALYSIS') || ps.has('ADVANCED_REPORTS');
+ return {
+   owner, full,
+   view: !!a,
+   more: !!a,
+   date: !!a,
+   analysis: advanced,
+   repeat: advanced,
+   jobs: !!a,
+   history: !!a,
+   mtbf: advanced,
+   performance: advanced,
+   pm: !!a,
+   cbm: !!a,
+   delay: advanced,
+   pdf: full || ps.has('PRINT_EXPORT') || ps.has('PDF_REPORT') || ps.has('ADVANCED_REPORTS'),
+   rcm: full || ps.has('RCM')
+ };
 }
-function primarySearchButtons(hasMore=true){
- const b=[]; if(hasMore)b.push({id:'SEARCH_MORE',title:'More'}); b.push({id:'SEARCH_DATE',title:'Date Range'}); b.push({id:'SEARCH_ANALYSIS',title:'Analysis'}); return b.slice(0,3);
+async function primarySearchButtons(u,hasMore=true){
+ const perms=await searchPermissions(u);
+ const b=[];
+ if(hasMore && perms.more)b.push({id:'SEARCH_MORE',title:'More'});
+ if(perms.date)b.push({id:'SEARCH_DATE',title:'Date Range'});
+ if(perms.analysis)b.push({id:'SEARCH_ANALYSIS',title:'Analysis'});
+ return b.slice(0,3);
+}
+function allowedAnalysisRows(perms){
+ const rows=[];
+ if(perms.repeat)rows.push({id:'AN_REPEAT',title:'Repeat Failures'});
+ if(perms.jobs)rows.push({id:'AN_JOBS',title:'Related Jobs'});
+ if(perms.history)rows.push({id:'AN_HISTORY',title:'Equipment History'});
+ if(perms.mtbf)rows.push({id:'AN_MTBF',title:'MTBF / MTTR'});
+ if(perms.performance)rows.push({id:'AN_PERF',title:'Equipment Performance'});
+ if(perms.pm)rows.push({id:'AN_PM',title:'Scheduled Maintenance'});
+ if(perms.cbm)rows.push({id:'AN_CBM',title:'Vibration / CBM'});
+ if(perms.delay)rows.push({id:'AN_DELAY',title:'Delay Impact'});
+ if(perms.pdf)rows.push({id:'AN_PDF',title:'PDF Report'});
+ if(perms.rcm)rows.push({id:'AN_RCM',title:'RCM Analysis'});
+ return rows;
 }
 function actionFooter(){ return ''; }
 async function areaSearchMenu(q,u){
@@ -1578,9 +1622,8 @@ async function analysisAction(q,u){
  const action=analysisActionName(q); if(!action)return null;
  const ctx=await getSearchContext(u); if(!ctx?.equipment_name)return {text:'Select an equipment first, then open Analysis.'};
  const perms=await searchPermissions(u);
- if(!perms.analysis && !['history','jobs','pm','cbm'].includes(action))return {text:'This analysis option is not authorised for your access level.'};
- if(action==='pdf'&&!perms.pdf)return {text:'PDF Report is not authorised for your access level.'};
- if(action==='rcm'&&!perms.rcm)return {text:'RCM Analysis is not authorised for your access level.'};
+ const actionPerm={repeat:'repeat',jobs:'jobs',history:'history',mtbf:'mtbf',performance:'performance',pm:'pm',cbm:'cbm',delay:'delay',pdf:'pdf',rcm:'rcm'}[action];
+ if(actionPerm && !perms[actionPerm])return {text:'This option is not authorised for your access level.'};
  const eq=ctx.equipment_name,dr=ctxRange(ctx),period=dr?` | ${dr.from} to ${dr.to}`:'';
  if(action==='repeat'){
    const rows=await rowsForContext(ctx,'defect',1000); if(!rows.length)return {text:`${eq}${period}\nNo defect records found in the current filters.`};
@@ -1588,23 +1631,23 @@ async function analysisAction(q,u){
    const groups=[...m.entries()].filter(([,a])=>a.length>1).sort((a,b)=>b[1].length-a[1].length).slice(0,15);
    if(!groups.length)return {text:`${eq}${period}\nNo repeated defect description was confirmed in the current filtered records.`};
    const body=groups.map(([k,a],i)=>`${i+1}. ${k}\nOccurrences: ${a.length}\nDates: ${a.map(x=>x.event_date||'Date unavailable').slice(0,6).join(', ')}${a.length>6?' …':''}`).join('\n\n');
-   return {text:`${eq} — Repeat Failures${period}\n\n${body}\n\nGrouped only from stored defect descriptions; similar wording is not silently merged.`,buttons:primarySearchButtons(false)};
+   return {text:`${eq} — Repeat Failures${period}\n\n${body}\n\nGrouped only from stored defect descriptions; similar wording is not silently merged.`,buttons:await primarySearchButtons(u,false)};
  }
  if(action==='jobs'||action==='history'){
    const rows=await rowsForContext(ctx,'history',60); if(!rows.length)return {text:`${eq}${period}\nNo maintenance-history records found in the current filters.`};
-   return {text:`${eq} — ${action==='jobs'?'Related Jobs':'Equipment History'}${period}\n\n${formatBundledResults(rows.slice(0,20))}`,buttons:primarySearchButtons(rows.length>20)};
+   return {text:`${eq} — ${action==='jobs'?'Related Jobs':'Equipment History'}${period}\n\n${formatBundledResults(rows.slice(0,20))}`,buttons:await primarySearchButtons(u,rows.length>20)};
  }
  if(action==='cbm'){
    const all=await rowsForContext(ctx,null,500);const rows=all.filter(r=>/vibration|cbm|condition|bearing temp|temperature/i.test(String(r.record_text)+' '+JSON.stringify(r.source_payload||{})));
-   return {text:rows.length?`${eq} — Vibration / CBM${period}\n\n${formatBundledResults(rows.slice(0,20))}`:`${eq}${period}\nNo vibration/CBM records were found in the current filtered master data.`,buttons:primarySearchButtons(rows.length>20)};
+   return {text:rows.length?`${eq} — Vibration / CBM${period}\n\n${formatBundledResults(rows.slice(0,20))}`:`${eq}${period}\nNo vibration/CBM records were found in the current filtered master data.`,buttons:await primarySearchButtons(u,rows.length>20)};
  }
  if(action==='pm'){
    const all=await rowsForContext(ctx,null,500);const rows=all.filter(r=>/preventive|\bpm\b|scheduled|schedule|greasing|lubrication/i.test(String(r.record_text)+' '+JSON.stringify(r.source_payload||{})));
-   return {text:rows.length?`${eq} — Scheduled / Preventive Maintenance${period}\n\n${formatBundledResults(rows.slice(0,20))}`:`${eq}${period}\nNo stored PM/scheduled-maintenance records were found. A maintenance schedule will not be invented.`,buttons:primarySearchButtons(rows.length>20)};
+   return {text:rows.length?`${eq} — Scheduled / Preventive Maintenance${period}\n\n${formatBundledResults(rows.slice(0,20))}`:`${eq}${period}\nNo stored PM/scheduled-maintenance records were found. A maintenance schedule will not be invented.`,buttons:await primarySearchButtons(u,rows.length>20)};
  }
  if(action==='delay'){
    const all=await rowsForContext(ctx,null,500);const rows=all.filter(r=>/delay|downtime|breakdown|stoppage/i.test(String(r.record_text)+' '+JSON.stringify(r.source_payload||{})));
-   return {text:rows.length?`${eq} — Breakdown / Delay Evidence${period}\n\n${formatBundledResults(rows.slice(0,20))}`:`${eq}${period}\nNo linked breakdown/delay records were found in the current filtered data.`,buttons:primarySearchButtons(rows.length>20)};
+   return {text:rows.length?`${eq} — Breakdown / Delay Evidence${period}\n\n${formatBundledResults(rows.slice(0,20))}`:`${eq}${period}\nNo linked breakdown/delay records were found in the current filtered data.`,buttons:await primarySearchButtons(u,rows.length>20)};
  }
  if(action==='mtbf'){
    const rows=await rowsForContext(ctx,'defect',1000);const valid=rows.filter(r=>/^\d{4}-\d{2}-\d{2}$/.test(String(r.event_date||'')));
@@ -1624,14 +1667,14 @@ async function universalSearch(q,u){
  let ctx=await getSearchContext(u); const range=dateRangeFromText(original);
  if(range && ctx) {await setSearchFilters(u,{dateFrom:range.from,dateTo:range.to,offset:0});ctx=await getSearchContext(u);}
  if(/^(select date( range)?|date range|search_date|SEARCH_DATE)$/i.test(original))return {dateMenu:true,text:'Select a time frame'};
- if(/^(analysis|analysis & maintenance|search_analysis)$/i.test(original) && ctx?.equipment_name)return {analysisMenu:true,text:`${ctx.equipment_name} — Analysis & Maintenance`};
+ if(/^(analysis|analysis & maintenance|search_analysis)$/i.test(original) && ctx?.equipment_name){const perms=await searchPermissions(u);if(!perms.analysis)return {text:'Analysis is not available for your access level.'};return {analysisMenu:true,text:`${ctx.equipment_name} — Analysis & Maintenance`};}
  if(/^search by equipment$/i.test(original)){const a=ctx?.area||'';const rows=(await pool.query(`SELECT DISTINCT equipment AS name FROM lmmm_master_records WHERE equipment IS NOT NULL AND ($1::text='' OR LOWER(COALESCE(area,'')) LIKE LOWER('%'||$1||'%')) ORDER BY name LIMIT 10`,[a])).rows;return {text:rows.length?`Select/search equipment:\n${rows.map((x,i)=>`${i+1}. ${x.name}`).join('\n')}\n\nYou can also type the equipment name.`:'Type the equipment name to search.'};}
  if((wantsMore(original)||/^SEARCH_MORE$/i.test(original)) && ctx?.last_query){
    const next=(Number(ctx.page_offset)||0)+20;
    const dr=ctx.date_from?{from:String(ctx.date_from).slice(0,10),to:String(ctx.date_to||ctx.date_from).slice(0,10)}:null;
    const rows=await searchBundledMaster(ctx.last_query,20,dr,next);
-   if(rows.length){await setSearchFilters(u,{offset:next}); return {text:`${ctx.equipment_name||'LMMM'}${dr?` | ${dr.from} to ${dr.to}`:''}\nShowing ${next+1}-${next+rows.length}\n\n${formatBundledResults(rows)}`,buttons:primarySearchButtons(rows.length===20)};}
-   return {text:'No more matching records in the current filters.',buttons:primarySearchButtons(false)};
+   if(rows.length){await setSearchFilters(u,{offset:next}); return {text:`${ctx.equipment_name||'LMMM'}${dr?` | ${dr.from} to ${dr.to}`:''}\nShowing ${next+1}-${next+rows.length}\n\n${formatBundledResults(rows)}`,buttons:await primarySearchButtons(u,rows.length===20)};}
+   return {text:'No more matching records in the current filters.',buttons:await primarySearchButtons(u,false)};
  }
  if(/^\d+$/.test(original)){
    const pr=(await pool.query(`SELECT * FROM pending_search_choices WHERE employee_number=$1 AND created_at>now()-interval '30 minutes'`,[u.employee_number])).rows[0];
@@ -1669,8 +1712,8 @@ async function universalSearch(q,u){
  const limit=wantsOverall(original)?30:20;
  const liveEvents=(await eventSearch(original,u,equipment)).filter(x=>usefulLiveEvent(x,original));
  const masterRows=await searchBundledMaster(original,limit,dr,0); const perms=await searchPermissions(u);
- if(masterRows.length){if(!equipment){const names=[...new Set(masterRows.map(r=>r.equipment).filter(Boolean))];if(names.length===1){await setSearchContext(u,names[0],masterRows[0]?.area||ctx?.area||null);await setSearchFilters(u,{module:intent,offset:0,lastQuery:original});}} let text=`${equipment||masterRows[0]?.equipment||'LMMM'}${dr?` | ${dr.from} to ${dr.to}`:''}\nShowing latest ${masterRows.length}${wantsOverall(original)?' (overall view max 30)':''}\n\n${formatBundledResults(masterRows)}`;if(liveEvents.length)text+=`\n\nRecent live entries\n${formatLiveEvents(liveEvents)}`;return {text,buttons:primarySearchButtons(masterRows.length===limit)};}
- if(liveEvents.length)return {text:(equipment?`${equipment}\n\n`:'')+formatLiveEvents(liveEvents),buttons:primarySearchButtons(false)};
+ if(masterRows.length){if(!equipment){const names=[...new Set(masterRows.map(r=>r.equipment).filter(Boolean))];if(names.length===1){await setSearchContext(u,names[0],masterRows[0]?.area||ctx?.area||null);await setSearchFilters(u,{module:intent,offset:0,lastQuery:original});}} let text=`${equipment||masterRows[0]?.equipment||'LMMM'}${dr?` | ${dr.from} to ${dr.to}`:''}\nShowing latest ${masterRows.length}${wantsOverall(original)?' (overall view max 30)':''}\n\n${formatBundledResults(masterRows)}`;if(liveEvents.length)text+=`\n\nRecent live entries\n${formatLiveEvents(liveEvents)}`;return {text,buttons:await primarySearchButtons(u,masterRows.length===limit)};}
+ if(liveEvents.length)return {text:(equipment?`${equipment}\n\n`:'')+formatLiveEvents(liveEvents),buttons:await primarySearchButtons(u,false)};
  return {knowledgeQuery:equipment && !original.toLowerCase().includes(equipment.toLowerCase())?`${equipment} ${original}`:original};
 }
 
@@ -2627,11 +2670,7 @@ async function processMessage(from, text, rawMessage = null) {
         {id:'Today',title:'Today'},{id:'Yesterday',title:'Yesterday'},{id:'Last 7 days',title:'Last 7 Days'},
         {id:'Last 30 days',title:'Last 30 Days'},{id:'This month',title:'This Month'},{id:'CUSTOM_DATE_RANGE',title:'Custom Range'}
       ],'Date Range');return;}
-      if(us?.analysisMenu){const perms=await searchPermissions(u);const rows=[
-        {id:'AN_REPEAT',title:'Repeat Failures'},{id:'AN_JOBS',title:'Related Jobs'},{id:'AN_HISTORY',title:'Equipment History'},
-        {id:'AN_MTBF',title:'MTBF / MTTR'},{id:'AN_PERF',title:'Equipment Performance'},{id:'AN_PM',title:'Scheduled Maintenance'},
-        {id:'AN_CBM',title:'Vibration / CBM'},{id:'AN_DELAY',title:'Delay Impact'}
-      ];if(perms.pdf)rows.push({id:'AN_PDF',title:'PDF Report'});if(perms.rcm)rows.push({id:'AN_RCM',title:'RCM Analysis'});await sendList(from,us.text,'Select',rows.slice(0,10),'Options');return;}
+      if(us?.analysisMenu){const perms=await searchPermissions(u);const rows=allowedAnalysisRows(perms);if(!rows.length){await sendText(from,'No analysis options are available for your access level.');return;}await sendList(from,us.text,'Select',rows.slice(0,10),'Options');return;}
       if(us?.text){
         if(us.buttons?.length) await sendSearchTextAndButtons(from,us.text,us.buttons);
         else await sendLongText(from,us.text);
