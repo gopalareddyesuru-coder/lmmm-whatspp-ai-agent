@@ -309,6 +309,18 @@ async function initDB() {
     content_json JSONB NOT NULL, source_filename TEXT, entered_by TEXT NOT NULL, entered_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_technical_doc_equipment ON technical_document_knowledge(equipment_name,document_class)`);
+  // V5.7 full-document knowledge index: page/section chunks remain linked to the source upload.
+  await pool.query(`CREATE TABLE IF NOT EXISTS technical_document_chunks(
+    id BIGSERIAL PRIMARY KEY, media_ingestion_id BIGINT NOT NULL, knowledge_id BIGINT,
+    employee_number TEXT NOT NULL, document_class TEXT NOT NULL, title TEXT,
+    equipment_name TEXT, identifiers JSONB, page_start INTEGER, page_end INTEGER,
+    section_heading TEXT, content_text TEXT NOT NULL, source_filename TEXT,
+    entered_by TEXT NOT NULL, entered_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_technical_chunks_media ON technical_document_chunks(media_ingestion_id,page_start)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_technical_chunks_equipment ON technical_document_chunks(equipment_name,document_class)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_technical_chunks_text ON technical_document_chunks USING GIN (to_tsvector('english',coalesce(section_heading,'')||' '||coalesce(content_text,'')))`);
+
   await pool.query(`CREATE TABLE IF NOT EXISTS record_change_audit(
     id BIGSERIAL PRIMARY KEY, record_table TEXT NOT NULL, record_id BIGINT NOT NULL,
     action TEXT NOT NULL, before_json JSONB, after_json JSONB, employee_number TEXT,
@@ -870,7 +882,7 @@ function geminiInstruction(u,ctx){
  return `You are the document-intelligence ingestion engine for the LMMM steel-plant maintenance system.
 FIRST understand what the source actually is. Never convert instructions/reference material into events that happened.
 Return valid JSON only with this exact structure:
-{"language":"en|te|hi","uncertain":boolean,"needs_event_time":boolean,"document_class":"manual|sop|smp|drawing|spares|inspection_record|defect_record|job_record|maintenance_history|vibration_readings|motor_load_readings|breakdown_delay|production|logbook|attendance|other_reference","document_kind":"table|handwritten_note|photo|audio|document","table_has_date_column":boolean,"title":string|null,"summary":string,"equipment_refs":[string],"identifiers":[string],"reference_items":[{"heading":string|null,"text":string}],"entries":[{"type":"production|delay|inspection|defect|job_action|logbook_note|vibration_reading|motor_load_reading","equipment":string|null,"text":string,"blooms_rolled":number|null,"delay_minutes":number|null,"delay_section":string|null,"reason":string|null,"reading_value":number|null,"reading_unit":string|null,"reading_point":string|null,"event_date":string|null,"event_shift":"A|B|C|GENERAL|null"}]}.
+{"language":"en|te|hi","uncertain":boolean,"needs_event_time":boolean,"document_class":"manual|sop|smp|drawing|spares|inspection_record|defect_record|job_record|maintenance_history|vibration_readings|motor_load_readings|breakdown_delay|production|logbook|attendance|other_reference","document_kind":"table|handwritten_note|photo|audio|document","table_has_date_column":boolean,"title":string|null,"summary":string,"equipment_refs":[string],"identifiers":[string],"page_count":number|null,"reference_items":[{"heading":string|null,"text":string,"page_number":number|null,"page_end":number|null}],"entries":[{"type":"production|delay|inspection|defect|job_action|logbook_note|vibration_reading|motor_load_reading","equipment":string|null,"text":string,"blooms_rolled":number|null,"delay_minutes":number|null,"delay_section":string|null,"reason":string|null,"reading_value":number|null,"reading_unit":string|null,"reading_point":string|null,"event_date":string|null,"event_shift":"A|B|C|GENERAL|null"}]}.
 DOCUMENT CLASSIFICATION IS MANDATORY.
 Manual/SOP/SMP/drawing/spares/other_reference are REFERENCE documents. Put their useful content in reference_items and summary. Do NOT create inspection/job/defect/history entries merely because the manual says check, inspect, replace, maintain or lubricate. They have no event date unless the source explicitly records an action that actually happened. Set needs_event_time=false for pure reference documents.
 For actual inspection/defect/job/history/vibration/motor-load/breakdown/production/logbook records, extract EVERY readable record. For TABLES bind each row's own Date + Equipment + description/readings/remarks to THAT SAME ROW. Different rows may have different dates/equipment. Never use a common date for a historical table. If one row date is unreadable, only that row gets event_date=null.
@@ -922,11 +934,12 @@ async function extractDocument(buf,mime,u,ctx,name=''){
  const referenceClasses=new Set(['manual','sop','smp','drawing','spares','other_reference']);
  if(referenceClasses.has(gate.document_class)){
    // Reference path is terminal: never send this document through event/history extraction.
+   // V5.7: first get reliable document metadata/page count. Full knowledge extraction is done page-range by page-range later.
    const detail=await geminiGenerate([
-     {text:`REFERENCE DOCUMENT EXTRACTION. The hard gate classified this source as ${gate.document_class}. Extract useful reference knowledge faithfully: title, summary, equipment_refs, exact identifiers and reference_items. Keep document_class exactly "${gate.document_class}". entries MUST be []; needs_event_time MUST be false; table_has_date_column MUST be false unless it is merely descriptive metadata. Do not create inspection/defect/job/history events from instructions. Filename: ${name}.`},
+     {text:`REFERENCE DOCUMENT METADATA PASS. The hard gate classified this source as ${gate.document_class}. Determine the exact title, total page_count, equipment_refs and exact identifiers. Give only a concise overall summary; do NOT attempt to squeeze the whole manual into reference_items. Keep document_class exactly "${gate.document_class}". entries=[]; needs_event_time=false. Filename: ${name}.`},
      {inline_data:{mime_type:mime,data:buf.toString('base64')}}
    ],u,ctx);
-   return {...detail,document_class:gate.document_class,needs_event_time:false,entries:[],uncertain:Boolean(detail?.uncertain),title:detail?.title||gate.title||null,summary:detail?.summary||gate.summary||'',equipment_refs:detail?.equipment_refs||gate.equipment_refs||[],identifiers:detail?.identifiers||gate.identifiers||[],reference_items:detail?.reference_items||gate.reference_items||[]};
+   return {...detail,document_class:gate.document_class,needs_event_time:false,entries:[],uncertain:false,title:detail?.title||gate.title||null,summary:detail?.summary||gate.summary||'',equipment_refs:detail?.equipment_refs||gate.equipment_refs||[],identifiers:detail?.identifiers||gate.identifiers||[],page_count:Number(detail?.page_count||gate?.page_count||0)||null,reference_items:[]};
  }
  const detail=await geminiGenerate([
    {text:`EVENT/RECORD EXTRACTION. The hard document gate classified this source as ${gate.document_class||'unknown record'}. Extract actual recorded events/readings row-by-row. Each row keeps its own date and equipment. Do not turn instructions into events. Preserve exact identifiers. Filename: ${name}.`},
@@ -935,6 +948,60 @@ async function extractDocument(buf,mime,u,ctx,name=''){
  // Gate owns top-level class; downstream extraction cannot silently change it.
  return {...detail,document_class:gate.document_class||detail.document_class,title:detail?.title||gate.title||null};
 }
+
+async function extractReferenceRange(buf,mime,u,ctx,obj,name,startPage,endPage){
+ return geminiGenerate([
+  {text:`FULL REFERENCE KNOWLEDGE EXTRACTION. Read ONLY pages ${startPage}-${endPage} of this ${obj.document_class} (${obj.title||name}). Extract ALL useful maintenance knowledge from those pages without summarising away technical detail: headings, operating instructions, maintenance instructions, specifications, values/units, tolerances/clearances, lubrication, troubleshooting, warnings, spare/part numbers, drawing references, item/equipment identifiers and notes. Preserve exact identifiers and numeric values. Every reference_items item MUST include its source page_number (and page_end if it spans pages). Do not create historical events. entries=[]; needs_event_time=false. If a page has multiple distinct sections, return multiple reference_items. Do not include content from pages outside ${startPage}-${endPage}.`},
+  {inline_data:{mime_type:mime,data:buf.toString('base64')}}
+ ],u,ctx);
+}
+async function indexFullReferenceDocument(mediaRowId,knowledgeId,buf,mime,u,from,obj,name){
+ const total=Math.max(1,Math.min(Number(obj.page_count)||1,1000));
+ const step=10; let chunkCount=0, indexedPages=0;
+ for(let start=1;start<=total;start+=step){
+  const end=Math.min(total,start+step-1);
+  const part=await extractReferenceRange(buf,mime,u,await currentShiftContext(u),obj,name,start,end);
+  const items=Array.isArray(part.reference_items)?part.reference_items:[];
+  for(const item of items){
+   const text=String(item?.text||'').trim(); if(!text)continue;
+   const ps=Math.max(start,Math.min(end,Number(item.page_number)||start));
+   const pe=Math.max(ps,Math.min(end,Number(item.page_end)||ps));
+   await pool.query(`INSERT INTO technical_document_chunks(media_ingestion_id,knowledge_id,employee_number,document_class,title,equipment_name,identifiers,page_start,page_end,section_heading,content_text,source_filename,entered_by)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+    [mediaRowId,knowledgeId,u.employee_number,obj.document_class,obj.title||name,(obj.equipment_refs||[])[0]||null,JSON.stringify(obj.identifiers||[]),ps,pe,item.heading||null,text,name,from]);
+   chunkCount++;
+  }
+  indexedPages=end;
+ }
+ return {total,indexedPages,chunkCount};
+}
+function queryTokens(t=''){
+ return [...new Set(String(t).toLowerCase().replace(/[^a-z0-9_\-\/\.\s]/g,' ').split(/\s+/).filter(x=>x.length>=2 && !['the','and','for','with','what','tell','about','show','give','please','data','details','lo','ki','ga','ani'].includes(x)))].slice(0,12);
+}
+async function retrieveReferenceKnowledge(question,u){
+ const ctx=await currentShiftContext(u);
+ let terms=queryTokens(question);
+ try{
+  const q=await geminiGenerate([{text:`KNOWLEDGE SEARCH TERM EXPANSION ONLY. For this LMMM maintenance question, return reference_items where each text is one short English technical search term or phrase likely to appear in manuals/SOP/SMP/drawings/spares. Include equipment/item identifiers exactly if present. Question: ${question}`}],u,ctx);
+  const extra=(q.reference_items||[]).map(x=>String(x.text||'').trim()).filter(Boolean);
+  terms=[...new Set([...terms,...extra])].slice(0,16);
+ }catch(_e){}
+ if(!terms.length)return [];
+ const clauses=terms.map((_,i)=>`(LOWER(coalesce(section_heading,'')) LIKE LOWER($${i+1}) OR LOWER(content_text) LIKE LOWER($${i+1}) OR LOWER(coalesce(equipment_name,'')) LIKE LOWER($${i+1}) OR LOWER(coalesce(title,'')) LIKE LOWER($${i+1}))`).join(' OR ');
+ const vals=terms.map(x=>`%${x}%`);
+ const r=await pool.query(`SELECT id,document_class,title,equipment_name,page_start,page_end,section_heading,content_text,source_filename FROM technical_document_chunks WHERE ${clauses} ORDER BY page_start NULLS LAST,id LIMIT 18`,vals);
+ return r.rows;
+}
+async function geminiAnswerFromKnowledge(question,rows,u){
+ const lang=languageOf(question), ctx=await currentShiftContext(u);
+ const source=rows.map((r,i)=>`[${i+1}] ${r.title||r.source_filename} | page ${r.page_start}${r.page_end&&r.page_end!==r.page_start?'-'+r.page_end:''} | ${r.section_heading||''}\n${r.content_text}`).join('\n\n');
+ const prompt=`You are the LMMM maintenance knowledge assistant. Answer ONLY from the supplied indexed source excerpts. Do not invent missing values or procedures. If the answer is incomplete, say which part is not available in the indexed source. Reply in ${lang==='te'?'Telugu':lang==='hi'?'Hindi':'English'} because that is the user's language. Keep exact equipment/item/SAP/CAT/drawing/part identifiers unchanged. Be maintenance-friendly and concise. Include source page number(s) at the end. User question: ${question}\n\nSOURCE EXCERPTS:\n${source}`;
+ const url=`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`;
+ const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{role:'user',parts:[{text:prompt}]}],generationConfig:{temperature:0.1}})});
+ if(!r.ok)throw new Error(`Gemini answer ${r.status}: ${await r.text()}`);
+ const j=await r.json(); return (j.candidates?.[0]?.content?.parts||[]).map(p=>p.text||'').join('').trim();
+}
+
 async function repairTableDates(buf,mime,u,ctx,obj){
  const entries=Array.isArray(obj?.entries)?obj.entries:[];
  if(!entries.length || !obj?.table_has_date_column || !entries.some(e=>!e?.event_date))return obj;
@@ -1008,11 +1075,18 @@ async function stageMedia(u,from,msg){
 
  if(isReference){
    const eq=(obj.equipment_refs||[])[0]||null;
-   await pool.query(`INSERT INTO technical_document_knowledge(media_ingestion_id,employee_number,document_class,title,equipment_name,identifiers,content_json,source_filename,entered_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+   const kr=await pool.query(`INSERT INTO technical_document_knowledge(media_ingestion_id,employee_number,document_class,title,equipment_name,identifiers,content_json,source_filename,entered_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
     [mediaRowId,u.employee_number,obj.document_class,obj.title||name,eq,JSON.stringify(obj.identifiers||[]),obj,name,from]);
-   await pool.query(`UPDATE media_ingestion SET status='reference_saved',record_count=0 WHERE id=$1`,[mediaRowId]);
-   const items=(obj.reference_items||[]).slice(0,8).map((x,i)=>`${i+1}. ${x.heading?x.heading+': ':''}${x.text}`).join('\n');
-   await sendText(from,`📘 ${String(obj.document_class).toUpperCase()} identified${obj.title?` — ${obj.title}`:''}\n${obj.summary||''}${items?`\n\n${items}`:''}\n\nSaved as reference knowledge. Batch ID: ${mediaBatchCode(mediaRowId)}`);
+   let ix={total:Number(obj.page_count)||1,indexedPages:0,chunkCount:0};
+   try{ix=await indexFullReferenceDocument(mediaRowId,kr.rows[0].id,buf,mime,u,from,obj,name);}
+   catch(e){console.error('[REFERENCE INDEX]',e);await pool.query(`UPDATE media_ingestion SET status='reference_partial' WHERE id=$1`,[mediaRowId]);throw e;}
+   await pool.query(`UPDATE media_ingestion SET status='reference_indexed',record_count=$2 WHERE id=$1`,[mediaRowId,ix.chunkCount]);
+   await sendText(from,`📘 ${String(obj.document_class).toUpperCase()} identified${obj.title?` — ${obj.title}`:''}
+✅ ${ix.indexedPages}/${ix.total} pages processed
+📚 ${ix.chunkCount} searchable knowledge sections indexed
+Batch ID: ${mediaBatchCode(mediaRowId)}
+
+You can now ask questions from this document in English, Telugu or Hindi.`);
    return;
  }
 
@@ -1672,7 +1746,16 @@ async function processMessage(from, text, rawMessage = null) {
       const rows=(await pool.query(`SELECT contact_name,max_number FROM emergency_contacts WHERE LOWER(contact_name) LIKE LOWER($1) ORDER BY contact_name LIMIT 10`,[`%${cm[1]}%`])).rows;
       await sendText(from,rows.length?rows.map(x=>`${x.contact_name}: ${x.max_number}`).join('\n'):T('notfound',te));return;
     }
-    await sendText(from,T('notfound',te));return;
+    // V5.7 natural-language retrieval from fully indexed manuals/SOP/SMP/reference documents.
+    // This is deliberately the final fallback before Not found, so existing commands keep priority.
+    try{
+      const knowledgeRows=await retrieveReferenceKnowledge(clean,u);
+      if(knowledgeRows.length){
+        const answer=await geminiAnswerFromKnowledge(clean,knowledgeRows,u);
+        if(answer){await sendText(from,answer);return;}
+      }
+    }catch(e){console.error('[KNOWLEDGE RETRIEVAL]',e);}
+    await sendText(from,ml(languageOf(clean),'No matching stored LMMM record or indexed reference knowledge was found. Try an equipment name, item number, maintenance term, or another date range.','సరిపోలే LMMM రికార్డు లేదా ఇండెక్స్ చేసిన రిఫరెన్స్ సమాచారం దొరకలేదు. Equipment పేరు, item number, maintenance term లేదా మరో date range తో ప్రయత్నించండి.','मिलता हुआ LMMM रिकॉर्ड या indexed reference knowledge नहीं मिला। Equipment name, item number, maintenance term या दूसरी date range से खोजें।'));return;
   }
 
   await sendText(from, T('notfound', te));
@@ -1742,7 +1825,7 @@ app.post('/webhook', (req, res) => {
 app.get('/api/status', (_q, r) =>
   r.status(200).json({
     status: 'ready',
-    registration: 'V5.2-auto-voice-equipment-link',
+    registration: 'V5.7-full-document-knowledge',
     webhook: '/webhook',
     super_admins_configured: SUPER_ADMIN_NUMBERS.size
   })
