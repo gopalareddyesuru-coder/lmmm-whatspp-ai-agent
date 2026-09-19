@@ -1672,10 +1672,46 @@ function analysisActionName(q=''){
  return null;
 }
 function ctxRange(ctx){return ctx?.date_from?{from:String(ctx.date_from).slice(0,10),to:String(ctx.date_to||ctx.date_from).slice(0,10)}:null;}
-function normFailureText(r){
- const p=r?.source_payload||{};let x=String(p.description||p.reason||r?.record_text||'').toUpperCase();
- x=x.replace(/\b(REPLACED|REPLACE|DONE|ATTENDED|RECTIFIED|TIGHTENED|TIGHTEND|GREASING|WELDING|PUTTI|CHECKED)\b.*$/,'');
- return x.replace(/[^A-Z0-9]+/g,' ').replace(/\s+/g,' ').trim().slice(0,120);
+function failureFingerprint(r){
+ const p=r?.source_payload||{};
+ let raw=String(p.description||p.reason||p.defect||r?.record_text||'').toUpperCase();
+ // Remove source/remarks/action tails so the failure itself drives grouping.
+ raw=raw.split(/\b(?:REMARKS?|ACTION|ATTENDED|RECTIFIED|REPLACED|REPLACEMENT|WELDING DONE|GREASING DONE|SOURCE)\s*[:|-]?/)[0];
+ const componentRules=[
+  ['DOOR',/\b(?:DISH(?:CHARGE)?\.?\s*)?DOOR(?:S)?(?:\s*[-#]?\s*\d+)?\b/],
+  ['RECUPERATOR',/\bRECUP(?:ERATOR)?(?:S)?(?:\s*[-#]?\s*\d+)?\b/],
+  ['ECS PUMP',/\bECS\s*[- ]?\d*.*?\bPUMP(?:S)?\b|\bPUMP(?:S)?\b.*?\bECS\s*[- ]?\d*\b/],
+  ['CAF',/\bCAF(?:\s*[- ]?[12S])?\b/],
+  ['COUPLING',/\bCOUPLING\b/],['BEARING',/\b(?:BEARING|BRG|P\/?B)\b/],
+  ['GEARBOX',/\bGEAR\s*BOX|GEARBOX\b/],['VALVE',/\bVALVE\b/],
+  ['PIPE/HEADER',/\b(?:PIPE|HEADER|BEND|FLANGE)\b/],['HOSE',/\bHOSE\b/],
+  ['BURNER',/\bBURNER\b/],['FAN/BLOWER',/\b(?:FAN|BLOWER)\b/]
+ ];
+ const modeRules=[
+  ['LEAK',/\b(?:LEAK|LEAKAGE|PUNCTURE|BURST)\w*\b/],
+  ['VIBRATION HIGH',/\bVIBR\w*\b.{0,60}\b(?:HIGH|INCREAS|ABNORMAL|MAX)\w*\b|\b(?:HIGH|INCREAS|ABNORMAL)\w*\b.{0,60}\bVIBR\w*\b/],
+  ['DAMAGED/BROKEN',/\b(?:DAMAGE|DAMAGED|BROKEN|CRACK|CRACKED|WORN|WEAR|FAILED|FAILURE)\b/],
+  ['LOOSE',/\b(?:LOOSE|SLACK)\b/],['JAM',/\b(?:JAM|JAMMED|STUCK)\b/],
+  ['FLOW/PRESSURE LOW',/\b(?:FLOW|PRESSURE)\b.{0,50}\b(?:LOW|LESS|DROP)\w*\b/],
+  ['OVERHEAT',/\b(?:OVERHEAT|HOT|TEMPERATURE HIGH)\w*\b/],
+  ['MISALIGNMENT',/\b(?:MISALIGN|ALIGNMENT OUT)\w*\b/]
+ ];
+ const comp=(componentRules.find(([,re])=>re.test(raw))||[])[0]||'';
+ const mode=(modeRules.find(([,re])=>re.test(raw))||[])[0]||'';
+ if(comp&&mode)return {key:`${comp} — ${mode}`,label:`${comp} — ${mode}`,confidence:'semantic'};
+ // Conservative normalized fallback: enough detail to avoid merging unrelated defects.
+ let x=raw.replace(/\b(?:NO|NUMBER)\s*[-#]?\s*\d+\b/g,' NO')
+   .replace(/\b\d+(?:\.\d+)?\s*(?:MM|CM|M|BAR|KG|AMP|A|V)\b/g,' VALUE')
+   .replace(/[^A-Z0-9]+/g,' ').replace(/\s+/g,' ').trim();
+ const stop=new Set(['THE','A','AN','IS','ARE','WAS','WERE','TO','OF','IN','AT','FROM','AND','FOR','FOUND','OBSERVED']);
+ x=x.split(' ').filter(z=>z&&!stop.has(z)).slice(0,14).join(' ');
+ return x?{key:x,label:x,confidence:'exact-normalized'}:null;
+}
+function normFailureText(r){const f=failureFingerprint(r);return f?f.key:'';}
+function repeatFailureGroups(rows){
+ const m=new Map();
+ for(const r of rows){const f=failureFingerprint(r);if(!f?.key)continue;const a=m.get(f.key)||{label:f.label,confidence:f.confidence,rows:[]};a.rows.push(r);m.set(f.key,a);}
+ return [...m.values()].filter(g=>g.rows.length>1).sort((a,b)=>b.rows.length-a.rows.length);
 }
 function analysisEquipmentKeys(eq=''){
  const raw=String(eq||'').trim(), n=scopeKey(raw), out=new Set([n]);
@@ -1813,10 +1849,9 @@ function performanceSummary(rows){
  const delays=rows.filter(isDelayEvidenceRow);
  const pm=rows.filter(isTruePmRow);
  const dated=rows.filter(r=>/^\d{4}-\d{2}-\d{2}$/.test(String(r.event_date||''))).map(r=>r.event_date).sort();
- const fm=new Map();for(const r of defects){const k=normFailureText(r);if(k){const a=fm.get(k)||[];a.push(r);fm.set(k,a);}}
- const repeats=[...fm.entries()].filter(([,a])=>a.length>1).sort((a,b)=>b[1].length-a[1].length);
+ const repeats=repeatFailureGroups(defects);
  const latest=dated.length?dated[dated.length-1]:'Not available',first=dated.length?dated[0]:'Not available';
- const top=repeats.slice(0,3).map(([k,a])=>`${k} (${a.length})`).join('; ');
+ const top=repeats.slice(0,3).map(g=>`${g.label} (${g.rows.length})`).join('; ');
  return {defects,hist,jobs,cbm,delays,pm,latest,first,repeats,top};
 }
 async function analysisAction(q,u){
@@ -1829,11 +1864,10 @@ async function analysisAction(q,u){
  const all=await allAnalysisRows(ctx,u,6000);
  if(action==='repeat'){
    const rows=all.filter(r=>String(r.record_type).toLowerCase()==='defect'); if(!rows.length)return {text:`${eq}${period}\nNo defect records found in the current filters.`};
-   const m=new Map();for(const r of rows){const k=normFailureText(r);if(!k)continue;const a=m.get(k)||[];a.push(r);m.set(k,a);}
-   const groups=[...m.entries()].filter(([,a])=>a.length>1).sort((a,b)=>b[1].length-a[1].length).slice(0,15);
-   if(!groups.length)return {text:`${eq}${period}\nNo repeated defect description was confirmed in the current filtered records.`};
-   const body=groups.map(([k,a],i)=>`${i+1}. ${k}\nOccurrences: ${a.length}\nDates: ${a.map(x=>x.event_date||'Date unavailable').slice(0,6).join(', ')}${a.length>6?' …':''}`).join('\n\n');
-   return {text:`${eq} — Repeat Failures${period}\n\n${body}\n\nGrouped only from stored defect descriptions; similar wording is not silently merged.`,buttons:await primarySearchButtons(u,false)};
+   const groups=repeatFailureGroups(rows).slice(0,15);
+   if(!groups.length)return {text:`${eq}${period}\nNo repeat-failure pattern could be confirmed from the current filtered defect records.`};
+   const body=groups.map((g,i)=>`${i+1}. ${g.label}\nOccurrences: ${g.rows.length}\nDates: ${g.rows.map(x=>x.event_date||'Date unavailable').slice(0,6).join(', ')}${g.rows.length>6?' …':''}`).join('\n\n');
+   return {text:`${eq} — Repeat Failures${period}\n\n${body}\n\nGrouping uses component + failure-mode evidence where explicit; otherwise conservative normalized wording. Stored records and identifiers are never rewritten.`,buttons:await primarySearchButtons(u,false)};
  }
  if(action==='jobs'||action==='history'){
    let rows=all.filter(r=>String(r.record_type).toLowerCase()==='history'||String(r.record_type).toLowerCase()==='job_action');
@@ -1863,7 +1897,7 @@ async function analysisAction(q,u){
  if(action==='performance'){
    const x=performanceSummary(all);
    const span=x.first==='Not available'?'Not available':`${x.first} to ${x.latest}`;
-   return {text:`${eq} — Equipment Performance${period}\n\nRecords analysed: ${all.length}\nDefects: ${x.defects.length}\nMaintenance jobs/history: ${x.jobs.length}\nConfirmed CBM/vibration evidence: ${x.cbm.length}\nConfirmed PM/scheduled records: ${x.pm.length}\nBreakdown/delay evidence: ${x.delays.length}\nData period: ${span}\nRepeat-failure groups: ${x.repeats.length}${x.top?`\nTop repeat patterns: ${x.top}`:''}\n\nAvailability, MTBF and MTTR are shown only when their validated time inputs exist; missing KPI inputs are not inferred.`};
+   return {text:`${eq} — Equipment Performance${period}\n\nRecords analysed: ${all.length}\nDefects: ${x.defects.length}\nMaintenance jobs/history evidence: ${x.jobs.length}\nConfirmed CBM/vibration evidence: ${x.cbm.length}\nConfirmed PM/scheduled records: ${x.pm.length}\nBreakdown/delay evidence: ${x.delays.length}\nData period: ${span}\nRepeat-failure groups: ${x.repeats.length}${x.top?`\nTop repeat patterns: ${x.top}`:''}\n\nAvailability, MTBF and MTTR are shown only when their validated time inputs exist; missing KPI inputs are not inferred.`};
  }
  if(action==='pdf')return {text:`${eq}${period}\nPDF Analysis Report is authorised, but the final report-generation engine is not connected to this action yet. No placeholder PDF was generated.`};
  if(action==='rcm')return {text:`${eq}${period}\nRCM Analysis requires linked failure modes, consequences, existing tasks and historical evidence. The bot will not generate an unsupported RCM conclusion from defect counts alone.`};
