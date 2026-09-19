@@ -1683,21 +1683,42 @@ function analysisEquipmentKeys(eq=''){
  if(m){const k=m[1];['wbf '+k,'wbf'+k,'furnace '+k,'furnace'+k,'walking beam furnace '+k].forEach(x=>out.add(scopeKey(x)));}
  return [...out].filter(Boolean);
 }
+function explicitLegacyEventDate(r){
+ const direct=String(r?.event_date||'').trim();
+ if(/^\d{4}-\d{2}-\d{2}$/.test(direct))return direct;
+ const text=String(r?.record_text||r?.source_payload?.text||'');
+ let m=text.match(/\b(20\d{2}|19\d{2})-(\d{2})-(\d{2})(?:\s+00:00:00)?\b/);
+ if(m)return `${m[1]}-${m[2]}-${m[3]}`;
+ m=text.match(/\b(\d{1,2})[\/.](\d{1,2})[\/.]((?:19|20)\d{2})\b/);
+ if(m){const d=Number(m[1]),mo=Number(m[2]),y=Number(m[3]);if(d>=1&&d<=31&&mo>=1&&mo<=12)return `${y}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`;}
+ return '';
+}
+function analysisRowMatchesEquipment(r,keys=[]){
+ const eq=scopeKey(r?.equipment||'');
+ if(eq && keys.includes(eq))return true;
+ // Legacy Maintenance History rows intentionally kept their original row text and often have blank equipment columns.
+ // Match only explicit equipment aliases in the source-backed row text; never rewrite the stored master record.
+ const hay=scopeKey(`${r?.record_text||''} ${r?.source_payload?.text||''} ${r?.source_name||''}`);
+ return keys.some(k=>k && new RegExp(`(?:^| )${k.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}(?: |$)`).test(hay));
+}
 async function rowsForContext(ctx,type=null,limit=500,u=null){
  if(!ctx?.equipment_name)return [];
  const perms=u?await searchPermissions(u):null;
  const keys=(perms?.full||perms?.owner)?analysisEquipmentKeys(ctx.equipment_name):[scopeKey(ctx.equipment_name)];
- const vals=[keys];
- // Super Admin/Owner analysis may follow safe display aliases (WBF-2/Furnace-2/WBF2), while normal-user retrieval remains unchanged.
- let w=`regexp_replace(LOWER(COALESCE(equipment,'')),'[^a-z0-9]+',' ','g') = ANY($1::text[])`;
+ const vals=[];let w='TRUE';
  if(type){vals.push(type);w+=` AND record_type=$${vals.length}`;}
- const dr=ctxRange(ctx);
- if(dr?.from){vals.push(dr.from);w+=` AND CASE WHEN event_date ~ '^\\d{4}-\\d{2}-\\d{2}$' THEN event_date::date END >= $${vals.length}::date`;}
- if(dr?.to){vals.push(dr.to);w+=` AND CASE WHEN event_date ~ '^\\d{4}-\\d{2}-\\d{2}$' THEN event_date::date END <= $${vals.length}::date`;}
- vals.push(limit);
+ // Fetch source-backed candidates first. Legacy history has blank equipment/event_date columns,
+ // so equipment/date filtering is completed safely in JS from explicit row text.
+ vals.push(Math.max(5000,Math.min(15000,Number(limit||500)*12)));
  let rows=(await pool.query(`SELECT uid,record_type,equipment,area,event_date,record_text,source_name,source_payload FROM lmmm_master_records WHERE ${w} ORDER BY CASE WHEN event_date ~ '^\\d{4}-\\d{2}-\\d{2}$' THEN event_date::date END DESC NULLS LAST,uid LIMIT $${vals.length}`,vals)).rows;
- if(u){const sc=await effectiveSearchScope(u);rows=rows.filter(r=>areaMatchesScope(r.area,sc,r.equipment));}
- return rows;
+ rows=rows.filter(r=>analysisRowMatchesEquipment(r,keys));
+ const dr=ctxRange(ctx);
+ rows=rows.map(r=>{const d=explicitLegacyEventDate(r);return d&&!r.event_date?{...r,event_date:d}:r;});
+ if(dr?.from)rows=rows.filter(r=>r.event_date && r.event_date>=dr.from);
+ if(dr?.to)rows=rows.filter(r=>r.event_date && r.event_date<=dr.to);
+ if(u){const sc=await effectiveSearchScope(u);rows=rows.filter(r=>areaMatchesScope(r.area,sc,r.equipment||r.record_text));}
+ rows.sort((a,b)=>String(b.event_date||'').localeCompare(String(a.event_date||''))||String(a.uid||'').localeCompare(String(b.uid||'')));
+ return rows.slice(0,Math.max(1,Number(limit)||500));
 }
 async function analysisAction(q,u){
  const action=analysisActionName(q); if(!action)return null;
