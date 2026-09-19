@@ -1388,10 +1388,10 @@ async function searchBundledMaster(question,limit=20,dateRange=null,offset=0){
     // All entity terms must be represented, but punctuation variants are normalized by naturalSearchAliases first.
     for(const t of terms){vals.push(`%${t}%`);where+=` AND (LOWER(COALESCE(equipment,'')) LIKE LOWER($${vals.length}) OR LOWER(record_text) LIKE LOWER($${vals.length}))`;}
   }
-  if(dateRange?.from){vals.push(dateRange.from);where+=` AND NULLIF(event_date,'')::date >= $${vals.length}::date`;}
-  if(dateRange?.to){vals.push(dateRange.to);where+=` AND NULLIF(event_date,'')::date <= $${vals.length}::date`;}
+  if(dateRange?.from){vals.push(dateRange.from);where+=` AND CASE WHEN event_date ~ '^\\d{4}-\\d{2}-\\d{2}$' THEN event_date::date END >= $${vals.length}::date`;}
+  if(dateRange?.to){vals.push(dateRange.to);where+=` AND CASE WHEN event_date ~ '^\\d{4}-\\d{2}-\\d{2}$' THEN event_date::date END <= $${vals.length}::date`;}
   vals.push(limit); const limP=vals.length; vals.push(Math.max(0,Number(offset)||0)); const offP=vals.length;
-  const rows=(await pool.query(`SELECT uid,record_type,equipment,area,event_date,record_text,source_name,source_payload FROM lmmm_master_records WHERE ${where} ORDER BY NULLIF(event_date,'')::date DESC NULLS LAST, uid LIMIT $${limP} OFFSET $${offP}`,vals)).rows;
+  const rows=(await pool.query(`SELECT uid,record_type,equipment,area,event_date,record_text,source_name,source_payload FROM lmmm_master_records WHERE ${where} ORDER BY CASE WHEN event_date ~ '^\\d{4}-\\d{2}-\\d{2}$' THEN event_date::date END DESC NULLS LAST, uid LIMIT $${limP} OFFSET $${offP}`,vals)).rows;
   if(rows.length)return rows;
   const ids=[...new Set(String(q).toUpperCase().match(/\b(?:[A-Z]{1,8}[-_/])?[A-Z0-9]{2,}(?:[-_/.][A-Z0-9]+)*\b/g)||[])];
   const kt=queryTokens(q).slice(0,5); if(!ids.length&&!kt.length)return [];
