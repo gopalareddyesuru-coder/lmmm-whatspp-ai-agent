@@ -1457,7 +1457,8 @@ function formatBundledResults(rows){
     if(p.subeq && String(p.subeq).toLowerCase()!=='nan')extra.push(`Sub-equipment: ${p.subeq}`);
     if(p.remarks && String(p.remarks).toLowerCase()!=='nan' && String(p.remarks)!==String(detail))extra.push(`Remarks: ${p.remarks}`);
     const h=[r.event_date,r.equipment,r.record_type].filter(Boolean).join(' | ');
-    return `${h?`${h}\n`:''}${String(detail).slice(0,700)}${extra.length?'\n'+extra.join('\n'):''}${r.source_name?`\nSource: ${r.source_name}`:''}`;
+    const shared=r._shared_note?`\nScope: ${r._shared_note}`:'';
+    return `${h?`${h}\n`:''}${String(detail).slice(0,700)}${extra.length?'\n'+extra.join('\n'):''}${shared}${r.source_name?`\nSource: ${r.source_name}`:''}`;
   }).join('\n\n');
 }
 
@@ -1681,6 +1682,13 @@ function analysisEquipmentKeys(eq=''){
  // Retrieval aliases only. Canonical stored equipment names/IDs are never changed.
  const m=n.match(/^(?:wbf|furnace|walking beam furnace)\s*([12])$/);
  if(m){const k=m[1];['wbf '+k,'wbf'+k,'furnace '+k,'furnace'+k,'walking beam furnace '+k].forEach(x=>out.add(scopeKey(x)));}
+ // Conservative punctuation/spacing variants for every equipment name (BDM, FART, ECS-1, TOCB, etc.).
+ if(n){
+   out.add(n.replace(/\s+/g,''));
+   out.add(n.replace(/\bno\s+(\d+)\b/g,'$1'));
+   const tail=n.match(/^(.*?)(?:\s+)(\d+)$/);
+   if(tail){out.add(scopeKey(`${tail[1]}-${tail[2]}`));out.add(scopeKey(`${tail[1]}${tail[2]}`));}
+ }
  return [...out].filter(Boolean);
 }
 function explicitLegacyEventDate(r){
@@ -1695,11 +1703,38 @@ function explicitLegacyEventDate(r){
 }
 function analysisRowMatchesEquipment(r,keys=[]){
  const eq=scopeKey(r?.equipment||'');
- if(eq && keys.includes(eq))return true;
- // Legacy Maintenance History rows intentionally kept their original row text and often have blank equipment columns.
- // Match only explicit equipment aliases in the source-backed row text; never rewrite the stored master record.
+ if(eq && keys.some(k=>k && (eq===k || eq.replace(/\s+/g,'')===k.replace(/\s+/g,''))))return true;
+ // Legacy Maintenance History rows often have blank equipment columns. Match explicit equipment aliases in source-backed text.
  const hay=scopeKey(`${r?.record_text||''} ${r?.source_payload?.text||''} ${r?.source_name||''}`);
- return keys.some(k=>k && new RegExp(`(?:^| )${k.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}(?: |$)`).test(hay));
+ return keys.some(k=>{
+   if(!k)return false;
+   const esc=k.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+   if(new RegExp(`(?:^| )${esc}(?: |$)`).test(hay))return true;
+   const compact=k.replace(/\s+/g,'');
+   return compact.length>=4 && hay.replace(/\s+/g,'').includes(compact);
+ });
+}
+function sharedEquipmentNote(r,selected=''){
+ const hay=scopeKey(`${r?.equipment||''} ${r?.record_text||''} ${r?.source_payload?.text||''}`);
+ const s=scopeKey(selected);
+ if(!s)return '';
+ // Only flag explicit multi-equipment wording; do not split or rewrite the original record.
+ const multi=/\b(?:and|&|both)\b/.test(String(r?.record_text||'').toLowerCase()) &&
+   /(wbf|furnace|ecs|bdm|mill|shear|door|pump|gearbox)/i.test(String(r?.record_text||''));
+ return multi ? 'Shared/combined equipment record' : '';
+}
+function isJobHistoryRow(r){
+ const p=r?.source_payload||{};
+ const s=String(`${p.job||''} ${p.job_done||''} ${p.action||''} ${p.remarks||''} ${r?.record_text||''}`).toLowerCase();
+ return /\b(replac(?:e|ed|ement)|repair(?:ed)?|rectif(?:y|ied)|attend(?:ed)?|weld(?:ed|ing)?|tighten(?:ed|d)?|greas(?:e|ed|ing)|lubricat(?:e|ed|ion)|overhaul(?:ed)?|dismantl(?:e|ed|ing)|assembl(?:e|ed|y)|install(?:ed|ation)?|align(?:ed|ment)?|chang(?:e|ed)|clean(?:ed|ing)|adjust(?:ed|ment)?|renew(?:ed|al)|servic(?:e|ed|ing)|work done|job done)\b/i.test(s);
+}
+function explicitDurationMinutes(r){
+ const p=r?.source_payload||{};
+ const s=String(`${p.duration||''} ${p.downtime||''} ${p.delay||''} ${r?.record_text||''}`);
+ let m=s.match(/\b(?:downtime|delay|duration|restoration time|repair time)\s*[:=-]?\s*(\d+(?:\.\d+)?)\s*(min|mins|minutes|hr|hrs|hour|hours)\b/i);
+ if(!m)return null;
+ const v=Number(m[1]); if(!Number.isFinite(v)||v<0)return null;
+ return /^h/i.test(m[2])?v*60:v;
 }
 async function rowsForContext(ctx,type=null,limit=500,u=null){
  if(!ctx?.equipment_name)return [];
@@ -1712,6 +1747,7 @@ async function rowsForContext(ctx,type=null,limit=500,u=null){
  vals.push(Math.max(5000,Math.min(15000,Number(limit||500)*12)));
  let rows=(await pool.query(`SELECT uid,record_type,equipment,area,event_date,record_text,source_name,source_payload FROM lmmm_master_records WHERE ${w} ORDER BY CASE WHEN event_date ~ '^\\d{4}-\\d{2}-\\d{2}$' THEN event_date::date END DESC NULLS LAST,uid LIMIT $${vals.length}`,vals)).rows;
  rows=rows.filter(r=>analysisRowMatchesEquipment(r,keys));
+ rows=rows.map(r=>{const note=sharedEquipmentNote(r,ctx.equipment_name);return note?{...r,_shared_note:note}:r;});
  const dr=ctxRange(ctx);
  rows=rows.map(r=>{const d=explicitLegacyEventDate(r);return d&&!r.event_date?{...r,event_date:d}:r;});
  if(dr?.from)rows=rows.filter(r=>r.event_date && r.event_date>=dr.from);
@@ -1736,7 +1772,9 @@ async function analysisAction(q,u){
    return {text:`${eq} — Repeat Failures${period}\n\n${body}\n\nGrouped only from stored defect descriptions; similar wording is not silently merged.`,buttons:await primarySearchButtons(u,false)};
  }
  if(action==='jobs'||action==='history'){
-   const rows=await rowsForContext(ctx,'history',60,u); if(!rows.length)return {text:`${eq}${period}\nNo maintenance-history records found in the current filters.`};
+   let rows=await rowsForContext(ctx,'history',500,u);
+   if(action==='jobs')rows=rows.filter(isJobHistoryRow);
+   if(!rows.length)return {text:`${eq}${period}\nNo ${action==='jobs'?'explicit related-job':'maintenance-history'} records found in the current filters.`};
    return {text:`${eq} — ${action==='jobs'?'Related Jobs':'Equipment History'}${period}\n\n${formatBundledResults(rows.slice(0,20))}`,buttons:await primarySearchButtons(u,rows.length>20)};
  }
  if(action==='cbm'){
@@ -1752,17 +1790,24 @@ async function analysisAction(q,u){
    return {text:rows.length?`${eq} — Breakdown / Delay Evidence${period}\n\n${formatBundledResults(rows.slice(0,20))}`:`${eq}${period}\nNo linked breakdown/delay records were found in the current filtered data.`,buttons:await primarySearchButtons(u,rows.length>20)};
  }
  if(action==='mtbf'){
-   const rows=await rowsForContext(ctx,'defect',1000,u);
-   const valid=rows.filter(r=>/^\d{4}-\d{2}-\d{2}$/.test(String(r.event_date||'')));
+   const defects=await rowsForContext(ctx,'defect',2000,u);
+   const history=await rowsForContext(ctx,'history',2000,u);
+   const valid=defects.filter(r=>/^\d{4}-\d{2}-\d{2}$/.test(String(r.event_date||'')));
    const days=[...new Set(valid.map(r=>r.event_date))].sort();
-   const gaps=[];for(let i=1;i<days.length;i++){const a=new Date(days[i-1]+'T00:00:00Z'),b=new Date(days[i]+'T00:00:00Z');const d=Math.round((b-a)/86400000);if(d>=0)gaps.push(d);}
+   const gaps=[];for(let i=1;i<days.length;i++){const a=new Date(days[i-1]+'T00:00:00Z'),b=new Date(days[i]+'T00:00:00Z');const d=(b-a)/86400000;if(d>=0)gaps.push(d);}
    const avgGap=gaps.length?(gaps.reduce((a,b)=>a+b,0)/gaps.length):null;
-   const intervalLine=avgGap!==null?`\nAverage interval between recorded defect dates: ${avgGap.toFixed(1)} days\n(Record-based interval only — not certified MTBF)`:'';
-   return {text:`${eq} — MTBF / MTTR${period}\n\nStored defect records: ${rows.length}\nRecords with valid event date: ${valid.length}${intervalLine}\n\nMTBF: requires validated operating/failure-start data.\nMTTR: requires validated failure-start and restoration/completion timestamps.\n\nMissing values are not guessed.`};
+   const durations=[...defects,...history].map(explicitDurationMinutes).filter(x=>Number.isFinite(x));
+   const avgRepair=durations.length?(durations.reduce((a,b)=>a+b,0)/durations.length):null;
+   const indicator=avgGap!==null?`\nSupporting indicator — average interval between recorded defect dates: ${avgGap.toFixed(1)} days\nThis is NOT MTBF.`:'';
+   const mttr=avgRepair!==null
+     ? `MTTR from ${durations.length} records with explicit stored repair/downtime duration: ${(avgRepair/60).toFixed(2)} hours`
+     : 'MTTR: Not available — no reliable stored failure-to-restoration duration was found.';
+   return {text:`${eq} — MTBF / MTTR${period}\n\nDefect records: ${defects.length}\nRecords with valid event date: ${valid.length}${indicator}\n\nMTBF: Not available — validated operating time / failure-start data is incomplete.\n${mttr}\n\n00:00:00 date placeholders are not treated as failure times. Missing values are not guessed.`};
  }
  if(action==='performance'){
-   const all=await rowsForContext(ctx,null,1000,u),def=all.filter(r=>r.record_type==='defect').length,hist=all.filter(r=>r.record_type==='history').length;
-   return {text:`${eq} — Equipment Performance${period}\n\nDefect records: ${def}\nMaintenance-history records: ${hist}\nTotal linked records: ${all.length}\n\nAvailability, MTBF, MTTR and downtime KPIs require validated operating/failure/restoration time data; missing values are not inferred.`};
+   const all=await rowsForContext(ctx,null,3000,u),def=all.filter(r=>r.record_type==='defect').length,histRows=all.filter(r=>r.record_type==='history'),hist=histRows.length,jobs=histRows.filter(isJobHistoryRow).length;
+   const explicitDurations=all.map(explicitDurationMinutes).filter(x=>Number.isFinite(x));
+   return {text:`${eq} — Equipment Performance${period}\n\nDefect records: ${def}\nMaintenance-history records: ${hist}\nExplicit related-job records: ${jobs}\nTotal linked records: ${all.length}\nRecords with explicit downtime/repair duration: ${explicitDurations.length}\n\nAvailability/MTBF/MTTR are calculated only when their required validated time data exists. Missing KPI inputs are not inferred.`};
  }
  if(action==='pdf')return {text:`${eq}${period}\nPDF Analysis Report is authorised, but the final report-generation engine is not connected to this action yet. No placeholder PDF was generated.`};
  if(action==='rcm')return {text:`${eq}${period}\nRCM Analysis requires linked failure modes, consequences, existing tasks and historical evidence. The bot will not generate an unsupported RCM conclusion from defect counts alone.`};
