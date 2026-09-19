@@ -1431,8 +1431,10 @@ async function equipmentCandidates(term,ctx){
  if(term){const p=add(term);clauses.push(`LOWER(name) LIKE LOWER(${p})`);}
  if(!clauses.length)return [];
  const contextArea=ctx?.area?String(ctx.area):null;
- vals.push(contextArea); const areaP=`$${n++}`;
- const sql=`WITH eq AS (\n   SELECT DISTINCT equipment_name AS name, area FROM section_event_log WHERE deleted_at IS NULL AND equipment_name IS NOT NULL\n   UNION SELECT DISTINCT equipment_name AS name, NULL::text AS area FROM technical_document_chunks WHERE equipment_name IS NOT NULL\n ) SELECT name,area FROM eq WHERE (${clauses.join(' OR ')})\n ORDER BY CASE WHEN ${areaP} IS NOT NULL AND LOWER(COALESCE(area,''))=LOWER(${areaP}) THEN 0 ELSE 1 END, name LIMIT 12`;
+ vals.push(contextArea); const areaP=`$${n++}::text`;
+ // Explicit ::text prevents PostgreSQL 42P08 when the optional area context is NULL.
+ // Include the V7.5 clean master as an equipment source so Universal Search is not limited to event/manual tables.
+ const sql=`WITH eq AS (\n   SELECT DISTINCT equipment_name AS name, area FROM section_event_log WHERE deleted_at IS NULL AND equipment_name IS NOT NULL\n   UNION SELECT DISTINCT equipment_name AS name, NULL::text AS area FROM technical_document_chunks WHERE equipment_name IS NOT NULL\n   UNION SELECT DISTINCT equipment AS name, area FROM lmmm_master_records WHERE equipment IS NOT NULL\n ) SELECT name,area FROM eq WHERE (${clauses.join(' OR ')})\n ORDER BY CASE WHEN ${areaP} IS NOT NULL AND LOWER(COALESCE(area,''))=LOWER(${areaP}) THEN 0 ELSE 1 END, name LIMIT 12`;
  return (await pool.query(sql,vals)).rows;
 }
 async function eventSearch(q,u,equipment=null){
@@ -1450,7 +1452,7 @@ async function universalSearch(q,u){
    const pr=(await pool.query(`SELECT * FROM pending_search_choices WHERE employee_number=$1 AND created_at>now()-interval '30 minutes'`,[u.employee_number])).rows[0];
    if(pr){const choices=typeof pr.choices==='string'?JSON.parse(pr.choices):pr.choices;const pick=choices[Number(original)-1];if(pick){await setSearchContext(u,pick.name,pick.area||null);await pool.query(`DELETE FROM pending_search_choices WHERE employee_number=$1`,[u.employee_number]);const rows=await eventSearch(pr.original_query,u,pick.name);if(rows.length)return {text:`${pick.name}\n\n`+rows.map(x=>`${x.event_date?.toISOString?.().slice(0,10)||x.event_date} | ${x.event_type}${x.event_shift?` | ${x.event_shift}`:''}\n${x.event_text}`).join('\n\n')};return {rerun:pr.original_query,equipment:pick.name};}}
  }
- const ctx=await getSearchContext(u); let entity=stripIntentWords(original); const alias=await resolveAlias(entity); if(alias)entity=alias.equipment_name||alias.canonical_text;
+ const ctx=await getSearchContext(u); let entity=stripIntentWords(naturalSearchAliases(original)); const alias=await resolveAlias(entity); if(alias)entity=alias.equipment_name||alias.canonical_text;
  // If the user supplies only an intent after selecting an asset, retain that asset context.
  if(!entity && ctx?.equipment_name)entity=ctx.equipment_name;
  const candidates=entity?await equipmentCandidates(entity,ctx):[];
