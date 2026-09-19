@@ -1,6 +1,6 @@
 {
-  "name": "lmmm-ai-maintenance-v6-3-1",
-  "version": "6.3.1",
+  "name": "lmmm-ai-maintenance-v6-4",
+  "version": "6.4.0",
   "type": "module",
   "scripts": {
     "verify:runtime": "node scripts/verify-runtime.js",

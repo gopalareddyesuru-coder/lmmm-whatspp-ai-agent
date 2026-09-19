@@ -17,7 +17,36 @@ async function checkConverterHealth(){
 // V6.1 ephemeral source cache: conversion/retry convenience without permanent file storage.
 // Buffers expire automatically and are never written to PostgreSQL.
 const recentSourceCache = new Map();
+// Latest convertible upload is tracked per approved employee as soon as the WhatsApp
+// document message is received. This prevents a later `PDF chey` / `Excel chey`
+// command from accidentally selecting an older cached/database file while the newest
+// upload is still being indexed in the background.
+const latestConvertibleSource = new Map();
+// Per-employee upload sequence. Each background ingestion keeps its own immutable source context.
+// A later upload can never make an earlier job masquerade as the current file.
+const latestUploadSession = new Map();
+function beginUploadSession(employeeNumber, mediaId, name){
+  const key=String(employeeNumber), seq=(latestUploadSession.get(key)?.seq||0)+1;
+  const v={seq,mediaId:String(mediaId),name:String(name||'file'),receivedAt:Date.now()};
+  latestUploadSession.set(key,v); return v;
+}
+function uploadCompletionPrefix(employeeNumber, session){
+  const latest=latestUploadSession.get(String(employeeNumber));
+  return latest && latest.seq!==session.seq ? `🕘 Earlier upload completed — ${session.name}\n` : `📄 Source: ${session.name}\n`;
+}
 const SOURCE_CACHE_TTL_MS = 30 * 60 * 1000;
+function rememberLatestConvertible(employeeNumber, mediaId, payload){
+  const key=String(employeeNumber);
+  latestConvertibleSource.set(key,{...payload,mediaId:String(mediaId),employeeNumber:key,receivedAt:Date.now(),expiresAt:Date.now()+SOURCE_CACHE_TTL_MS});
+}
+function latestConvertible(employeeNumber, kind){
+  const key=String(employeeNumber),v=latestConvertibleSource.get(key);
+  if(!v || v.expiresAt<Date.now()){latestConvertibleSource.delete(key);return null;}
+  const name=String(v.name||'').toLowerCase(),mime=String(v.mime||'').toLowerCase();
+  if(kind==='tiff' && !(mime.includes('tiff') || /\.tiff?$/.test(name))) return null;
+  if(kind==='access' && !(mime.includes('access') || /\.(mdb|accdb)$/.test(name))) return null;
+  return v;
+}
 function cacheSource(employeeNumber, mediaId, payload){
   recentSourceCache.set(String(mediaId), {...payload, employeeNumber:String(employeeNumber), expiresAt:Date.now()+SOURCE_CACHE_TTL_MS});
   for (const [k,v] of recentSourceCache) if (!v || v.expiresAt < Date.now()) recentSourceCache.delete(k);
@@ -1213,11 +1242,18 @@ async function stageMedia(u,from,msg){
  const n=msg.image||msg.audio||msg.voice||msg.document;
  const type=msg.image?'image':(msg.audio||msg.voice)?'audio':'document';
  const meta=await mediaMeta(n.id), mime=meta.mime_type||n.mime_type||'', name=n.filename||`${type}-${n.id}`;
+ const uploadSession=beginUploadSession(u.employee_number,n.id,name);
+ const isTiff=/tiff?/i.test(mime)||/\.tiff?$/i.test(name);
+ const isAccess=/access/i.test(mime)||/\.(mdb|accdb)$/i.test(name);
+ // Bind conversion commands to the newest upload immediately, before expensive AI/indexing work.
+ if(isTiff) rememberLatestConvertible(u.employee_number,n.id,{mime,name,kind:'tiff'});
+ else if(isAccess) rememberLatestConvertible(u.employee_number,n.id,{mime,name,kind:'access'});
  const buf=await mediaBytes(meta.url),ctx=await currentShiftContext(u);
  cacheSource(u.employee_number,n.id,{buf,mime,name,mediaId:n.id,receivedAt:Date.now()});
+ if(isTiff) rememberLatestConvertible(u.employee_number,n.id,{mime,name,kind:'tiff'});
+ else if(isAccess) rememberLatestConvertible(u.employee_number,n.id,{mime,name,kind:'access'});
  let raw='',obj,geminiFile=null,sourcePart=null;
  const isPdf=/pdf/i.test(mime)||/\.pdf$/i.test(name);
- const isTiff=/tiff?/i.test(mime)||/\.tiff?$/i.test(name);
  const isVisualImage=type==='image'||/image\/(?:jpeg|jpg|png|webp|heic|heif)/i.test(mime)||/\.(?:jpe?g|png|webp|heic|heif)$/i.test(name);
  const isLargeDocument=type==='document' && (buf.length>8*1024*1024 || isTiff);
  // Multi-page TIFF must use the file pipeline (not the single-photo path) so all frames/pages remain available.
@@ -1273,7 +1309,7 @@ async function stageMedia(u,from,msg){
    catch(e){console.error('[REFERENCE INDEX]',e);ix={...ix,failedPages:ix.total||Number(obj.page_count)||1,failedRanges:[[1,ix.total||Number(obj.page_count)||1]]};}
    const refStatus=ix.failedPages?'reference_partial':'reference_indexed';
    await pool.query(`UPDATE media_ingestion SET status=$3,record_count=$2,review_count=$4 WHERE id=$1`,[mediaRowId,ix.chunkCount,refStatus,ix.failedPages||0]);
-   await sendText(from,`📘 ${String(obj.document_class).toUpperCase()} identified${obj.title?` — ${obj.title}`:''}
+   await sendText(from,`${uploadCompletionPrefix(u.employee_number,uploadSession)}📘 ${String(obj.document_class).toUpperCase()} identified${obj.title?` — ${obj.title}`:''}
 ✅ ${ix.indexedPages}/${ix.total} ${isTiff?'TIFF page/frame(s)':'page(s)'} indexed
 📚 ${ix.chunkCount} searchable knowledge sections indexed${ix.failedPages?`\n⚠️ ${ix.failedPages} ${isTiff?'TIFF page/frame(s)':'page(s)'} need review: ${ix.failedRanges.map(r=>r[0]===r[1]?r[0]:`${r[0]}-${r[1]}`).join(', ')}`:'\n✅ 0 failed pages'}
 Batch ID: ${mediaBatchCode(mediaRowId)}
@@ -1285,23 +1321,23 @@ You can now ask questions from this source in English, Telugu or Hindi. Stored a
  let saved=[];
  if(wholeClear){
    saved=await commitMedia(u,from,{media_ingestion_id:mediaRowId,proposed_json:{...obj,entries:validEntries}},'auto_confirmed','media_auto_confirmed');
-   await sendText(from,mediaSummary(saved,mediaRowId,0)); return;
+   await sendText(from,uploadCompletionPrefix(u.employee_number,uploadSession)+mediaSummary(saved,mediaRowId,0)); return;
  }
  if(isHistoricalTable && validEntries.length){
    saved=await commitMedia(u,from,{media_ingestion_id:mediaRowId,proposed_json:{...obj,entries:validEntries}},reviewEntries.length?'partial_saved':'auto_confirmed','historical_row_auto_saved',false);
  }
  if(!reviewEntries.length){
-   await sendText(from,mediaSummary(saved,mediaRowId,0)); return;
+   await sendText(from,uploadCompletionPrefix(u.employee_number,uploadSession)+mediaSummary(saved,mediaRowId,0)); return;
  }
  const pendingObj={...obj,entries:reviewEntries,uncertain:true,needs_event_time:false,partial_batch:true};
  await pool.query(`INSERT INTO pending_media_confirmations(employee_number,media_ingestion_id,proposed_json) VALUES($1,$2,$3)
  ON CONFLICT(employee_number) DO UPDATE SET media_ingestion_id=EXCLUDED.media_ingestion_id,proposed_json=EXCLUDED.proposed_json,created_at=now()`,[u.employee_number,mediaRowId,pendingObj]);
  const lines=reviewEntries.slice(0,15).map((e,i)=>`${i+1}. ${e.type}: ${e.equipment?e.equipment+' – ':''}${e.text||''}`).join('\n');
  if(isHistoricalTable){
-   await sendText(from,`${saved.length?mediaSummary(saved,mediaRowId,reviewEntries.length)+'\n\n':''}${lines}\n\n⚠️ Only these ${reviewEntries.length} row(s) are held for review because their own date/data is unreadable. Other dated rows were saved with their respective source dates. A common date/Today will NOT be applied to this historical batch.`);
+   await sendText(from,`${uploadCompletionPrefix(u.employee_number,uploadSession)}${saved.length?mediaSummary(saved,mediaRowId,reviewEntries.length)+'\n\n':''}${lines}\n\n⚠️ Only these ${reviewEntries.length} row(s) are held for review because their own date/data is unreadable. Other dated rows were saved with their respective source dates. A common date/Today will NOT be applied to this historical batch.`);
  }else{
    const ask=obj.needs_event_time?ml(lang,'When did it happen?','ఇది ఎప్పుడు జరిగింది?','यह कब हुआ था?'):ml(lang,'Please confirm because some information is unclear: CONFIRM / CORRECT','కొంత సమాచారం స్పష్టంగా లేదు. దయచేసి CONFIRM / CORRECT చేయండి','कुछ जानकारी स्पष्ट नहीं है। कृपया CONFIRM / CORRECT करें');
-   await sendText(from,`${lines||obj.summary}\n\n${ask}`);
+   await sendText(from,`${uploadCompletionPrefix(u.employee_number,uploadSession)}${lines||obj.summary}\n\n${ask}`);
  }
 }
 
@@ -1755,7 +1791,8 @@ async function processMessage(from, text, rawMessage = null) {
 
     // Access -> Excel conversion. Source bytes are temporary only; generated XLSX is returned to WhatsApp.
     if(/^(?:ACCESS|MDB|ACCDB)\s*(?:TO|2)\s*(?:EXCEL|XLSX)$|^(?:EXCEL|XLSX)\s*(?:CHEYYI|CHEY|GA CONVERT CHEYYI|CONVERT)$/i.test(clean.trim())){
-      const r=await pool.query(`SELECT media_id,filename,mime_type FROM media_ingestion WHERE employee_number=$1 AND (LOWER(coalesce(filename,'')) ~ '\\.(mdb|accdb)$' OR LOWER(coalesce(mime_type,'')) LIKE '%access%') ORDER BY id DESC LIMIT 1`,[u.employee_number]);
+      const live=latestConvertible(u.employee_number,'access');
+      const r=live?{rows:[{media_id:live.mediaId,filename:live.name,mime_type:live.mime}]}:await pool.query(`SELECT media_id,filename,mime_type FROM media_ingestion WHERE employee_number=$1 AND (LOWER(coalesce(filename,'')) ~ '\\.(mdb|accdb)$' OR LOWER(coalesce(mime_type,'')) LIKE '%access%') ORDER BY entered_at DESC,id DESC LIMIT 1`,[u.employee_number]);
       if(!r.rows[0]){await sendText(from,'Access .mdb/.accdb file dorakaledu. Mundu file upload cheyyandi.');return;}
       try{const m=r.rows[0];let src=cachedSource(m.media_id,u.employee_number);let ab=src?.buf;if(!ab){const meta=await mediaMeta(m.media_id);ab=await mediaBytes(meta.url);}
         await sendText(from,'⏳ Access → Excel conversion started. Each readable Access table will become a separate Excel sheet.');const out=await accessToExcelBuffer(ab);const base=String(m.filename||'LMMM_Access').replace(/\.(mdb|accdb)$/i,'');
@@ -1764,9 +1801,10 @@ async function processMessage(from, text, rawMessage = null) {
     }
 
     if(/^(?:TIFF|TIF)\s*(?:TO|2)\s*PDF$|^PDF\s*(?:CHEYYI|CHEY|GA CONVERT CHEYYI|CONVERT)$/i.test(clean.trim())){
-      const r=await pool.query(`SELECT media_id,filename,mime_type FROM media_ingestion WHERE employee_number=$1 AND (LOWER(coalesce(mime_type,'')) LIKE '%tiff%' OR LOWER(coalesce(filename,'')) ~ '\\.(tif|tiff)$') ORDER BY id DESC LIMIT 1`,[u.employee_number]);
+      const live=latestConvertible(u.employee_number,'tiff');
+      const r=live?{rows:[{media_id:live.mediaId,filename:live.name,mime_type:live.mime}]}:await pool.query(`SELECT media_id,filename,mime_type FROM media_ingestion WHERE employee_number=$1 AND (LOWER(coalesce(mime_type,'')) LIKE '%tiff%' OR LOWER(coalesce(filename,'')) ~ '\\.(tif|tiff)$') ORDER BY entered_at DESC,id DESC LIMIT 1`,[u.employee_number]);
       if(!r.rows[0]){await sendText(from,'TIFF file dorakaledu. Mundu TIFF/TIF file upload cheyyandi.');return;}
-      try{await sendText(from,'⏳ TIFF → PDF conversion started. All frames/pages will be kept in the original order.');const m=r.rows[0],cached=cachedSource(m.media_id,u.employee_number),meta=cached?null:await mediaMeta(m.media_id),tb=cached?.buf||await mediaBytes(meta.url),out=await tiffToPdfBuffer(tb),base=String(m.filename||'LMMM_TIFF').replace(/\.(tif|tiff)$/i,'');await sendDocumentBuffer(from,out.buffer,`${base}.pdf`,`✅ TIFF → PDF complete • ${out.pages}/${out.pages} pages`);}catch(e){console.error('[TIFF->PDF]',e);await sendText(from,`⚠️ TIFF → PDF conversion failed: ${String(e?.message||e).slice(0,180)}`);}return;
+      try{const m=r.rows[0];await sendText(from,`⏳ TIFF → PDF conversion started: ${m.filename||'latest TIFF'}\nAll frames/pages will be kept in the original order.`);const cached=cachedSource(m.media_id,u.employee_number),meta=cached?null:await mediaMeta(m.media_id),tb=cached?.buf||await mediaBytes(meta.url),out=await tiffToPdfBuffer(tb),base=String(m.filename||'LMMM_TIFF').replace(/\.(tif|tiff)$/i,'');await sendDocumentBuffer(from,out.buffer,`${base}.pdf`,`✅ TIFF → PDF complete • ${out.pages}/${out.pages} pages • Source: ${String(m.filename||'TIFF').slice(0,120)}`);}catch(e){console.error('[TIFF->PDF]',e);await sendText(from,`⚠️ TIFF → PDF conversion failed: ${String(e?.message||e).slice(0,180)}`);}return;
     }
 
     if(rawMessage && (rawMessage.image||rawMessage.audio||rawMessage.voice||rawMessage.document)){
@@ -2061,7 +2099,7 @@ app.post('/webhook', (req, res) => {
 app.get('/api/status', (_q, r) =>
   r.status(200).json({
     status: 'ready',
-    registration: 'V6.1-stabilization-conversion-recovery',
+    registration: 'V6.5-source-isolated-ingestion',
     webhook: '/webhook',
     super_admins_configured: SUPER_ADMIN_NUMBERS.size
   })
