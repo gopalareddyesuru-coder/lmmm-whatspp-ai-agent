@@ -586,12 +586,29 @@ async function accessToExcelBuffer(buf){
   let totalRows=0, sheets=0; const errors=[];
   for(const tableName of names){
     try{const rows=db.getTable(tableName).getData(); totalRows+=rows.length;
-      const safe=String(tableName||`Table${sheets+1}`).replace(/[\\/?*\[\]:]/g,'_').slice(0,31)||`Table${sheets+1}`;
-      const ws=XLSX.utils.json_to_sheet(rows); XLSX.utils.book_append_sheet(wb,ws,safe); sheets++;
+      let safe=String(tableName||`Table${sheets+1}`).replace(/[\\/?*\[\]:]/g,'_').slice(0,31)||`Table${sheets+1}`;
+      let suffix=2, base=safe.slice(0,27); while(wb.SheetNames.includes(safe)) safe=(base+'_'+suffix++).slice(0,31);
+      const ws=XLSX.utils.json_to_sheet(rows); const keys=rows.length?Object.keys(rows[0]):[]; ws['!cols']=keys.map(k=>({wch:Math.min(45,Math.max(12,String(k).length+2,...rows.slice(0,200).map(r=>String(r?.[k]??'').length+2)))})); XLSX.utils.book_append_sheet(wb,ws,safe); sheets++;
     }catch(e){errors.push(`${tableName}: ${e.message}`);}
   }
   if(!sheets) throw new Error(`No readable Access tables. ${errors.slice(0,2).join('; ')}`);
   return {buffer:Buffer.from(XLSX.write(wb,{type:'buffer',bookType:'xlsx'})),tables:names.length,sheets,totalRows,errors};
+}
+
+
+async function spreadsheetConvertBuffer(buf, sourceName, target){
+  let XLSX; try{XLSX=await import('xlsx');}catch(e){throw new Error('Spreadsheet converter is unavailable on this server.');}
+  const wb=XLSX.read(buf,{type:'buffer',cellDates:true});
+  if(target==='xlsx') return {buffer:Buffer.from(XLSX.write(wb,{type:'buffer',bookType:'xlsx'})),sheets:wb.SheetNames.length,filename:String(sourceName||'data').replace(/\.(csv|xls|xlsx)$/i,'')+'.xlsx'};
+  if(target==='csv'){
+    if(!wb.SheetNames.length) throw new Error('No readable spreadsheet sheets found.');
+    if(wb.SheetNames.length===1){const csv=XLSX.utils.sheet_to_csv(wb.Sheets[wb.SheetNames[0]]);return {buffer:Buffer.from('\ufeff'+csv),sheets:1,filename:String(sourceName||'data').replace(/\.(xls|xlsx|csv)$/i,'')+'.csv',mime:'text/csv'};}
+    let JSZip; try{const m=await import('jszip');JSZip=m.default||m;}catch(e){throw new Error('CSV ZIP writer is unavailable on this server.');}
+    const zip=new JSZip(); const used=new Set();
+    for(const sh of wb.SheetNames){let base=String(sh||'Sheet').replace(/[\\/:*?\"<>|]/g,'_').slice(0,80)||'Sheet',name=base,n=2;while(used.has(name.toLowerCase()))name=`${base}_${n++}`;used.add(name.toLowerCase());zip.file(name+'.csv','\ufeff'+XLSX.utils.sheet_to_csv(wb.Sheets[sh]));}
+    return {buffer:await zip.generateAsync({type:'nodebuffer',compression:'DEFLATE'}),sheets:wb.SheetNames.length,filename:String(sourceName||'data').replace(/\.(xls|xlsx|csv)$/i,'')+'_CSV.zip',mime:'application/zip'};
+  }
+  throw new Error('Unsupported spreadsheet conversion target.');
 }
 
 async function sendButtons(to, body, buttons) {
@@ -1931,7 +1948,8 @@ async function processMessage(from, text, rawMessage = null) {
     if(pendingFile && /^(FILE_(READ|STORE|READ_STORE|CONVERT|ALL)|READ FILE|STORE FILE|READ AND STORE)$/i.test(fa)){
       if(fa==='FILE_CONVERT'){
         const nm=String(pendingFile.meta.name||'');
-        const kind=/\.tiff?$/i.test(nm)?'tiff':/\.(mdb|accdb)$/i.test(nm)?'access':null;
+        const kind=/\.tiff?$/i.test(nm)?'tiff':/\.(mdb|accdb)$/i.test(nm)?'access':/\.(xlsx?|xls)$/i.test(nm)?'excel':/\.csv$/i.test(nm)?'csv':null;
+        if(kind==='excel'||kind==='csv'){const pm=pendingFile.meta;const meta=await mediaMeta(pm.mediaId);const buf=await mediaBytes(meta.url);const out=await spreadsheetConvertBuffer(buf,pm.name,kind==='excel'?'csv':'xlsx');clearPendingFileAction(u.employee_number);await sendDocumentBuffer(from,out.buffer,out.filename,`✅ ${kind==='excel'?'Excel → CSV':'CSV → Excel'} complete • ${out.sheets} sheet(s) • conversion only, not stored`,out.mime||'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');return;}
         if(!kind){ await sendText(from,'This file type has no conversion action configured. Choose Read or Store.'); return; }
         const pm=pendingFile.meta; await rememberDurableSource(u,from,pm.mediaId,pm.name,pm.mime,kind);
         const j=await enqueueConversionJob(u,from,pm.mediaId,pm.name,pm.mime,kind); clearPendingFileAction(u.employee_number);
@@ -1980,14 +1998,15 @@ async function processMessage(from, text, rawMessage = null) {
       try{
         if(rawMessage.document){
           const n=rawMessage.document, meta=await mediaMeta(n.id), mime=meta.mime_type||n.mime_type||'', name=n.filename||`document-${n.id}`;
-          const isTiff=/tiff/i.test(mime)||/\.tiff?$/i.test(name), isAccess=/access/i.test(mime)||/\.(mdb|accdb)$/i.test(name);
+          const isTiff=/tiff/i.test(mime)||/\.tiff?$/i.test(name), isAccess=/access/i.test(mime)||/\.(mdb|accdb)$/i.test(name), isExcel=/spreadsheet|ms-excel/i.test(mime)||/\.(xlsx?|xls)$/i.test(name), isCsv=/csv/i.test(mime)||/\.csv$/i.test(name);
           // Fast intake: do not download a potentially huge TIFF/Access file merely to show its action menu.
           // The selected background/read job downloads the exact media only when needed.
-          if(!(isTiff||isAccess)){ const buf=await mediaBytes(meta.url); cacheSource(u.employee_number,n.id,{buf,mime,name,mediaId:n.id,receivedAt:Date.now()}); }
-          if(isTiff||isAccess){
-            const kind=isTiff?'tiff':'access'; rememberLatestConvertible(u.employee_number,n.id,{mime,name,kind}); await rememberDurableSource(u,from,n.id,name,mime,kind);
+          if(!(isTiff||isAccess||isExcel||isCsv)){ const buf=await mediaBytes(meta.url); cacheSource(u.employee_number,n.id,{buf,mime,name,mediaId:n.id,receivedAt:Date.now()}); }
+          if(isTiff||isAccess||isExcel||isCsv){
+            const kind=isTiff?'tiff':isAccess?'access':isExcel?'excel':'csv'; rememberLatestConvertible(u.employee_number,n.id,{mime,name,kind}); await rememberDurableSource(u,from,n.id,name,mime,kind);
             setPendingFileAction(u.employee_number,from,rawMessage,{mime,name,mediaId:n.id});
-            const rows=[{id:'FILE_READ',title:'Read / Analyse',description:'Read now; do not store'},{id:'FILE_STORE',title:'Store',description:'Classify and store safely'},{id:'FILE_READ_STORE',title:'Read + Store',description:'Analyse and store'},{id:'FILE_CONVERT',title:isTiff?'Convert to PDF':'Convert to Excel',description:'Background conversion only'},{id:'FILE_ALL',title:isTiff?'Store + PDF':'Store + Excel',description:'Store safely and convert'}];
+            const convertTitle=isTiff?'Convert to PDF':isAccess?'Convert to Excel':isExcel?'Convert to CSV':'Convert to Excel'; const storeConvertTitle=isTiff?'Store + PDF':isAccess?'Store + Excel':isExcel?'Store + CSV':'Store + Excel';
+            const rows=[{id:'FILE_READ',title:'Read / Analyse',description:'Read now; do not store'},{id:'FILE_STORE',title:'Store',description:'Classify and store safely'},{id:'FILE_READ_STORE',title:'Read + Store',description:'Analyse and store'},{id:'FILE_CONVERT',title:convertTitle,description:'Conversion only; no storage'},{id:'FILE_ALL',title:storeConvertTitle,description:'Store safely and convert'}];
             await sendList(from,`📄 File received: ${name}\nNothing has been stored/indexed yet. Choose what you need.`,'Choose action',rows,'File actions');
           } else {
             // Direct-readable files should feel natural: process normally without an unnecessary conversion menu.

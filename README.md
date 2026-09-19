@@ -12,3 +12,11 @@ Fixes:
 Render commands remain:
 - Build: `npm install && npm run verify:runtime`
 - Start: `npm start`
+
+
+## V7.3 additions
+- Access MDB/ACCDB → XLSX: every readable Access table becomes a separate Excel sheet; completion metadata tracks tables/sheets/rows.
+- Access worksheets get practical widths and collision-safe sheet names.
+- Excel/XLS → CSV: one sheet = one CSV; multiple sheets = ZIP containing one CSV per sheet.
+- CSV → XLSX conversion.
+- Conversion does not store/index maintenance data unless Store is explicitly chosen.
