@@ -993,18 +993,22 @@ function designationBand(designation='') {
 }
 
 function accessLabel(code=''){
-  const m={FULL_ACCESS:'Full Access',ENTRY:'Entry',VIEW:'View',EDIT:'Edit',DELETE_UNDO:'Delete / Undo',APPROVAL:'Approval',PRINT_EXPORT:'PDF / Print',ANALYSIS:'Analysis',ADVANCED_REPORTS:'Advanced Reports',RCM:'RCM Analysis',MASTER_EDIT:'Master Edit',ACCESS_ADMIN:'Access Admin'};
+  const m={FULL_ACCESS:'Full Access',ENTRY:'Entry',VIEW:'View',EDIT:'View + Edit / Entry',DELETE_UNDO:'Delete / Undo',APPROVAL:'Approval',PRINT_EXPORT:'PDF / Print',ANALYSIS:'Analysis',REPORTS:'Reports',ADVANCED_REPORTS:'Advanced Reports',RCM:'RCM Analysis',MASTER_EDIT:'Master Edit',ACCESS_ADMIN:'Access Admin'};
   return m[String(code).toUpperCase()]||String(code).replaceAll('_',' ');
 }
 function inheritedPermissionCodes({designation='',operationalRole='NORMAL_USER',responsibilities=[]}={}){
   const category=employeeCategory(designation), band=designationBand(designation);
   const roles=new Set((responsibilities||[]).map(x=>String(x.responsibility_role||x||'').trim().toUpperCase().replace(/[ -]+/g,'_')));
   const op=String(operationalRole||'NORMAL_USER').toUpperCase();
-  const out=new Set(category==='EXECUTIVE'?['ENTRY','VIEW']:['ENTRY']);
-  // Only authenticated hierarchy assignments elevate the registration baseline.
-  const full = band==='DGM' || ['HOD','SECTION_INCHARGE','SUPER_ADMIN'].includes(op) || roles.has('HOD') || roles.has('SECTION_IN_CHARGE') || roles.has('SECTION_INCHARGE') || roles.has('SUPER_ADMIN') || roles.has('OWNER');
-  if(full){ ['FULL_ACCESS','ENTRY','VIEW','EDIT','DELETE_UNDO','APPROVAL','PRINT_EXPORT','ANALYSIS','ADVANCED_REPORTS','RCM'].forEach(x=>out.add(x)); }
-  if(op==='SUPER_ADMIN'||roles.has('SUPER_ADMIN')||roles.has('OWNER')){ ['MASTER_EDIT','ACCESS_ADMIN'].forEach(x=>out.add(x)); }
+  const out=new Set();
+  // Registration/hierarchy is the INITIAL baseline only. Super Admin manual Access selection replaces this baseline.
+  // Non-executive: relevant-scope data entry + view. Executive through AGM: entry/view + analysis + on-screen reports, but no print/export by default.
+  if(category==='NON_EXECUTIVE' || category==='CONTRACT'){ ['ENTRY','VIEW','EDIT'].forEach(x=>out.add(x)); }
+  else { ['ENTRY','VIEW','EDIT','ANALYSIS','REPORTS'].forEach(x=>out.add(x)); }
+  // Approved hierarchy elevates authority. Area/shift/general-shift roles change scope, not hidden report/print rights.
+  const sectionFull = band==='DGM' || ['HOD','SECTION_INCHARGE'].includes(op) || roles.has('HOD') || roles.has('SECTION_IN_CHARGE') || roles.has('SECTION_INCHARGE');
+  if(sectionFull){ ['FULL_ACCESS','ENTRY','VIEW','EDIT','DELETE_UNDO','APPROVAL','PRINT_EXPORT','ANALYSIS','REPORTS','ADVANCED_REPORTS','RCM'].forEach(x=>out.add(x)); }
+  if(op==='SUPER_ADMIN'||roles.has('SUPER_ADMIN')||roles.has('OWNER')){ ['FULL_ACCESS','ENTRY','VIEW','EDIT','DELETE_UNDO','APPROVAL','PRINT_EXPORT','ANALYSIS','REPORTS','ADVANCED_REPORTS','RCM','MASTER_EDIT','ACCESS_ADMIN'].forEach(x=>out.add(x)); }
   return [...out];
 }
 async function syncDefaultAccess(employeeNumber,performedBy='SYSTEM',reason='Registration / hierarchy baseline'){
@@ -1713,6 +1717,7 @@ async function searchPermissions(u){
  const canEdit=full || effective.has('EDIT') || effective.has('ENTRY');
  const canView=full || canEdit || effective.has('VIEW');
  const advanced=full || effective.has('ANALYSIS') || effective.has('ADVANCED_REPORTS');
+ const reports=full || effective.has('REPORTS') || effective.has('ADVANCED_REPORTS');
  const js=new Set((scope?.jobScopes||[]).map(x=>String(x).toUpperCase()));
  const unrestricted=full || !js.size || js.has('ALL') || js.has('NOT ASSIGNED');
  const jobAllowed=(...names)=>unrestricted || names.some(n=>js.has(n));
@@ -1724,6 +1729,7 @@ async function searchPermissions(u){
    more: canView,
    date: canView,
    analysis: advanced,
+   reports,
    repeat: advanced && jobAllowed('DEFECTS','JOBS','HISTORY'),
    jobs: canView && jobAllowed('JOBS','HISTORY'),
    history: canView && jobAllowed('HISTORY','JOBS','DEFECTS'),
@@ -2484,6 +2490,8 @@ async function commitMedia(u,from,p,status='confirmed',timingSource='media_confi
 
 
 
+// V7.7.29 AUTHORIZATION PRECEDENCE + REPORTS ACCESS
+// Rule: authentication establishes identity; hierarchy establishes default scope/access; explicit Super Admin Access selection replaces defaults for capabilities.
 // V7.7.24 PROJECT-WIDE MENU STANDARD
 // Multi-select where multiple values are logically valid; single-select for exclusive values (e.g. operational role).
 async function selectionGet(owner,key,target='',defaults=[]){
@@ -2567,7 +2575,7 @@ async function applyEquipmentDataSelection(to,u){
 }
 
 const ACCESS_PERMISSION_OPTIONS = [
- ['FULL_ACCESS','Full Access'],['VIEW','View Only'],['EDIT','View + Edit / Entry'],['PRINT_EXPORT','PDF / Print'],['ANALYSIS','Analysis'],['ADVANCED_REPORTS','Advanced Reports'],['RCM','RCM Analysis'],['DELETE_UNDO','Delete / Undo'],['APPROVAL','Approval'],['MASTER_EDIT','Master Edit'],['ACCESS_ADMIN','Access Admin']
+ ['FULL_ACCESS','Full Access'],['VIEW','View Only'],['EDIT','View + Edit / Entry'],['REPORTS','Reports'],['PRINT_EXPORT','PDF / Print'],['ANALYSIS','Analysis'],['ADVANCED_REPORTS','Advanced Reports'],['RCM','RCM Analysis'],['DELETE_UNDO','Delete / Undo'],['APPROVAL','Approval'],['MASTER_EDIT','Master Edit'],['ACCESS_ADMIN','Access Admin']
 ];
 const AUTHORITY_OPTIONS=[
  ['APPROVE_RECORDS','Approve Records'],['CORRECT_RECORDS','Correct Records'],['DELETE_RESTORE','Delete / Restore'],
@@ -2593,7 +2601,7 @@ async function employeeGovernanceSummary(emp){
  const roles=(a.responsibilities||[]).map(x=>x.responsibility_role).filter(Boolean).join(', ')||u.responsibility||'Normal Employee';
  const jobs=(sc.jobScopes||[]).join(', ')||'ALL';
  const inherited=(a.default_permissions||[]).map(x=>accessLabel(x.permission)).join(', ')||'None';
- return `Employee Control\n${u.name} / ${emp}\nDesignation: ${u.designation}\nDepartment/Section: ${u.section_department}\nRegistered Area: ${u.area_of_working}\nOperational Role: ${String(a.operational_role||'NORMAL_USER').replaceAll('_',' ')}\nResponsibility: ${roles}\n\nDefault / Inherited Access: ${inherited}\nDefault Source: Registration + approved hierarchy\nEffective Access Level: ${String(a.effective_access).replaceAll('_',' + ')}\nAuthority Scope: ${String(a.scope).replaceAll('_',' ')}\nEffective Area(s): ${sc.plantWide?'ALL':(sc.areas||[]).join(', ')||'Registered'}\nJob Scope: ${jobs}\nAccess Override: ${a.has_access_override?'YES — Super Admin selection':'NO — hierarchy defaults'}\nAdditional / Special Access: ${perms}\nAuthority Grants: ${auth}`;
+ return `Employee Control\n${u.name} / ${emp}\nDesignation: ${u.designation}\nDepartment/Section: ${u.section_department}\nRegistered Area: ${u.area_of_working}\nOperational Role: ${String(a.operational_role||'NORMAL_USER').replaceAll('_',' ')}\nResponsibility: ${roles}\n\nDefault / Inherited Access: ${inherited}\nDefault Source: Registration + approved hierarchy\nEffective Access Level: ${String(a.effective_access).replaceAll('_',' + ')}\nAuthority Scope: ${String(a.scope).replaceAll('_',' ')}\nEffective Area(s): ${sc.plantWide?'ALL':(sc.areas||[]).join(', ')||'Registered'}\nJob Scope: ${jobs}\nAccess Override: ${a.has_access_override?'YES — Super Admin selection':'NO — hierarchy defaults'}\nManual Override Access: ${perms}\nAuthority Grants: ${auth}`;
 }
 async function sendAccessAdminMenu(to,emp){
  if(!await requireSuperAdmin(to))return;
@@ -2617,13 +2625,13 @@ async function sendPermissionAdmin(to,emp,page=1){
  const inherited=new Set((a.default_permissions||[]).map(x=>String(x.permission||'').toUpperCase()));
  let st=await selectionGet(to,'ADMIN_ACCESS',emp,[...active]); const staged=new Set(st.selected);
  const start=page===2?8:0, chunk=ACCESS_PERMISSION_OPTIONS.slice(start,start+8);
- const rows=chunk.map(([code,title])=>({id:`ACCESS_STAGE:${code}:${emp}`,title:`${staged.has(code)?'✓':inherited.has(code)?'↳':'○'} ${title}`.slice(0,24),description:staged.has(code)?'Selected additional grant':inherited.has(code)?'Default / inherited':'Available'}));
+ const rows=chunk.map(([code,title])=>({id:`ACCESS_STAGE:${code}:${emp}`,title:`${staged.has(code)?'✓':inherited.has(code)?'↳':'○'} ${title}`.slice(0,24),description:staged.has(code)?'Selected manual access':inherited.has(code)?'Default / inherited':'Available'}));
  if(page===1 && ACCESS_PERMISSION_OPTIONS.length>8)rows.push({id:`ACCESS_PERMS_PAGE2:${emp}`,title:'More Access Options',description:'Show remaining permissions'});
  else if(page===2)rows.push({id:`ACCESS_PERMS:${emp}`,title:'Back to first options'});
- rows.push({id:`ACCESS_APPLY:${emp}`,title:'✓ Apply Selection',description:`${staged.size} additional grant(s)`});
+ rows.push({id:`ACCESS_APPLY:${emp}`,title:'✓ Apply Selection',description:`${staged.size} manual selection(s)`});
  await sendList(to,`Access • ${emp} • ${page===2?'More':'Main'}
-↳ Default/Inherited • ✓ Selected additional grant • ○ Available
-Select one or more, then Apply.`,`Select`,rows,'Access');
+↳ Default/Inherited • ✓ Manual override selection • ○ Available
+Selecting View Only / View + Edit replaces old Full Access. Add Reports/PDF/Analysis only when required, then Apply.`,`Select`,rows,'Access');
 }
 async function togglePermissionAdmin(from,emp,permission){
  if(!await requireSuperAdmin(from))return;if(!ACCESS_PERMISSION_OPTIONS.some(x=>x[0]===permission)){await sendText(from,'Invalid permission.');return;}
@@ -2716,12 +2724,24 @@ async function sendJobScopePicker(to,emp){if(!await requireSuperAdmin(to))return
 async function setJobScope(from,emp,jobScope){if(!await requireSuperAdmin(from))return;if(!JOB_SCOPE_OPTIONS.some(x=>x[0]===jobScope)){await sendText(from,'Invalid job scope.');return;}const u=await byEmp(emp);if(!u){await sendText(from,'Not found.');return;}const latest=(await pool.query(`SELECT * FROM user_assignments WHERE employee_number=$1 AND active=true ORDER BY id DESC LIMIT 1`,[emp])).rows[0];await pool.query(`UPDATE user_assignments SET active=false WHERE employee_number=$1 AND active=true`,[emp]);await pool.query(`INSERT INTO user_assignments(employee_number,area,section,responsibility,sub_area,shift,employment_type,is_additional_charge,job_scope,assigned_by,reason) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,[emp,latest?.area||u.area_of_working||NA,latest?.section||u.section_department||NA,latest?.responsibility||u.responsibility||NA,latest?.sub_area||NA,latest?.shift||NA,latest?.employment_type||NA,!!latest?.is_additional_charge,jobScope,from,'Super Admin job responsibility']);await pool.query(`INSERT INTO authority_audit(employee_number,action,performed_by,details) VALUES($1,'SET_JOB_SCOPE',$2,$3::jsonb)`,[emp,from,JSON.stringify({job_scope:jobScope})]);await sendAccessAdminMenu(from,emp);}
 
 async function stageAdminOption(from,key,emp,code,sendFn){
- if(!await requireSuperAdmin(from))return; await selectionToggle(from,key,emp,code,[]); await sendFn(from,emp);
+ if(!await requireSuperAdmin(from))return;
+ if(key==='ADMIN_ACCESS'){
+   const st=await selectionGet(from,key,emp,[]); const set=new Set(st.selected.map(x=>String(x).toUpperCase()));
+   const c=String(code).toUpperCase();
+   // Access profiles are mutually exclusive. Selecting View or View+Edit must remove old Full Access immediately.
+   if(c==='FULL_ACCESS'){ set.clear(); set.add('FULL_ACCESS'); }
+   else if(c==='VIEW'){ set.clear(); set.add('VIEW'); }
+   else if(c==='EDIT'){ set.clear(); set.add('EDIT'); set.add('ENTRY'); set.add('VIEW'); }
+   else { if(set.has(c))set.delete(c); else set.add(c); }
+   await selectionReset(from,key,emp,[...set],st.context);
+ } else await selectionToggle(from,key,emp,code,[]);
+ await sendFn(from,emp);
 }
 async function applyAccessSelection(from,emp){
  if(!await requireSuperAdmin(from))return;const st=await selectionGet(from,'ADMIN_ACCESS',emp,[]),sel=new Set(st.selected);
  if(sel.has('EDIT')){sel.add('ENTRY');sel.add('VIEW');}
- if(sel.has('FULL_ACCESS')){['ENTRY','VIEW','EDIT','DELETE_UNDO','APPROVAL','PRINT_EXPORT','ANALYSIS','ADVANCED_REPORTS','RCM'].forEach(x=>sel.add(x));}
+ // FULL_ACCESS is stored as one authoritative profile. Do not persist its expanded child permissions; this prevents stale rights surviving a later downgrade.
+ if(!sel.has('FULL_ACCESS') && sel.has('VIEW') && !sel.has('EDIT')){ sel.delete('ENTRY'); }
  const persistedCodes=[...new Set([...ACCESS_PERMISSION_OPTIONS.map(x=>x[0]),'ENTRY'])];
  for(const code of persistedCodes){
   const active=sel.has(code);
