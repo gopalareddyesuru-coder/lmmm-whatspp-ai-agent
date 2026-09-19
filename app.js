@@ -219,6 +219,16 @@ async function initDB() {
     )
   `);
 
+  // V7.7.21 legacy-safe audit schema migration. CREATE TABLE IF NOT EXISTS does not
+  // add newer columns to an already-existing production table, so add every field
+  // used by governance queries explicitly and non-destructively.
+  await pool.query(`ALTER TABLE authority_audit ADD COLUMN IF NOT EXISTS employee_number TEXT`);
+  await pool.query(`ALTER TABLE authority_audit ADD COLUMN IF NOT EXISTS action TEXT`);
+  await pool.query(`ALTER TABLE authority_audit ADD COLUMN IF NOT EXISTS responsibility_role TEXT`);
+  await pool.query(`ALTER TABLE authority_audit ADD COLUMN IF NOT EXISTS scope_section TEXT`);
+  await pool.query(`ALTER TABLE authority_audit ADD COLUMN IF NOT EXISTS scope_area TEXT`);
+  await pool.query(`ALTER TABLE authority_audit ADD COLUMN IF NOT EXISTS performed_by TEXT`);
+  await pool.query(`ALTER TABLE authority_audit ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT now()`);
   await pool.query(`ALTER TABLE authority_audit ADD COLUMN IF NOT EXISTS details JSONB DEFAULT '{}'::jsonb`);
 
   // V7.7.19 governance: explicit role/authority/access overrides and report-grade data quality state.
@@ -2435,7 +2445,7 @@ async function setAreaScope(from,emp,key){if(!await requireSuperAdmin(from))retu
 async function sendJobScopePicker(to,emp){if(!await requireSuperAdmin(to))return;const a=await effectiveAuthority(emp);if(!a){await sendText(to,'Not found.');return;}const current=new Set((a.assignments||[]).map(x=>String(x.job_scope||'ALL').toUpperCase()));await sendList(to,`Job Responsibility • ${emp}\nChoose the work family this employee is responsible for.`,`Select`,JOB_SCOPE_OPTIONS.map(([c,t])=>({id:`ACCESS_JOB_SET:${c}:${emp}`,title:`${current.has(c)?'✓ ':''}${t}`.slice(0,24)})),'Job Scope');}
 async function setJobScope(from,emp,jobScope){if(!await requireSuperAdmin(from))return;if(!JOB_SCOPE_OPTIONS.some(x=>x[0]===jobScope)){await sendText(from,'Invalid job scope.');return;}const u=await byEmp(emp);if(!u){await sendText(from,'Not found.');return;}const latest=(await pool.query(`SELECT * FROM user_assignments WHERE employee_number=$1 AND active=true ORDER BY id DESC LIMIT 1`,[emp])).rows[0];await pool.query(`UPDATE user_assignments SET active=false WHERE employee_number=$1 AND active=true`,[emp]);await pool.query(`INSERT INTO user_assignments(employee_number,area,section,responsibility,sub_area,shift,employment_type,is_additional_charge,job_scope,assigned_by,reason) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,[emp,latest?.area||u.area_of_working||NA,latest?.section||u.section_department||NA,latest?.responsibility||u.responsibility||NA,latest?.sub_area||NA,latest?.shift||NA,latest?.employment_type||NA,!!latest?.is_additional_charge,jobScope,from,'Super Admin job responsibility']);await pool.query(`INSERT INTO authority_audit(employee_number,action,performed_by,details) VALUES($1,'SET_JOB_SCOPE',$2,$3::jsonb)`,[emp,from,JSON.stringify({job_scope:jobScope})]);await sendAccessAdminMenu(from,emp);}
 async function sendEffectiveAccess(to,emp){if(!await requireSuperAdmin(to))return;const t=await employeeGovernanceSummary(emp);await sendText(to,t?`${t}\n\nServer-side enforcement is authoritative. Aliases/shortcuts never bypass scope.`:'Not found.');}
-async function sendAccessAudit(to,emp){if(!await requireSuperAdmin(to))return;const r=await pool.query(`SELECT action,performed_by,created_at,details FROM authority_audit WHERE employee_number=$1 ORDER BY created_at DESC LIMIT 15`,[emp]);if(!r.rows.length){await sendText(to,`Audit History • ${emp}\nNo access changes recorded.`);return;}await sendText(to,`Audit History • ${emp}\n\n`+r.rows.map(x=>`${x.created_at?.toISOString?.()||x.created_at} | ${x.action} | by ${x.performed_by}\n${JSON.stringify(x.details||{})}`).join('\n\n').slice(0,3900));}
+async function sendAccessAudit(to,emp){if(!await requireSuperAdmin(to))return;const r=await pool.query(`SELECT action,performed_by,created_at,details FROM authority_audit WHERE employee_number=$1 ORDER BY created_at DESC LIMIT 15`,[emp]);if(!r.rows.length){await sendText(to,`Audit History • ${emp}\nNo access changes recorded.`);return;}await sendText(to,`Audit History • ${emp}\n\n`+r.rows.map(x=>`${x.created_at?.toISOString?.()||x.created_at||'Time unavailable'} | ${x.action||'AUDIT'} | by ${x.performed_by||'Legacy/System'}\n${JSON.stringify(x.details||{})}`).join('\n\n').slice(0,3900));}
 
 async function ownerCommand(from, text) {
   const admin = from.replace(/\D/g, '');
