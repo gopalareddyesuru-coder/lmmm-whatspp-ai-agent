@@ -1465,7 +1465,8 @@ function searchIntent(q=''){
  if(/\b(shutdown)\b/.test(t))return 'shutdown';
  if(/\b(history|previous|old|past)\b/.test(t))return 'history';
  if(/\b(spare|spares|inventory|stock)\b/.test(t))return 'spares';
- if(/\b(drawing|drawings|drg)\b/.test(t))return 'drawing';
+ if(/\b(job\s*procedure|procedure|how\s+to|steps|method|replacement\s+procedure|overhaul\s+procedure)\b/.test(t))return 'procedure';
+ if(/\b(drawing|drawings|drg|drawing\s*(?:no|number)|part\s*drawing)\b/.test(t))return 'drawing';
  if(/\b(production|blooms|tonnes?|tons?)\b/.test(t))return 'production';
  if(/\b(delay|delays|downtime)\b/.test(t))return 'delay';
  if(/\b(mtbf|mtbr|mttr|performance|availability)\b/.test(t))return 'analysis';
@@ -1473,7 +1474,7 @@ function searchIntent(q=''){
  return 'general';
 }
 function stripIntentWords(q=''){
- return String(q).replace(/\b(defects?|faults?|problems?|jobs?|work\s*orders?|history|previous|old|past|inspection|condition|monitoring|vibration|cbm|shutdown|spares?|inventory|stock|drawings?|drg|manuals?|details?|about|tell|show|find|search|cheppu|gurinchi|pm|preventive|scheduled?|maintenance|rcm|reliability)\b/ig,' ').replace(/\s+/g,' ').trim();
+ return String(q).replace(/\b(defects?|faults?|problems?|jobs?|work\s*orders?|history|previous|old|past|inspection|condition|monitoring|vibration|cbm|shutdown|spares?|inventory|stock|drawings?|drg|drawing\s*(?:no|number)|part\s*drawing|job\s*procedure|procedure|steps|method|how\s+to|manuals?|details?|about|tell|show|find|search|cheppu|gurinchi|pm|preventive|scheduled?|maintenance|rcm|reliability)\b/ig,' ').replace(/\s+/g,' ').trim();
 }
 async function getSearchContext(u){return (await pool.query(`SELECT * FROM search_context WHERE employee_number=$1`,[u.employee_number])).rows[0]||null;}
 async function setSearchContext(u,equipment,area=null){await pool.query(`INSERT INTO search_context(employee_number,department_code,area,equipment_name,updated_at) VALUES($1,'35',$2,$3,now()) ON CONFLICT(employee_number) DO UPDATE SET area=COALESCE(EXCLUDED.area,search_context.area),equipment_name=EXCLUDED.equipment_name,updated_at=now()`,[u.employee_number,area,equipment]);}
@@ -1534,13 +1535,30 @@ async function universalSearch(q,u){
  }
  ctx=await getSearchContext(u); let entity=stripIntentWords(naturalSearchAliases(original)); const alias=await resolveAlias(entity); if(alias)entity=alias.equipment_name||alias.canonical_text;
  if(!entity && ctx?.equipment_name)entity=ctx.equipment_name;
- const candidates=entity?await equipmentCandidates(entity,ctx):[];
- if(candidates.length>1 && (GENERIC_ASSET_WORDS.test(entity)||candidates.every(x=>String(x.name).toLowerCase()!==String(entity).toLowerCase()))){
-   await pool.query(`INSERT INTO pending_search_choices(employee_number,original_query,choices,created_at) VALUES($1,$2,$3,now()) ON CONFLICT(employee_number) DO UPDATE SET original_query=EXCLUDED.original_query,choices=EXCLUDED.choices,created_at=now()`,[u.employee_number,original,JSON.stringify(candidates)]);
-   return {text:`Multiple matches found. Which one?\n\n`+candidates.map((x,i)=>`${i+1}. ${x.name}${x.area?` — ${x.area}`:''}`).join('\n')};
+ const intent=searchIntent(original);
+ // Drawing numbers/part drawings and job procedures are reference-knowledge requests, not event/equipment searches.
+ // Route them before fuzzy equipment discovery so a drawing number can never be mistaken for a defect/history term.
+ if(intent==='drawing' || intent==='procedure'){
+   const contextual=(ctx?.equipment_name && !/\b(wbf[- ]?[12]|furnace[- ]?[12])\b/i.test(original))?`${ctx.equipment_name} ${original}`:original;
+   return {knowledgeQuery:contextual,referenceIntent:intent};
  }
- const equipment=candidates.length===1?candidates[0].name:(ctx?.equipment_name && !entity?ctx.equipment_name:null);
- const intent=searchIntent(original); if(equipment){await setSearchContext(u,equipment,candidates[0]?.area||ctx?.area||null);await setSearchFilters(u,{module:intent,offset:0,lastQuery:original});}
+ let candidates=entity?await equipmentCandidates(entity,ctx):[];
+ // Exact canonical equipment/known alias always outranks fuzzy contains matches.
+ const canonicalEntity=naturalSearchAliases(entity||'').trim().toLowerCase();
+ const exact=candidates.filter(x=>String(x.name||'').trim().toLowerCase()===canonicalEntity);
+ if(exact.length===1)candidates=exact;
+ // A family query such as "Furnace defects" must offer only the actual furnace assets,
+ // never every part whose description happens to contain the word furnace.
+ if(/^furnaces?$/i.test(String(entity||'').trim())){
+   const fam=(await pool.query(`SELECT DISTINCT equipment AS name,area FROM lmmm_master_records WHERE LOWER(equipment) IN ('wbf-1','wbf-2') ORDER BY name`)).rows;
+   if(fam.length){candidates=fam;}
+ }
+ if(candidates.length>1 && (GENERIC_ASSET_WORDS.test(entity)||/^furnaces?$/i.test(String(entity||'').trim())||candidates.every(x=>String(x.name).toLowerCase()!==String(entity).toLowerCase()))){
+   await pool.query(`INSERT INTO pending_search_choices(employee_number,original_query,choices,created_at) VALUES($1,$2,$3,now()) ON CONFLICT(employee_number) DO UPDATE SET original_query=EXCLUDED.original_query,choices=EXCLUDED.choices,created_at=now()`,[u.employee_number,original,JSON.stringify(candidates)]);
+   const buttons=candidates.length<=3?candidates.map((x,i)=>({id:String(i+1),title:String(x.name).slice(0,20)})):null;
+   return {text:`Multiple matches found. Which one?\n\n`+candidates.map((x,i)=>`${i+1}. ${x.name}${x.area?` — ${x.area}`:''}`).join('\n'),...(buttons?{buttons}:{})};
+ }
+ const equipment=candidates.length===1?candidates[0].name:(ctx?.equipment_name && !entity?ctx.equipment_name:null); if(equipment){await setSearchContext(u,equipment,candidates[0]?.area||ctx?.area||null);await setSearchFilters(u,{module:intent,offset:0,lastQuery:original});}
  ctx=await getSearchContext(u); const dr=range|| (ctx?.date_from?{from:String(ctx.date_from).slice(0,10),to:String(ctx.date_to||ctx.date_from).slice(0,10)}:null);
  // Totals/trends need a time frame; do not silently calculate lifetime analytics.
  if(['production','delay','analysis','maintenance','condition'].includes(intent) && !dr && /\b(total|cumulative|mtbf|mtbr|mttr|performance|trend|schedule|scheduled|production|delay|delays)\b/i.test(original)) return {text:'Select a time frame first.\nToday | Last 7 days | Last 30 days | This month | Custom date range'};
@@ -1564,7 +1582,12 @@ async function retrieveReferenceKnowledge(question,u){
  const clauses=terms.map((_,i)=>`(LOWER(coalesce(section_heading,'')) LIKE LOWER($${i+1}) OR LOWER(content_text) LIKE LOWER($${i+1}) OR LOWER(coalesce(equipment_name,'')) LIKE LOWER($${i+1}) OR LOWER(coalesce(title,'')) LIKE LOWER($${i+1}))`).join(' OR ');
  const vals=terms.map(x=>`%${x}%`);
  const r=await pool.query(`SELECT id,document_class,title,equipment_name,page_start,page_end,section_heading,content_text,source_filename FROM technical_document_chunks WHERE ${clauses} ORDER BY page_start NULLS LAST,id LIMIT 18`,vals);
- return r.rows;
+ if(r.rows.length>=12)return r.rows;
+ // Also search the clean unified source-backed knowledge layer (drawings, SMP/SOP, parts and legacy technical data).
+ const kClauses=terms.map((_,i)=>`(LOWER(normalized_text) LIKE LOWER($${i+1}) OR LOWER(raw_text) LIKE LOWER($${i+1}) OR EXISTS (SELECT 1 FROM unnest(identifiers) z WHERE LOWER(z) LIKE LOWER($${i+1})))`).join(' OR ');
+ const kr=await pool.query(`SELECT NULL::bigint AS id,'knowledge'::text AS document_class,source_name AS title,NULL::text AS equipment_name,NULL::int AS page_start,NULL::int AS page_end,NULL::text AS section_heading,raw_text AS content_text,source_name AS source_filename FROM lmmm_knowledge_records WHERE ${kClauses} LIMIT 18`,vals);
+ const seen=new Set(r.rows.map(x=>String(x.source_filename||'')+'|'+String(x.page_start||'')+'|'+String(x.content_text||'').slice(0,120)));
+ return [...r.rows,...kr.rows.filter(x=>{const k=String(x.source_filename||'')+'||'+String(x.content_text||'').slice(0,120);if(seen.has(k))return false;seen.add(k);return true;})].slice(0,18);
 }
 async function geminiAnswerFromKnowledge(question,rows,u){
  const lang=languageOf(question), ctx=await currentShiftContext(u);
