@@ -2109,7 +2109,6 @@ async function buildMaintenancePdf(ctx,u,codes){
 async function sendCurrentMaintenancePdf(to,u){
  const perms=await searchPermissions(u);
  if(!perms.pdf){await sendText(to,'PDF / Print is not authorised for your current access level.');return {denied:true};}
- const perms=await searchPermissions(u);if(!perms.pdf){await sendText(to,'PDF / Print is not authorised for your access level.');return;}
  const ctx=await getSearchContext(u);if(!ctx?.equipment_name){await sendText(to,'Select/search an equipment first.');return;}
  const st=await selectionGet(u.employee_number,'EQUIPMENT_DATA',ctx.equipment_name,[]);const codes=currentReportCodes(ctx,st.context?.applied?st.selected:[]);
  await sendText(to,`${ctx.equipment_name} printable A4 PDF report is being prepared (up to 200 validated matching records).`);
