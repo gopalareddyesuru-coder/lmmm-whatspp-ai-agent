@@ -1377,14 +1377,15 @@ async function searchBundledMaster(question,limit=12){
   if(intent==='defect'){vals.push('defect');where+=` AND record_type=$${vals.length}`;}
   else if(intent==='history'){vals.push('history');where+=` AND record_type=$${vals.length}`;}
   else if(intent==='spares'){vals.push('spare');where+=` AND record_type=$${vals.length}`;}
+  // Jobs in the clean master are represented inside maintenance-history records; live job_action rows are merged separately.
+  else if(intent==='job_action'){vals.push('history');where+=` AND record_type=$${vals.length}`;}
   const terms=queryTokens(entity||q).slice(0,6);
   if(terms.length){
-    const ors=[];
-    for(const t of terms){vals.push(`%${t}%`);ors.push(`(LOWER(COALESCE(equipment,'')) LIKE LOWER($${vals.length}) OR LOWER(record_text) LIKE LOWER($${vals.length}))`);}
-    where+=` AND (${ors.join(' OR ')})`;
+    // All entity terms must be represented, but punctuation variants are normalized by naturalSearchAliases first.
+    for(const t of terms){vals.push(`%${t}%`);where+=` AND (LOWER(COALESCE(equipment,'')) LIKE LOWER($${vals.length}) OR LOWER(record_text) LIKE LOWER($${vals.length}))`;}
   }
   vals.push(limit);
-  const rows=(await pool.query(`SELECT uid,record_type,equipment,area,event_date,record_text,source_name FROM lmmm_master_records WHERE ${where} ORDER BY event_date DESC NULLS LAST, uid LIMIT $${vals.length}`, vals.length>1?vals:[...vals])).rows;
+  const rows=(await pool.query(`SELECT uid,record_type,equipment,area,event_date,record_text,source_name,source_payload FROM lmmm_master_records WHERE ${where} ORDER BY event_date DESC NULLS LAST, uid LIMIT $${vals.length}`,vals)).rows;
   if(rows.length)return rows;
   const ids=[...new Set(String(q).toUpperCase().match(/\b(?:[A-Z]{1,8}[-_/])?[A-Z0-9]{2,}(?:[-_/.][A-Z0-9]+)*\b/g)||[])];
   const kt=queryTokens(q).slice(0,5); if(!ids.length&&!kt.length)return [];
@@ -1392,13 +1393,18 @@ async function searchBundledMaster(question,limit=12){
   if(ids.length){kv.push(ids);kc.push(`identifiers && $1::text[]`);}
   for(const t of kt){kv.push(`%${t}%`);kc.push(`LOWER(normalized_text) LIKE LOWER($${kv.length})`);}
   kv.push(limit);
-  return (await pool.query(`SELECT uid,'knowledge' AS record_type,NULL::text AS equipment,NULL::text AS area,NULL::text AS event_date,raw_text AS record_text,source_name FROM lmmm_knowledge_records WHERE ${kc.join(' OR ')} LIMIT $${kv.length}`,kv)).rows;
+  return (await pool.query(`SELECT uid,'knowledge' AS record_type,NULL::text AS equipment,NULL::text AS area,NULL::text AS event_date,raw_text AS record_text,source_name,'{}'::jsonb AS source_payload FROM lmmm_knowledge_records WHERE ${kc.join(' OR ')} LIMIT $${kv.length}`,kv)).rows;
 }
 function formatBundledResults(rows){
   if(!rows?.length)return null;
   return rows.slice(0,10).map(r=>{
+    const p=r.source_payload||{};
+    const detail=p.description||p.job||p.job_done||p.remarks||p.reason||r.record_text||'';
+    const extra=[];
+    if(p.subeq && String(p.subeq).toLowerCase()!=='nan')extra.push(`Sub-equipment: ${p.subeq}`);
+    if(p.remarks && String(p.remarks).toLowerCase()!=='nan' && String(p.remarks)!==String(detail))extra.push(`Remarks: ${p.remarks}`);
     const h=[r.event_date,r.equipment,r.record_type].filter(Boolean).join(' | ');
-    return `${h?`${h}\n`:''}${String(r.record_text||'').slice(0,700)}${r.source_name?`\nSource: ${r.source_name}`:''}`;
+    return `${h?`${h}\n`:''}${String(detail).slice(0,700)}${extra.length?'\n'+extra.join('\n'):''}${r.source_name?`\nSource: ${r.source_name}`:''}`;
   }).join('\n\n');
 }
 
@@ -1445,12 +1451,27 @@ async function eventSearch(q,u,equipment=null){
  const r=await pool.query(`SELECT id,event_type,equipment_name,event_date,event_shift,event_text FROM section_event_log WHERE ${where} ORDER BY event_date DESC,entered_at DESC LIMIT 12`,vals);
  return r.rows;
 }
+function normalizedSearchPhrase(s=''){
+ return naturalSearchAliases(String(s)).toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+}
+function usefulLiveEvent(row,original){
+ const text=normalizedSearchPhrase(row?.event_text||'');
+ const query=normalizedSearchPhrase(original||'');
+ if(!text)return false;
+ // A retrieval phrase accidentally saved as an event (for example "Furnace-2 defects") must never mask real history.
+ if(text===query)return false;
+ if(/^(wbf|furnace)\s*[12]\s*(defect|defects|job|jobs|history)?$/.test(text))return false;
+ return true;
+}
+function formatLiveEvents(rows){
+ return rows.slice(0,8).map(x=>`${x.event_date?.toISOString?.().slice(0,10)||x.event_date} | ${x.event_type}${x.event_shift?` | ${x.event_shift}`:''}\n${x.event_text}`).join('\n\n');
+}
 async function universalSearch(q,u){
  const original=String(q||'').trim(); if(!original)return null;
  // Numeric choice is accepted only while an ambiguity prompt is pending.
  if(/^\d+$/.test(original)){
    const pr=(await pool.query(`SELECT * FROM pending_search_choices WHERE employee_number=$1 AND created_at>now()-interval '30 minutes'`,[u.employee_number])).rows[0];
-   if(pr){const choices=typeof pr.choices==='string'?JSON.parse(pr.choices):pr.choices;const pick=choices[Number(original)-1];if(pick){await setSearchContext(u,pick.name,pick.area||null);await pool.query(`DELETE FROM pending_search_choices WHERE employee_number=$1`,[u.employee_number]);const rows=await eventSearch(pr.original_query,u,pick.name);if(rows.length)return {text:`${pick.name}\n\n`+rows.map(x=>`${x.event_date?.toISOString?.().slice(0,10)||x.event_date} | ${x.event_type}${x.event_shift?` | ${x.event_shift}`:''}\n${x.event_text}`).join('\n\n')};return {rerun:pr.original_query,equipment:pick.name};}}
+   if(pr){const choices=typeof pr.choices==='string'?JSON.parse(pr.choices):pr.choices;const pick=choices[Number(original)-1];if(pick){await setSearchContext(u,pick.name,pick.area||null);await pool.query(`DELETE FROM pending_search_choices WHERE employee_number=$1`,[u.employee_number]);const rows=(await eventSearch(pr.original_query,u,pick.name)).filter(x=>usefulLiveEvent(x,pr.original_query));const master=await searchBundledMaster(`${pick.name} ${pr.original_query}`,12);if(master.length)return {text:formatBundledResults(master)+(rows.length?`\n\nRecent live entries\n${formatLiveEvents(rows)}`:'')};if(rows.length)return {text:`${pick.name}\n\n`+formatLiveEvents(rows)};return {knowledgeQuery:`${pick.name} ${pr.original_query}`};}}
  }
  const ctx=await getSearchContext(u); let entity=stripIntentWords(naturalSearchAliases(original)); const alias=await resolveAlias(entity); if(alias)entity=alias.equipment_name||alias.canonical_text;
  // If the user supplies only an intent after selecting an asset, retain that asset context.
@@ -1462,10 +1483,16 @@ async function universalSearch(q,u){
  }
  const equipment=candidates.length===1?candidates[0].name:(ctx?.equipment_name && !entity?ctx.equipment_name:null);
  if(equipment)await setSearchContext(u,equipment,candidates[0]?.area||ctx?.area||null);
- const events=await eventSearch(original,u,equipment);
- if(events.length){return {text:(equipment?`${equipment}\n\n`:'')+events.map(x=>`${x.event_date?.toISOString?.().slice(0,10)||x.event_date} | ${x.event_type}${x.event_shift?` | ${x.event_shift}`:''}\n${x.event_text}`).join('\n\n')};}
+ const intent=searchIntent(original);
+ const liveEvents=(await eventSearch(original,u,equipment)).filter(x=>usefulLiveEvent(x,original));
  const masterRows=await searchBundledMaster(original,12);
- if(masterRows.length)return {text:formatBundledResults(masterRows)};
+ // For maintenance retrieval, the clean source-backed master is authoritative historical coverage; live valid entries are supplementary.
+ if(masterRows.length){
+   let text=formatBundledResults(masterRows);
+   if(liveEvents.length)text += `\n\nRecent live entries\n${formatLiveEvents(liveEvents)}`;
+   return {text};
+ }
+ if(liveEvents.length)return {text:(equipment?`${equipment}\n\n`:'')+formatLiveEvents(liveEvents)};
  // Let reference/manual search answer next, but enrich a follow-up with selected equipment.
  return {knowledgeQuery:equipment && !original.toLowerCase().includes(equipment.toLowerCase())?`${equipment} ${original}`:original};
 }
