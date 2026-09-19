@@ -176,6 +176,21 @@ async function initDB() {
 
   await pool.query(`ALTER TABLE user_assignments ADD COLUMN IF NOT EXISTS job_scope TEXT DEFAULT 'ALL'`);
   await pool.query(`ALTER TABLE user_assignments ADD COLUMN IF NOT EXISTS reason TEXT`);
+  // V7.7.22 governance compatibility: older production tables may predate these fields.
+  // CREATE TABLE IF NOT EXISTS never upgrades an existing table, so migrate every
+  // column used by the Employee Control path non-destructively.
+  await pool.query(`ALTER TABLE user_assignments ADD COLUMN IF NOT EXISTS area TEXT DEFAULT 'NOT ASSIGNED'`);
+  await pool.query(`ALTER TABLE user_assignments ADD COLUMN IF NOT EXISTS section TEXT DEFAULT 'NOT ASSIGNED'`);
+  await pool.query(`ALTER TABLE user_assignments ADD COLUMN IF NOT EXISTS responsibility TEXT DEFAULT 'NOT ASSIGNED'`);
+  await pool.query(`ALTER TABLE user_assignments ADD COLUMN IF NOT EXISTS sub_area TEXT DEFAULT 'NOT ASSIGNED'`);
+  await pool.query(`ALTER TABLE user_assignments ADD COLUMN IF NOT EXISTS shift TEXT DEFAULT 'NOT ASSIGNED'`);
+  await pool.query(`ALTER TABLE user_assignments ADD COLUMN IF NOT EXISTS employment_type TEXT DEFAULT 'NOT ASSIGNED'`);
+  await pool.query(`ALTER TABLE user_assignments ADD COLUMN IF NOT EXISTS is_additional_charge BOOLEAN DEFAULT FALSE`);
+  await pool.query(`ALTER TABLE user_assignments ADD COLUMN IF NOT EXISTS active BOOLEAN DEFAULT TRUE`);
+  await pool.query(`ALTER TABLE user_assignments ADD COLUMN IF NOT EXISTS valid_from TIMESTAMPTZ DEFAULT now()`);
+  await pool.query(`ALTER TABLE user_assignments ADD COLUMN IF NOT EXISTS valid_to TIMESTAMPTZ`);
+  await pool.query(`ALTER TABLE user_assignments ADD COLUMN IF NOT EXISTS assigned_by TEXT`);
+
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS user_special_permissions(
@@ -205,6 +220,16 @@ async function initDB() {
       created_at TIMESTAMPTZ DEFAULT now()
     )
   `);
+  await pool.query(`ALTER TABLE user_responsibilities ADD COLUMN IF NOT EXISTS responsibility_role TEXT`);
+  await pool.query(`ALTER TABLE user_responsibilities ADD COLUMN IF NOT EXISTS scope_section TEXT DEFAULT 'NOT ASSIGNED'`);
+  await pool.query(`ALTER TABLE user_responsibilities ADD COLUMN IF NOT EXISTS scope_area TEXT DEFAULT 'NOT ASSIGNED'`);
+  await pool.query(`ALTER TABLE user_responsibilities ADD COLUMN IF NOT EXISTS sub_area TEXT DEFAULT 'NOT ASSIGNED'`);
+  await pool.query(`ALTER TABLE user_responsibilities ADD COLUMN IF NOT EXISTS shift TEXT DEFAULT 'NOT ASSIGNED'`);
+  await pool.query(`ALTER TABLE user_responsibilities ADD COLUMN IF NOT EXISTS active BOOLEAN DEFAULT TRUE`);
+  await pool.query(`ALTER TABLE user_responsibilities ADD COLUMN IF NOT EXISTS valid_from TIMESTAMPTZ DEFAULT now()`);
+  await pool.query(`ALTER TABLE user_responsibilities ADD COLUMN IF NOT EXISTS valid_to TIMESTAMPTZ`);
+  await pool.query(`ALTER TABLE user_responsibilities ADD COLUMN IF NOT EXISTS assigned_by TEXT`);
+  await pool.query(`ALTER TABLE user_responsibilities ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT now()`);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS authority_audit(
@@ -233,6 +258,10 @@ async function initDB() {
 
   // V7.7.19 governance: explicit role/authority/access overrides and report-grade data quality state.
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS operational_role TEXT DEFAULT 'NORMAL_USER'`);
+  await pool.query(`ALTER TABLE user_special_permissions ADD COLUMN IF NOT EXISTS permission TEXT`);
+  await pool.query(`ALTER TABLE user_special_permissions ADD COLUMN IF NOT EXISTS active BOOLEAN DEFAULT TRUE`);
+  await pool.query(`ALTER TABLE user_special_permissions ADD COLUMN IF NOT EXISTS granted_by TEXT`);
+  await pool.query(`ALTER TABLE user_special_permissions ADD COLUMN IF NOT EXISTS granted_at TIMESTAMPTZ DEFAULT now()`);
   await pool.query(`ALTER TABLE user_special_permissions ADD COLUMN IF NOT EXISTS valid_from TIMESTAMPTZ DEFAULT now()`);
   await pool.query(`ALTER TABLE user_special_permissions ADD COLUMN IF NOT EXISTS valid_to TIMESTAMPTZ`);
   await pool.query(`ALTER TABLE user_special_permissions ADD COLUMN IF NOT EXISTS reason TEXT`);
@@ -967,18 +996,18 @@ async function syncDefaultAccess(employeeNumber,performedBy='SYSTEM',reason='Reg
   const rr=await pool.query(`SELECT responsibility_role FROM user_responsibilities WHERE employee_number=$1 AND active=true AND (valid_from IS NULL OR valid_from<=now()) AND (valid_to IS NULL OR valid_to>=now())`,[employeeNumber]);
   const perms=inheritedPermissionCodes({designation:u.designation,operationalRole:u.operational_role,responsibilities:rr.rows});
   const section=u.section_department||NA, area=u.area_of_working||NA;
-  await pool.query('BEGIN');
+  // Do not use pool-level BEGIN/COMMIT here: pg.Pool may route statements to
+  // different connections. Each statement is idempotent, so safe upserts are more robust.
+  await pool.query(`UPDATE user_default_permissions SET active=false,calculated_at=now() WHERE employee_number=$1`,[employeeNumber]);
+  for(const permission of perms){
+    await pool.query(`INSERT INTO user_default_permissions(employee_number,permission,source_type,source_detail,scope_section,scope_area,active,calculated_at)
+      VALUES($1,$2,'REGISTRATION_HIERARCHY',$3,$4,$5,true,now())
+      ON CONFLICT(employee_number,permission) DO UPDATE SET source_type=EXCLUDED.source_type,source_detail=EXCLUDED.source_detail,scope_section=EXCLUDED.scope_section,scope_area=EXCLUDED.scope_area,active=true,calculated_at=now()`,
+      [employeeNumber,permission,reason,section,area]);
+  }
   try{
-    await pool.query(`UPDATE user_default_permissions SET active=false,calculated_at=now() WHERE employee_number=$1`,[employeeNumber]);
-    for(const permission of perms){
-      await pool.query(`INSERT INTO user_default_permissions(employee_number,permission,source_type,source_detail,scope_section,scope_area,active,calculated_at)
-        VALUES($1,$2,'REGISTRATION_HIERARCHY',$3,$4,$5,true,now())
-        ON CONFLICT(employee_number,permission) DO UPDATE SET source_type=EXCLUDED.source_type,source_detail=EXCLUDED.source_detail,scope_section=EXCLUDED.scope_section,scope_area=EXCLUDED.scope_area,active=true,calculated_at=now()`,
-        [employeeNumber,permission,reason,section,area]);
-    }
     await pool.query(`INSERT INTO authority_audit(employee_number,action,scope_section,scope_area,performed_by,details) VALUES($1,'SYNC_DEFAULT_ACCESS',$2,$3,$4,$5::jsonb)`,[employeeNumber,section,area,performedBy,JSON.stringify({permissions:perms,reason})]);
-    await pool.query('COMMIT');
-  }catch(e){await pool.query('ROLLBACK');throw e;}
+  }catch(e){ console.error('[ACCESS AUDIT NONFATAL]',e.message); }
   return perms;
 }
 async function defaultPermissionRows(employeeNumber){
@@ -987,7 +1016,7 @@ async function defaultPermissionRows(employeeNumber){
 
 async function effectiveAuthority(employeeNumber) {
   const ur = await pool.query(
-    `SELECT employee_number,designation,section_department,area_of_working,approval_status,is_active
+    `SELECT employee_number,designation,section_department,area_of_working,approval_status,is_active,operational_role
      FROM users WHERE employee_number=$1 LIMIT 1`,
     [employeeNumber]
   );
@@ -2389,7 +2418,13 @@ async function employeeGovernanceSummary(emp){
 async function sendAccessAdminMenu(to,emp){
  if(!await requireSuperAdmin(to))return;
  const u=await byEmp(emp);if(!u||u.approval_status!=='approved'||!u.is_active){await sendText(to,'Employee not found or inactive.');return;}
- const summary=await employeeGovernanceSummary(emp);
+ let summary;
+ try { summary=await employeeGovernanceSummary(emp); }
+ catch(e){
+   console.error('[EMPLOYEE CONTROL SUMMARY]',emp,e);
+   // Fail soft: admin must still be able to open controls while a legacy row is repaired.
+   summary=`Employee Control\n${u.name||'Employee'} / ${emp}\nDesignation: ${u.designation||'Not assigned'}\nDepartment/Section: ${u.section_department||'Not assigned'}\nRegistered Area: ${u.area_of_working||'Not assigned'}\n\n⚠️ Some legacy access details are being synchronized. Management options remain available.`;
+ }
  await sendList(to,summary,'Manage',[
   {id:`ACCESS_PERMS:${emp}`,title:'Access'}, {id:`ACCESS_ROLE:${emp}`,title:'Role'}, {id:`ACCESS_AUTH:${emp}`,title:'Authorities'},
   {id:`RESP_CHANGE:${emp}`,title:'Responsibilities'}, {id:`ACCESS_AREA:${emp}`,title:'Area / Equipment Scope'},
@@ -2445,7 +2480,14 @@ async function setAreaScope(from,emp,key){if(!await requireSuperAdmin(from))retu
 async function sendJobScopePicker(to,emp){if(!await requireSuperAdmin(to))return;const a=await effectiveAuthority(emp);if(!a){await sendText(to,'Not found.');return;}const current=new Set((a.assignments||[]).map(x=>String(x.job_scope||'ALL').toUpperCase()));await sendList(to,`Job Responsibility • ${emp}\nChoose the work family this employee is responsible for.`,`Select`,JOB_SCOPE_OPTIONS.map(([c,t])=>({id:`ACCESS_JOB_SET:${c}:${emp}`,title:`${current.has(c)?'✓ ':''}${t}`.slice(0,24)})),'Job Scope');}
 async function setJobScope(from,emp,jobScope){if(!await requireSuperAdmin(from))return;if(!JOB_SCOPE_OPTIONS.some(x=>x[0]===jobScope)){await sendText(from,'Invalid job scope.');return;}const u=await byEmp(emp);if(!u){await sendText(from,'Not found.');return;}const latest=(await pool.query(`SELECT * FROM user_assignments WHERE employee_number=$1 AND active=true ORDER BY id DESC LIMIT 1`,[emp])).rows[0];await pool.query(`UPDATE user_assignments SET active=false WHERE employee_number=$1 AND active=true`,[emp]);await pool.query(`INSERT INTO user_assignments(employee_number,area,section,responsibility,sub_area,shift,employment_type,is_additional_charge,job_scope,assigned_by,reason) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,[emp,latest?.area||u.area_of_working||NA,latest?.section||u.section_department||NA,latest?.responsibility||u.responsibility||NA,latest?.sub_area||NA,latest?.shift||NA,latest?.employment_type||NA,!!latest?.is_additional_charge,jobScope,from,'Super Admin job responsibility']);await pool.query(`INSERT INTO authority_audit(employee_number,action,performed_by,details) VALUES($1,'SET_JOB_SCOPE',$2,$3::jsonb)`,[emp,from,JSON.stringify({job_scope:jobScope})]);await sendAccessAdminMenu(from,emp);}
 async function sendEffectiveAccess(to,emp){if(!await requireSuperAdmin(to))return;const t=await employeeGovernanceSummary(emp);await sendText(to,t?`${t}\n\nServer-side enforcement is authoritative. Aliases/shortcuts never bypass scope.`:'Not found.');}
-async function sendAccessAudit(to,emp){if(!await requireSuperAdmin(to))return;const r=await pool.query(`SELECT action,performed_by,created_at,details FROM authority_audit WHERE employee_number=$1 ORDER BY created_at DESC LIMIT 15`,[emp]);if(!r.rows.length){await sendText(to,`Audit History • ${emp}\nNo access changes recorded.`);return;}await sendText(to,`Audit History • ${emp}\n\n`+r.rows.map(x=>`${x.created_at?.toISOString?.()||x.created_at||'Time unavailable'} | ${x.action||'AUDIT'} | by ${x.performed_by||'Legacy/System'}\n${JSON.stringify(x.details||{})}`).join('\n\n').slice(0,3900));}
+async function sendAccessAudit(to,emp){
+ if(!await requireSuperAdmin(to))return;
+ try{
+  const r=await pool.query(`SELECT action,performed_by,created_at,details FROM authority_audit WHERE employee_number=$1 ORDER BY created_at DESC NULLS LAST,id DESC LIMIT 15`,[emp]);
+  if(!r.rows.length){await sendText(to,`Audit History • ${emp}\nNo access changes recorded.`);return;}
+  await sendText(to,`Audit History • ${emp}\n\n`+r.rows.map(x=>`${x.created_at?.toISOString?.()||x.created_at||'Time unavailable'} | ${x.action||'AUDIT'} | by ${x.performed_by||'Legacy/System'}\n${JSON.stringify(x.details||{})}`).join('\n\n').slice(0,3900));
+ }catch(e){console.error('[ACCESS AUDIT READ]',e);await sendText(to,`Audit History • ${emp}\nAudit data is temporarily unavailable; employee access controls are still usable.`);}
+}
 
 async function ownerCommand(from, text) {
   const admin = from.replace(/\D/g, '');
