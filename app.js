@@ -1526,7 +1526,7 @@ function scopeAreaMatches(scopeArea,recordArea='',equipment=''){
  const children=DEPT35_SCOPE_CHILDREN[s]||[];
  if(children.some(c=>a===c||a.includes(c)||e===c||e.includes(c)))return true;
  // Equipment master sometimes stores WBF as equipment while the user's registered parent area is BDM.
- if(s==='bdm' && (/^wbf [12]$/.test(e)||/walking beam furnace/.test(e)))return true;
+ if((s==='bdm'||s.includes('bdm')) && (/^wbf [12]$/.test(e)||/walking beam furnace/.test(e)||a.includes('wbf')||a.includes('furnace')||a.includes('ecs')))return true;
  return false;
 }
 function areaMatchesScope(area,scope,equipment=''){
@@ -1607,7 +1607,12 @@ function searchIntent(q=''){
  return 'general';
 }
 function stripIntentWords(q=''){
- return String(q).replace(/\b(defects?|faults?|problems?|jobs?|work\s*orders?|history|previous|old|past|inspection|condition|monitoring|vibration|cbm|shutdown|spares?|inventory|stock|drawings?|drg|drawing\s*(?:no|number)|part\s*drawing|job\s*procedure|procedure|steps|method|how\s+to|manuals?|details?|about|tell|show|find|search|cheppu|gurinchi|pm|preventive|scheduled?|maintenance|rcm|reliability)\b/ig,' ').replace(/\s+/g,' ').trim();
+ // Date/range tokens are filters, never equipment/entity search terms.
+ return String(q)
+  .replace(/\b(defects?|faults?|problems?|jobs?|work\s*orders?|history|previous|old|past|inspection|condition|monitoring|vibration|cbm|shutdown|spares?|inventory|stock|drawings?|drg|drawing\s*(?:no|number)|part\s*drawing|job\s*procedure|procedure|steps|method|how\s+to|manuals?|details?|about|tell|show|find|search|cheppu|gurinchi|pm|preventive|scheduled?|maintenance|rcm|reliability)\b/ig,' ')
+  .replace(/\b(?:from|to)\b/ig,' ')
+  .replace(/(?:\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[-\/.]\d{1,2}[-\/.]\d{4})/g,' ')
+  .replace(/\s+/g,' ').trim();
 }
 async function getSearchContext(u){return (await pool.query(`SELECT * FROM search_context WHERE employee_number=$1`,[u.employee_number])).rows[0]||null;}
 async function setSearchContext(u,equipment,area=null){await pool.query(`INSERT INTO search_context(employee_number,department_code,area,equipment_name,updated_at) VALUES($1,'35',$2,$3,now()) ON CONFLICT(employee_number) DO UPDATE SET area=COALESCE(EXCLUDED.area,search_context.area),equipment_name=EXCLUDED.equipment_name,updated_at=now()`,[u.employee_number,area,equipment]);}
@@ -1715,8 +1720,13 @@ async function analysisAction(q,u){
    return {text:rows.length?`${eq} — Breakdown / Delay Evidence${period}\n\n${formatBundledResults(rows.slice(0,20))}`:`${eq}${period}\nNo linked breakdown/delay records were found in the current filtered data.`,buttons:await primarySearchButtons(u,rows.length>20)};
  }
  if(action==='mtbf'){
-   const rows=await rowsForContext(ctx,'defect',1000,u);const valid=rows.filter(r=>/^\d{4}-\d{2}-\d{2}$/.test(String(r.event_date||'')));
-   return {text:`${eq} — MTBF / MTTR${period}\n\nStored defect records: ${rows.length}\nRecords with valid event date: ${valid.length}\n\nMTBF/MTTR is not calculated unless reliable failure-start and restoration/completion timestamps are available. No value has been guessed.`};
+   const rows=await rowsForContext(ctx,'defect',1000,u);
+   const valid=rows.filter(r=>/^\d{4}-\d{2}-\d{2}$/.test(String(r.event_date||'')));
+   const days=[...new Set(valid.map(r=>r.event_date))].sort();
+   const gaps=[];for(let i=1;i<days.length;i++){const a=new Date(days[i-1]+'T00:00:00Z'),b=new Date(days[i]+'T00:00:00Z');const d=Math.round((b-a)/86400000);if(d>=0)gaps.push(d);}
+   const avgGap=gaps.length?(gaps.reduce((a,b)=>a+b,0)/gaps.length):null;
+   const intervalLine=avgGap!==null?`\nAverage interval between recorded defect dates: ${avgGap.toFixed(1)} days\n(Record-based interval only — not certified MTBF)`:'';
+   return {text:`${eq} — MTBF / MTTR${period}\n\nStored defect records: ${rows.length}\nRecords with valid event date: ${valid.length}${intervalLine}\n\nMTBF: requires validated operating/failure-start data.\nMTTR: requires validated failure-start and restoration/completion timestamps.\n\nMissing values are not guessed.`};
  }
  if(action==='performance'){
    const all=await rowsForContext(ctx,null,1000,u),def=all.filter(r=>r.record_type==='defect').length,hist=all.filter(r=>r.record_type==='history').length;
