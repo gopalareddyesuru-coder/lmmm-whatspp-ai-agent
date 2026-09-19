@@ -1542,6 +1542,82 @@ function usefulLiveEvent(row,original){
 function formatLiveEvents(rows){
  return rows.slice(0,8).map(x=>`${x.event_date?.toISOString?.().slice(0,10)||x.event_date} | ${x.event_type}${x.event_shift?` | ${x.event_shift}`:''}\n${x.event_text}`).join('\n\n');
 }
+// V7.7.5 context-aware Analysis Action Router.
+// Analysis menu selections are actions on the active equipment/date context, never fresh search phrases.
+function analysisActionName(q=''){
+ const t=String(q||'').trim().toLowerCase().replace(/[_-]+/g,' ');
+ if(['an repeat','repeat failures','repeat failure'].includes(t))return 'repeat';
+ if(['an jobs','related jobs','jobs done'].includes(t))return 'jobs';
+ if(['an history','equipment history'].includes(t))return 'history';
+ if(['an mtbf','mtbf / mttr','mtbf/mttr','mtbf','mttr','mtbr'].includes(t))return 'mtbf';
+ if(['an perf','equipment performance','performance'].includes(t))return 'performance';
+ if(['an pm','scheduled maintenance','schedule maintenance','pm'].includes(t))return 'pm';
+ if(['an cbm','vibration / cbm','vibration/cbm','vibration','cbm'].includes(t))return 'cbm';
+ if(['an delay','delay impact','breakdown / delay impact'].includes(t))return 'delay';
+ if(['an pdf','pdf report','pdf analysis report'].includes(t))return 'pdf';
+ if(['an rcm','rcm analysis','rcm'].includes(t))return 'rcm';
+ return null;
+}
+function ctxRange(ctx){return ctx?.date_from?{from:String(ctx.date_from).slice(0,10),to:String(ctx.date_to||ctx.date_from).slice(0,10)}:null;}
+function normFailureText(r){
+ const p=r?.source_payload||{};let x=String(p.description||p.reason||r?.record_text||'').toUpperCase();
+ x=x.replace(/\b(REPLACED|REPLACE|DONE|ATTENDED|RECTIFIED|TIGHTENED|TIGHTEND|GREASING|WELDING|PUTTI|CHECKED)\b.*$/,'');
+ return x.replace(/[^A-Z0-9]+/g,' ').replace(/\s+/g,' ').trim().slice(0,120);
+}
+async function rowsForContext(ctx,type=null,limit=500){
+ if(!ctx?.equipment_name)return [];
+ const vals=[ctx.equipment_name];let w=`LOWER(COALESCE(equipment,''))=LOWER($1)`;
+ if(type){vals.push(type);w+=` AND record_type=$${vals.length}`;}
+ const dr=ctxRange(ctx);
+ if(dr?.from){vals.push(dr.from);w+=` AND CASE WHEN event_date ~ '^\\d{4}-\\d{2}-\\d{2}$' THEN event_date::date END >= $${vals.length}::date`;}
+ if(dr?.to){vals.push(dr.to);w+=` AND CASE WHEN event_date ~ '^\\d{4}-\\d{2}-\\d{2}$' THEN event_date::date END <= $${vals.length}::date`;}
+ vals.push(limit);
+ return (await pool.query(`SELECT uid,record_type,equipment,area,event_date,record_text,source_name,source_payload FROM lmmm_master_records WHERE ${w} ORDER BY CASE WHEN event_date ~ '^\\d{4}-\\d{2}-\\d{2}$' THEN event_date::date END DESC NULLS LAST,uid LIMIT $${vals.length}`,vals)).rows;
+}
+async function analysisAction(q,u){
+ const action=analysisActionName(q); if(!action)return null;
+ const ctx=await getSearchContext(u); if(!ctx?.equipment_name)return {text:'Select an equipment first, then open Analysis.'};
+ const perms=await searchPermissions(u);
+ if(!perms.analysis && !['history','jobs','pm','cbm'].includes(action))return {text:'This analysis option is not authorised for your access level.'};
+ if(action==='pdf'&&!perms.pdf)return {text:'PDF Report is not authorised for your access level.'};
+ if(action==='rcm'&&!perms.rcm)return {text:'RCM Analysis is not authorised for your access level.'};
+ const eq=ctx.equipment_name,dr=ctxRange(ctx),period=dr?` | ${dr.from} to ${dr.to}`:'';
+ if(action==='repeat'){
+   const rows=await rowsForContext(ctx,'defect',1000); if(!rows.length)return {text:`${eq}${period}\nNo defect records found in the current filters.`};
+   const m=new Map();for(const r of rows){const k=normFailureText(r);if(!k)continue;const a=m.get(k)||[];a.push(r);m.set(k,a);}
+   const groups=[...m.entries()].filter(([,a])=>a.length>1).sort((a,b)=>b[1].length-a[1].length).slice(0,15);
+   if(!groups.length)return {text:`${eq}${period}\nNo repeated defect description was confirmed in the current filtered records.`};
+   const body=groups.map(([k,a],i)=>`${i+1}. ${k}\nOccurrences: ${a.length}\nDates: ${a.map(x=>x.event_date||'Date unavailable').slice(0,6).join(', ')}${a.length>6?' …':''}`).join('\n\n');
+   return {text:`${eq} — Repeat Failures${period}\n\n${body}\n\nGrouped only from stored defect descriptions; similar wording is not silently merged.`,buttons:primarySearchButtons(false)};
+ }
+ if(action==='jobs'||action==='history'){
+   const rows=await rowsForContext(ctx,'history',60); if(!rows.length)return {text:`${eq}${period}\nNo maintenance-history records found in the current filters.`};
+   return {text:`${eq} — ${action==='jobs'?'Related Jobs':'Equipment History'}${period}\n\n${formatBundledResults(rows.slice(0,20))}`,buttons:primarySearchButtons(rows.length>20)};
+ }
+ if(action==='cbm'){
+   const all=await rowsForContext(ctx,null,500);const rows=all.filter(r=>/vibration|cbm|condition|bearing temp|temperature/i.test(String(r.record_text)+' '+JSON.stringify(r.source_payload||{})));
+   return {text:rows.length?`${eq} — Vibration / CBM${period}\n\n${formatBundledResults(rows.slice(0,20))}`:`${eq}${period}\nNo vibration/CBM records were found in the current filtered master data.`,buttons:primarySearchButtons(rows.length>20)};
+ }
+ if(action==='pm'){
+   const all=await rowsForContext(ctx,null,500);const rows=all.filter(r=>/preventive|\bpm\b|scheduled|schedule|greasing|lubrication/i.test(String(r.record_text)+' '+JSON.stringify(r.source_payload||{})));
+   return {text:rows.length?`${eq} — Scheduled / Preventive Maintenance${period}\n\n${formatBundledResults(rows.slice(0,20))}`:`${eq}${period}\nNo stored PM/scheduled-maintenance records were found. A maintenance schedule will not be invented.`,buttons:primarySearchButtons(rows.length>20)};
+ }
+ if(action==='delay'){
+   const all=await rowsForContext(ctx,null,500);const rows=all.filter(r=>/delay|downtime|breakdown|stoppage/i.test(String(r.record_text)+' '+JSON.stringify(r.source_payload||{})));
+   return {text:rows.length?`${eq} — Breakdown / Delay Evidence${period}\n\n${formatBundledResults(rows.slice(0,20))}`:`${eq}${period}\nNo linked breakdown/delay records were found in the current filtered data.`,buttons:primarySearchButtons(rows.length>20)};
+ }
+ if(action==='mtbf'){
+   const rows=await rowsForContext(ctx,'defect',1000);const valid=rows.filter(r=>/^\d{4}-\d{2}-\d{2}$/.test(String(r.event_date||'')));
+   return {text:`${eq} — MTBF / MTTR${period}\n\nStored defect records: ${rows.length}\nRecords with valid event date: ${valid.length}\n\nMTBF/MTTR is not calculated unless reliable failure-start and restoration/completion timestamps are available. No value has been guessed.`};
+ }
+ if(action==='performance'){
+   const all=await rowsForContext(ctx,null,1000),def=all.filter(r=>r.record_type==='defect').length,hist=all.filter(r=>r.record_type==='history').length;
+   return {text:`${eq} — Equipment Performance${period}\n\nDefect records: ${def}\nMaintenance-history records: ${hist}\nTotal linked records: ${all.length}\n\nAvailability, MTBF, MTTR and downtime KPIs require validated operating/failure/restoration time data; missing values are not inferred.`};
+ }
+ if(action==='pdf')return {text:`${eq}${period}\nPDF Analysis Report is authorised, but the final report-generation engine is not connected to this action yet. No placeholder PDF was generated.`};
+ if(action==='rcm')return {text:`${eq}${period}\nRCM Analysis requires linked failure modes, consequences, existing tasks and historical evidence. The bot will not generate an unsupported RCM conclusion from defect counts alone.`};
+ return null;
+}
 async function universalSearch(q,u){
  const original=String(q||'').trim(); if(!original)return null;
  if(areaDataQuery(original)) return await areaSearchMenu(original,u);
@@ -2539,6 +2615,11 @@ async function processMessage(from, text, rawMessage = null) {
       const rows=(await pool.query(`SELECT contact_name,max_number FROM emergency_contacts WHERE LOWER(contact_name) LIKE LOWER($1) ORDER BY contact_name LIMIT 10`,[`%${cm[1]}%`])).rows;
       await sendText(from,rows.length?rows.map(x=>`${x.contact_name}: ${x.max_number}`).join('\n'):T('notfound',te));return;
     }
+    // V7.7.5: analysis-menu selections act on the active search context before Universal Search.
+    try{
+      const aa=await analysisAction(clean,u);
+      if(aa?.text){ if(aa.buttons?.length) await sendSearchTextAndButtons(from,aa.text,aa.buttons); else await sendLongText(from,aa.text); return; }
+    }catch(e){console.error('[ANALYSIS ACTION]',e); await sendText(from,'Analysis could not be completed safely for the current filters.'); return;}
     // V7.4 Universal Search: structured history first, ambiguity-safe equipment resolution, then manuals/reference knowledge.
     try{
       const us=await universalSearch(clean,u);
