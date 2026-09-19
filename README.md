@@ -1,19 +1,21 @@
-# LMMM AI Maintenance Agent V6.5 — Source-Isolated Ingestion
+# LMMM AI Maintenance Agent V7.0 — Controlled File Intake
 
-## Fixes in this build
-- Every upload gets an immutable per-employee upload session.
-- Background completion from an older upload is explicitly labelled `Earlier upload completed` with its source filename.
-- A delayed old ingestion cannot replace the latest TIFF/Access conversion source.
-- `PDF chey` / `Excel chey` remain bound to the newest compatible upload for that approved employee.
-- Existing indexed history is not automatically deleted. Test-data deletion remains a deliberate audited action, not an automatic side effect.
-- TIFF multi-frame conversion uses all frames reported by Sharp and preserves frame order.
-- Existing per-page ingestion checkpoints, retries, exact source references, audit identity/timestamps, and Render converter verification remain intact.
+Production-safety release focused on trustworthy maintenance data capture.
+
+## File intake
+Document upload alone does **not** start AI indexing or permanent storage. The bot presents actions: Read/Analyse, Store, Read+Store, and for TIFF/Access, Convert or Store+Convert. Conversion-only does not pollute maintenance knowledge/history.
+
+## Data integrity
+Actual event ingestion retains equipment/date/shift/submitting employee and source audit rules. Reference manuals/drawings remain separate searchable knowledge. Ambiguous event data is held for review; identifiers are never guessed.
+
+## TIFF
+Large/multi-frame TIFF conversion decodes one frame at a time, preserves frame order, uses a controlled high pixel safety ceiling, and downsizes only the conversion raster before PDF embedding to avoid Sharp aggregate-pixel failures. AI source data remains the original upload.
+
+## Isolation
+Latest convertible source is per employee. Background completions keep immutable source context and older jobs are labelled as earlier uploads.
 
 ## Render
 Build: `npm install && npm run verify:runtime`
 Start: `npm start`
 
-After deploy, `/health` must show `tiff_to_pdf: true`, `access_to_excel: true`, and empty `converter_errors`.
-
-## Production safety rule
-Never infer an event date from upload time for historical records. Every stored maintenance event remains bound to its source, equipment mapping, event date/shift when known, approved employee identity, and actual entry timestamp. Ambiguous equipment/date data must be held for clarification rather than guessed.
+After deploy, `/health` must show TIFF→PDF and Access→Excel true with no converter errors.

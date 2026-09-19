@@ -25,6 +25,11 @@ const latestConvertibleSource = new Map();
 // Per-employee upload sequence. Each background ingestion keeps its own immutable source context.
 // A later upload can never make an earlier job masquerade as the current file.
 const latestUploadSession = new Map();
+// V7 file-action gate: document uploads wait for an explicit user action before AI indexing/storage.
+const pendingFileAction = new Map();
+function setPendingFileAction(employeeNumber, from, msg, meta){ pendingFileAction.set(String(employeeNumber),{from,msg,meta,receivedAt:Date.now(),expiresAt:Date.now()+SOURCE_CACHE_TTL_MS}); }
+function getPendingFileAction(employeeNumber){ const k=String(employeeNumber),v=pendingFileAction.get(k); if(!v||v.expiresAt<Date.now()){pendingFileAction.delete(k);return null;} return v; }
+function clearPendingFileAction(employeeNumber){ pendingFileAction.delete(String(employeeNumber)); }
 function beginUploadSession(employeeNumber, mediaId, name){
   const key=String(employeeNumber), seq=(latestUploadSession.get(key)?.seq||0)+1;
   const v={seq,mediaId:String(mediaId),name:String(name||'file'),receivedAt:Date.now()};
@@ -449,17 +454,24 @@ async function tiffToPdfBuffer(buf){
     err.code = 'TIFF_CONVERTER_UNAVAILABLE';
     throw err;
   }
-  const meta=await sharp(buf,{pages:-1}).metadata();
+  // Large engineering TIFFs can exceed Sharp's default aggregate pixel limit. We never decode
+  // all frames into one raster: metadata first, then exactly one frame at a time, resized before PNG encoding.
+  const sharpOpts={pages:-1,limitInputPixels:1000000000,sequentialRead:true};
+  const meta=await sharp(buf,sharpOpts).metadata();
   const pages=Math.max(1,Number(meta.pages)||1);
+  if(pages>1000) throw new Error(`TIFF has ${pages} frames; safety limit is 1000.`);
   const pdf=await PDFDocument.create();
   for(let i=0;i<pages;i++){
-    const img=sharp(buf,{page:i,pages:1}).rotate();
-    const m=await img.metadata();
-    const png=await img.png({compressionLevel:6}).toBuffer();
+    const probe=sharp(buf,{page:i,pages:1,limitInputPixels:1000000000,sequentialRead:true}).rotate();
+    const m=await probe.metadata();
+    const w0=Math.max(1,Number(m.width)||1),h0=Math.max(1,Number(m.height)||1);
+    const maxSide=2600, resizeScale=Math.min(1,maxSide/Math.max(w0,h0));
+    const outW=Math.max(1,Math.round(w0*resizeScale)),outH=Math.max(1,Math.round(h0*resizeScale));
+    const png=await probe.resize({width:outW,height:outH,fit:'inside',withoutEnlargement:true}).png({compressionLevel:7}).toBuffer();
     const emb=await pdf.embedPng(png);
-    const w=Math.max(1,Number(m.width)||emb.width),h=Math.max(1,Number(m.height)||emb.height),scale=Math.min(1,1440/Math.max(w,h));
-    const page=pdf.addPage([w*scale,h*scale]);
-    page.drawImage(emb,{x:0,y:0,width:w*scale,height:h*scale});
+    const pdfScale=Math.min(1,1440/Math.max(outW,outH));
+    const page=pdf.addPage([outW*pdfScale,outH*pdfScale]);
+    page.drawImage(emb,{x:0,y:0,width:outW*pdfScale,height:outH*pdfScale});
   }
   return {buffer:Buffer.from(await pdf.save()),pages};
 }
@@ -1789,6 +1801,39 @@ async function processMessage(from, text, rawMessage = null) {
       await sendText(from,`✅ ${rr[1].toUpperCase()} complete • recovered ${ok} unit(s)${fail.length?` • ${fail.length} still need review: ${[...new Set(fail)].join(', ')}`:' • 0 review units remaining'}\nBatch ID: ${m.batch_code||mediaBatchCode(mid)}`);return;
     }
 
+    // V7 explicit file-action routing. A document is never indexed/stored merely because it was uploaded.
+    const fa=clean.trim().toUpperCase();
+    const pendingFile=getPendingFileAction(u.employee_number);
+    if(pendingFile && /^(FILE_(READ|STORE|READ_STORE|CONVERT|ALL)|READ FILE|STORE FILE|READ AND STORE)$/i.test(fa)){
+      if(fa==='FILE_CONVERT'){
+        const nm=String(pendingFile.meta.name||'');
+        if(/\.tiff?$/i.test(nm)){ clean='PDF CHEY'; }
+        else if(/\.(mdb|accdb)$/i.test(nm)){ clean='EXCEL CHEY'; }
+        else { await sendText(from,'This file type has no conversion action configured. Choose Read or Store.'); return; }
+      } else {
+        // READ means analyse now without permanent knowledge/event storage. STORE/READ_STORE/ALL use the normal
+        // guarded ingestion pipeline; reference docs go to knowledge, event docs keep equipment/date/user audit rules.
+        if(fa==='FILE_READ'){
+          const pm=pendingFile; const n=pm.msg.document; const meta=await mediaMeta(n.id); const buf=await mediaBytes(meta.url); const mime=meta.mime_type||n.mime_type||''; const name=n.filename||`document-${n.id}`; const ctx=await currentShiftContext(u);
+          let obj;
+          if(/pdf|tiff/i.test(mime)||/\.(pdf|tiff?)$/i.test(name)) obj=await extractDocument(buf,mime,u,ctx,name,null);
+          else { const st=await extractOfficeOrAccess(buf,mime,name,u,ctx); obj=await classifyExtracted(st?.text||'',u,ctx); }
+          await sendText(from,`📖 Read only — ${name}\n${String(obj?.summary||'File read successfully.').slice(0,3000)}\n\nNot stored. Choose Store if this source should become part of LMMM knowledge/history.`); return;
+        }
+        const doAll=fa==='FILE_ALL'; const allMeta=pendingFile.meta;
+        clearPendingFileAction(u.employee_number);
+        await stageMedia(u,from,pendingFile.msg);
+        if(doAll){
+          const nm=String(allMeta.name||''); const src=cachedSource(allMeta.mediaId,u.employee_number);
+          try{
+            if(/\.tiff?$/i.test(nm)){const out=await tiffToPdfBuffer(src.buf);await sendDocumentBuffer(from,out.buffer,nm.replace(/\.tiff?$/i,'.pdf'),`✅ TIFF → PDF complete • ${out.pages}/${out.pages} pages`);}
+            else if(/\.(mdb|accdb)$/i.test(nm)){const out=await accessToExcelBuffer(src.buf);await sendDocumentBuffer(from,out.buffer,nm.replace(/\.(mdb|accdb)$/i,'.xlsx'),`✅ Access → Excel complete • ${out.sheets}/${out.tables} tables`,'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');}
+          }catch(e){await sendText(from,`⚠️ Storage completed, but conversion failed: ${String(e?.message||e).slice(0,180)}`);}
+        }
+        return;
+      }
+    }
+
     // Access -> Excel conversion. Source bytes are temporary only; generated XLSX is returned to WhatsApp.
     if(/^(?:ACCESS|MDB|ACCDB)\s*(?:TO|2)\s*(?:EXCEL|XLSX)$|^(?:EXCEL|XLSX)\s*(?:CHEYYI|CHEY|GA CONVERT CHEYYI|CONVERT)$/i.test(clean.trim())){
       const live=latestConvertible(u.employee_number,'access');
@@ -1808,7 +1853,19 @@ async function processMessage(from, text, rawMessage = null) {
     }
 
     if(rawMessage && (rawMessage.image||rawMessage.audio||rawMessage.voice||rawMessage.document)){
-      try{await stageMedia(u,from,rawMessage);}catch(e){console.error('[MEDIA]',e);await sendText(from,`⚠️ File processing stopped before completion. ${String(e?.message||'Unknown processing error').slice(0,180)}\nPlease retry the same file; large documents are processed in batches.`);}
+      try{
+        if(rawMessage.document){
+          const n=rawMessage.document, meta=await mediaMeta(n.id), mime=meta.mime_type||n.mime_type||'', name=n.filename||`document-${n.id}`;
+          const buf=await mediaBytes(meta.url); cacheSource(u.employee_number,n.id,{buf,mime,name,mediaId:n.id,receivedAt:Date.now()});
+          const isTiff=/tiff/i.test(mime)||/\.tiff?$/i.test(name), isAccess=/access/i.test(mime)||/\.(mdb|accdb)$/i.test(name);
+          if(isTiff) rememberLatestConvertible(u.employee_number,n.id,{mime,name,kind:'tiff'}); else if(isAccess) rememberLatestConvertible(u.employee_number,n.id,{mime,name,kind:'access'});
+          setPendingFileAction(u.employee_number,from,rawMessage,{mime,name,mediaId:n.id});
+          const rows=[{id:'FILE_READ',title:'Read / Analyse',description:'Read now; do not store'},{id:'FILE_STORE',title:'Store',description:'Classify and store safely'},{id:'FILE_READ_STORE',title:'Read + Store',description:'Analyse and store'}];
+          if(isTiff||isAccess) rows.push({id:'FILE_CONVERT',title:isTiff?'Convert to PDF':'Convert to Excel',description:'Conversion only; no AI indexing'});
+          if(isTiff||isAccess) rows.push({id:'FILE_ALL',title:isTiff?'Store + PDF':'Store + Excel',description:'Store safely and convert'});
+          await sendList(from,`📄 File received: ${name}\nNo AI indexing or permanent storage has started. What would you like to do?`,'Choose action',rows,'File actions');
+        } else await stageMedia(u,from,rawMessage);
+      }catch(e){console.error('[MEDIA]',e);await sendText(from,`⚠️ File handling stopped. ${String(e?.message||'Unknown processing error').slice(0,180)}`);}
       return;
     }
     // Resolve date replies for pending media (e.g. Today / Yesterday / DD-MM-YYYY).
