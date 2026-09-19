@@ -2,6 +2,7 @@ import express from 'express';
 import 'dotenv/config';
 import pg from 'pg';
 import http from 'node:http';
+import fs from 'node:fs/promises';
 
 const { Pool } = pg;
 
@@ -432,6 +433,20 @@ async function initDB() {
     employee_number TEXT PRIMARY KEY, original_query TEXT NOT NULL, choices JSONB NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_search_alias ON search_aliases(department_code,LOWER(alias_text))`);
+  // V7.5 source-backed LMMM master/search layer. Data stays separate from live event capture.
+  await pool.query(`CREATE TABLE IF NOT EXISTS lmmm_master_records(
+    uid TEXT PRIMARY KEY, record_type TEXT NOT NULL, equipment TEXT, area TEXT, event_date TEXT,
+    record_text TEXT NOT NULL, source_name TEXT, source_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    imported_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_lmmm_master_type_equipment ON lmmm_master_records(record_type,LOWER(equipment))`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_lmmm_master_fts ON lmmm_master_records USING GIN(to_tsvector('simple',record_text))`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS lmmm_knowledge_records(
+    uid TEXT PRIMARY KEY, source_name TEXT NOT NULL, source_row TEXT, entity_types TEXT[] DEFAULT '{}',
+    raw_text TEXT NOT NULL, normalized_text TEXT NOT NULL, identifiers TEXT[] DEFAULT '{}',
+    verification_status TEXT NOT NULL, source_payload JSONB NOT NULL DEFAULT '{}'::jsonb)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_lmmm_knowledge_fts ON lmmm_knowledge_records USING GIN(to_tsvector('simple',normalized_text))`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS lmmm_master_sync_meta(sync_key TEXT PRIMARY KEY, record_count INTEGER, synced_at TIMESTAMPTZ DEFAULT now())`);
+  await syncBundledLmmmKnowledge();
   await pool.query(`DELETE FROM file_upload_sources WHERE expires_at IS NOT NULL AND expires_at < now()`);
   // A deploy/restart can interrupt an in-process worker. Requeue stale running jobs.
   await pool.query(`UPDATE background_jobs SET status='queued', started_at=NULL,
@@ -1324,6 +1339,69 @@ async function indexFullReferenceDocument(mediaRowId,knowledgeId,buf,mime,u,from
  return {total,indexedPages:total-uniqFail.length,attemptedPages:total,chunkCount,failedPages:uniqFail.length,failedRanges};
 }
 
+
+function naturalSearchAliases(q=''){
+  let x=String(q).trim();
+  // LMMM user language aliases; only deterministic plant terminology, never identifier rewriting in stored data.
+  x=x.replace(/\bfurnace\s*[- ]?1\b/ig,'WBF-1').replace(/\bfurnace\s*[- ]?2\b/ig,'WBF-2');
+  x=x.replace(/\bwalking\s+beam\s+furnace\s*[- ]?1\b/ig,'WBF-1').replace(/\bwalking\s+beam\s+furnace\s*[- ]?2\b/ig,'WBF-2');
+  return x;
+}
+async function syncBundledLmmmKnowledge(){
+  try{
+    const meta=(await pool.query(`SELECT sync_key,record_count FROM lmmm_master_sync_meta WHERE sync_key IN ('core-v75-clean1','unified-v4')`)).rows;
+    const have=new Map(meta.map(x=>[x.sync_key,Number(x.record_count)]));
+    if(have.get('core-v75-clean1')!==23088){
+      const rows=JSON.parse(await fs.readFile(new URL('./data/master_core_records.json',import.meta.url),'utf8'));
+      await pool.query(`INSERT INTO lmmm_master_records(uid,record_type,equipment,area,event_date,record_text,source_name,source_payload)
+        SELECT x.uid,x.record_type,NULLIF(x.equipment,''),NULLIF(x.area,''),NULLIF(x.event_date,''),x.text,x.source,x.payload
+        FROM jsonb_to_recordset($1::jsonb) AS x(uid text,record_type text,equipment text,area text,event_date text,text text,source text,payload jsonb)
+        ON CONFLICT(uid) DO UPDATE SET record_type=EXCLUDED.record_type,equipment=EXCLUDED.equipment,area=EXCLUDED.area,event_date=EXCLUDED.event_date,record_text=EXCLUDED.record_text,source_name=EXCLUDED.source_name,source_payload=EXCLUDED.source_payload`,[JSON.stringify(rows)]);
+      await pool.query(`INSERT INTO lmmm_master_sync_meta(sync_key,record_count,synced_at) VALUES('core-v75-clean1',$1,now()) ON CONFLICT(sync_key) DO UPDATE SET record_count=EXCLUDED.record_count,synced_at=now()`,[rows.length]);
+      console.log('[V7.5 MASTER SYNC] core',rows.length);
+    }
+    if(have.get('unified-v4')!==10805){
+      const rows=JSON.parse(await fs.readFile(new URL('./data/unified_retrieval_records.json',import.meta.url),'utf8'));
+      await pool.query(`INSERT INTO lmmm_knowledge_records(uid,source_name,source_row,entity_types,raw_text,normalized_text,identifiers,verification_status,source_payload)
+        SELECT x.uid,x.source_file,x.source_row,x.entity_types,x.raw_text,x.normalized_text,x.identifiers,x.verification_status,to_jsonb(x)
+        FROM jsonb_to_recordset($1::jsonb) AS x(uid text,source_file text,source_row text,entity_types text[],raw_text text,normalized_text text,identifiers text[],verification_status text)
+        ON CONFLICT(uid) DO UPDATE SET raw_text=EXCLUDED.raw_text,normalized_text=EXCLUDED.normalized_text,identifiers=EXCLUDED.identifiers,entity_types=EXCLUDED.entity_types,verification_status=EXCLUDED.verification_status`,[JSON.stringify(rows)]);
+      await pool.query(`INSERT INTO lmmm_master_sync_meta(sync_key,record_count,synced_at) VALUES('unified-v4',$1,now()) ON CONFLICT(sync_key) DO UPDATE SET record_count=EXCLUDED.record_count,synced_at=now()`,[rows.length]);
+      console.log('[V7.5 MASTER SYNC] unified',rows.length);
+    }
+  }catch(e){console.error('[V7.5 MASTER SYNC ERROR]',e);}
+}
+async function searchBundledMaster(question,limit=12){
+  const q=naturalSearchAliases(question), intent=searchIntent(q), entity=stripIntentWords(q);
+  const vals=[]; let where='TRUE';
+  if(intent==='defect'){vals.push('defect');where+=` AND record_type=$${vals.length}`;}
+  else if(intent==='history'){vals.push('history');where+=` AND record_type=$${vals.length}`;}
+  else if(intent==='spares'){vals.push('spare');where+=` AND record_type=$${vals.length}`;}
+  const terms=queryTokens(entity||q).slice(0,6);
+  if(terms.length){
+    const ors=[];
+    for(const t of terms){vals.push(`%${t}%`);ors.push(`(LOWER(COALESCE(equipment,'')) LIKE LOWER($${vals.length}) OR LOWER(record_text) LIKE LOWER($${vals.length}))`);}
+    where+=` AND (${ors.join(' OR ')})`;
+  }
+  vals.push(limit);
+  const rows=(await pool.query(`SELECT uid,record_type,equipment,area,event_date,record_text,source_name FROM lmmm_master_records WHERE ${where} ORDER BY event_date DESC NULLS LAST, uid LIMIT $${vals.length}`, vals.length>1?vals:[...vals])).rows;
+  if(rows.length)return rows;
+  const ids=[...new Set(String(q).toUpperCase().match(/\b(?:[A-Z]{1,8}[-_/])?[A-Z0-9]{2,}(?:[-_/.][A-Z0-9]+)*\b/g)||[])];
+  const kt=queryTokens(q).slice(0,5); if(!ids.length&&!kt.length)return [];
+  const kv=[];const kc=[];
+  if(ids.length){kv.push(ids);kc.push(`identifiers && $1::text[]`);}
+  for(const t of kt){kv.push(`%${t}%`);kc.push(`LOWER(normalized_text) LIKE LOWER($${kv.length})`);}
+  kv.push(limit);
+  return (await pool.query(`SELECT uid,'knowledge' AS record_type,NULL::text AS equipment,NULL::text AS area,NULL::text AS event_date,raw_text AS record_text,source_name FROM lmmm_knowledge_records WHERE ${kc.join(' OR ')} LIMIT $${kv.length}`,kv)).rows;
+}
+function formatBundledResults(rows){
+  if(!rows?.length)return null;
+  return rows.slice(0,10).map(r=>{
+    const h=[r.event_date,r.equipment,r.record_type].filter(Boolean).join(' | ');
+    return `${h?`${h}\n`:''}${String(r.record_text||'').slice(0,700)}${r.source_name?`\nSource: ${r.source_name}`:''}`;
+  }).join('\n\n');
+}
+
 function queryTokens(t=''){
  return [...new Set(String(t).toLowerCase().replace(/[^a-z0-9_\-\/\.\s]/g,' ').split(/\s+/).filter(x=>x.length>=2 && !['the','and','for','with','what','tell','about','show','give','please','data','details','lo','ki','ga','ani'].includes(x)))].slice(0,12);
 }
@@ -1384,6 +1462,8 @@ async function universalSearch(q,u){
  if(equipment)await setSearchContext(u,equipment,candidates[0]?.area||ctx?.area||null);
  const events=await eventSearch(original,u,equipment);
  if(events.length){return {text:(equipment?`${equipment}\n\n`:'')+events.map(x=>`${x.event_date?.toISOString?.().slice(0,10)||x.event_date} | ${x.event_type}${x.event_shift?` | ${x.event_shift}`:''}\n${x.event_text}`).join('\n\n')};}
+ const masterRows=await searchBundledMaster(original,12);
+ if(masterRows.length)return {text:formatBundledResults(masterRows)};
  // Let reference/manual search answer next, but enrich a follow-up with selected equipment.
  return {knowledgeQuery:equipment && !original.toLowerCase().includes(equipment.toLowerCase())?`${equipment} ${original}`:original};
 }
@@ -2408,7 +2488,7 @@ app.post('/webhook', (req, res) => {
 app.get('/api/status', (_q, r) =>
   r.status(200).json({
     status: 'ready',
-    registration: 'V7.2-memory-safe-intent-safe-cleanup',
+    registration: 'V7.5-master-sync-universal-search',
     webhook: '/webhook',
     super_admins_configured: SUPER_ADMIN_NUMBERS.size
   })
