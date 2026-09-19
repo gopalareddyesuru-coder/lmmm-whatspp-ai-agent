@@ -456,13 +456,13 @@ async function tiffToPdfBuffer(buf){
   }
   // Large engineering TIFFs can exceed Sharp's default aggregate pixel limit. We never decode
   // all frames into one raster: metadata first, then exactly one frame at a time, resized before PNG encoding.
-  const sharpOpts={pages:-1,limitInputPixels:1000000000,sequentialRead:true};
+  const sharpOpts={pages:-1,limitInputPixels:false,sequentialRead:true,failOn:'none'};
   const meta=await sharp(buf,sharpOpts).metadata();
   const pages=Math.max(1,Number(meta.pages)||1);
   if(pages>1000) throw new Error(`TIFF has ${pages} frames; safety limit is 1000.`);
   const pdf=await PDFDocument.create();
   for(let i=0;i<pages;i++){
-    const probe=sharp(buf,{page:i,pages:1,limitInputPixels:1000000000,sequentialRead:true}).rotate();
+    const probe=sharp(buf,{page:i,pages:1,limitInputPixels:false,sequentialRead:true,failOn:'none'}).rotate();
     const m=await probe.metadata();
     const w0=Math.max(1,Number(m.width)||1),h0=Math.max(1,Number(m.height)||1);
     const maxSide=2600, resizeScale=Math.min(1,maxSide/Math.max(w0,h0));
@@ -1685,7 +1685,7 @@ async function saveFreshRegistration(from, d) {
 
 async function processMessage(from, text, rawMessage = null) {
   const te = isTe(text);
-  const clean = String(text || '').trim();
+  let clean = String(text || '').trim();
   console.log('[FLOW]', from, clean);
 
   if (!pool) {
@@ -1841,7 +1841,7 @@ async function processMessage(from, text, rawMessage = null) {
       if(!r.rows[0]){await sendText(from,'Access .mdb/.accdb file dorakaledu. Mundu file upload cheyyandi.');return;}
       try{const m=r.rows[0];let src=cachedSource(m.media_id,u.employee_number);let ab=src?.buf;if(!ab){const meta=await mediaMeta(m.media_id);ab=await mediaBytes(meta.url);}
         await sendText(from,'⏳ Access → Excel conversion started. Each readable Access table will become a separate Excel sheet.');const out=await accessToExcelBuffer(ab);const base=String(m.filename||'LMMM_Access').replace(/\.(mdb|accdb)$/i,'');
-        await sendDocumentBuffer(from,out.buffer,`${base}.xlsx`,`✅ Access → Excel complete • ${out.sheets}/${out.tables} tables • ${out.totalRows} rows`,'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        await sendDocumentBuffer(from,out.buffer,`${base}.xlsx`,`✅ Access → Excel complete • ${out.sheets}/${out.tables} tables • ${out.totalRows} rows`,'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');clearPendingFileAction(u.employee_number);
       }catch(e){console.error('[ACCESS->XLSX]',e);await sendText(from,`⚠️ Access → Excel conversion failed: ${String(e?.message||e).slice(0,220)}`);}return;
     }
 
@@ -1849,7 +1849,7 @@ async function processMessage(from, text, rawMessage = null) {
       const live=latestConvertible(u.employee_number,'tiff');
       const r=live?{rows:[{media_id:live.mediaId,filename:live.name,mime_type:live.mime}]}:await pool.query(`SELECT media_id,filename,mime_type FROM media_ingestion WHERE employee_number=$1 AND (LOWER(coalesce(mime_type,'')) LIKE '%tiff%' OR LOWER(coalesce(filename,'')) ~ '\\.(tif|tiff)$') ORDER BY entered_at DESC,id DESC LIMIT 1`,[u.employee_number]);
       if(!r.rows[0]){await sendText(from,'TIFF file dorakaledu. Mundu TIFF/TIF file upload cheyyandi.');return;}
-      try{const m=r.rows[0];await sendText(from,`⏳ TIFF → PDF conversion started: ${m.filename||'latest TIFF'}\nAll frames/pages will be kept in the original order.`);const cached=cachedSource(m.media_id,u.employee_number),meta=cached?null:await mediaMeta(m.media_id),tb=cached?.buf||await mediaBytes(meta.url),out=await tiffToPdfBuffer(tb),base=String(m.filename||'LMMM_TIFF').replace(/\.(tif|tiff)$/i,'');await sendDocumentBuffer(from,out.buffer,`${base}.pdf`,`✅ TIFF → PDF complete • ${out.pages}/${out.pages} pages • Source: ${String(m.filename||'TIFF').slice(0,120)}`);}catch(e){console.error('[TIFF->PDF]',e);await sendText(from,`⚠️ TIFF → PDF conversion failed: ${String(e?.message||e).slice(0,180)}`);}return;
+      try{const m=r.rows[0];await sendText(from,`⏳ TIFF → PDF conversion started: ${m.filename||'latest TIFF'}\nAll frames/pages will be kept in the original order.`);const cached=cachedSource(m.media_id,u.employee_number),meta=cached?null:await mediaMeta(m.media_id),tb=cached?.buf||await mediaBytes(meta.url),out=await tiffToPdfBuffer(tb),base=String(m.filename||'LMMM_TIFF').replace(/\.(tif|tiff)$/i,'');await sendDocumentBuffer(from,out.buffer,`${base}.pdf`,`✅ TIFF → PDF complete • ${out.pages}/${out.pages} pages • Source: ${String(m.filename||'TIFF').slice(0,120)}`);clearPendingFileAction(u.employee_number);}catch(e){console.error('[TIFF->PDF]',e);await sendText(from,`⚠️ TIFF → PDF conversion failed: ${String(e?.message||e).slice(0,180)}`);}return;
     }
 
     if(rawMessage && (rawMessage.image||rawMessage.audio||rawMessage.voice||rawMessage.document)){
