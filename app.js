@@ -1657,9 +1657,13 @@ async function indexFullReferenceDocument(mediaRowId,knowledgeId,buf,mime,u,from
 
 function naturalSearchAliases(q=''){
   let x=String(q).trim();
-  // Deterministic user-language aliases only. Never rewrite stored identifiers.
-  x=x.replace(/\bfurnace\s*[- ]?1\b/ig,'WBF-1').replace(/\bfurnace\s*[- ]?2\b/ig,'WBF-2');
+  // Deterministic, high-confidence user-language aliases only. Never rewrite stored identifiers.
   x=x.replace(/\bwalking\s+beam\s+furnace\s*[- ]?1\b/ig,'WBF-1').replace(/\bwalking\s+beam\s+furnace\s*[- ]?2\b/ig,'WBF-2');
+  x=x.replace(/\bfurnace\s*[- ]?1\b/ig,'WBF-1').replace(/\bfurnace\s*[- ]?2\b/ig,'WBF-2');
+  x=x.replace(/\bf\s*[- ]?1\b/ig,'WBF-1').replace(/\bf\s*[- ]?2\b/ig,'WBF-2');
+  x=x.replace(/\bwbf\s*[- ]?1\b/ig,'WBF-1').replace(/\bwbf\s*[- ]?2\b/ig,'WBF-2');
+  x=x.replace(/\becs\s*[- ]?1\b/ig,'ECS-1').replace(/\becs\s*[- ]?2\b/ig,'ECS-2');
+  x=x.replace(/\brecups?\b/ig,'recuperator');
   // Conservative maintenance-intent typo normalization. This changes only search intent words, never asset/part/drawing IDs.
   x=x.replace(/\b(?:dectives?|defectives?|difects?|deffects?)\b/ig,'defects');
   x=x.replace(/\b(?:viberation|vibrtion|vibratoin)s?\b/ig,'vibration');
@@ -1957,17 +1961,46 @@ function stripIntentWords(q=''){
 async function getSearchContext(u){return (await pool.query(`SELECT * FROM search_context WHERE employee_number=$1`,[u.employee_number])).rows[0]||null;}
 async function setSearchContext(u,equipment,area=null){await pool.query(`INSERT INTO search_context(employee_number,department_code,area,equipment_name,updated_at) VALUES($1,'35',$2,$3,now()) ON CONFLICT(employee_number) DO UPDATE SET area=COALESCE(EXCLUDED.area,search_context.area),equipment_name=EXCLUDED.equipment_name,updated_at=now()`,[u.employee_number,area,equipment]);}
 async function resolveAlias(term){if(!term)return null;const r=await pool.query(`UPDATE search_aliases SET usage_count=usage_count+1,last_used_at=now() WHERE department_code='35' AND confirmed=TRUE AND LOWER(alias_text)=LOWER($1) RETURNING canonical_text,equipment_name`,[term]);return r.rows[0]||null;}
+function searchNorm(v=''){return String(v||'').toLowerCase().replace(/[^a-z0-9]+/g,'').trim();}
+function editDistance(a='',b=''){
+ a=searchNorm(a);b=searchNorm(b);if(!a)return b.length;if(!b)return a.length;
+ const prev=Array.from({length:b.length+1},(_,i)=>i),cur=new Array(b.length+1);
+ for(let i=1;i<=a.length;i++){cur[0]=i;for(let j=1;j<=b.length;j++)cur[j]=Math.min(cur[j-1]+1,prev[j]+1,prev[j-1]+(a[i-1]===b[j-1]?0:1));for(let j=0;j<=b.length;j++)prev[j]=cur[j];}
+ return prev[b.length];
+}
+function fuzzyEquipmentScore(term,name){
+ const a=searchNorm(term),b=searchNorm(name);if(!a||!b)return 0;if(a===b)return 1;if(b.includes(a)||a.includes(b))return .94;
+ const d=editDistance(a,b),mx=Math.max(a.length,b.length);return mx?1-d/mx:0;
+}
 async function equipmentCandidates(term,ctx){
- const vals=[], clauses=[]; let n=1;
- const add=(x)=>{vals.push(`%${x}%`);return `$${n++}`};
- if(term){const p=add(term);clauses.push(`LOWER(name) LIKE LOWER(${p})`);}
- if(!clauses.length)return [];
+ if(!term)return [];
  const contextArea=ctx?.area?String(ctx.area):null;
- vals.push(contextArea); const areaP=`$${n++}::text`;
- // Explicit ::text prevents PostgreSQL 42P08 when the optional area context is NULL.
- // Include the V7.5 clean master as an equipment source so Universal Search is not limited to event/manual tables.
- const sql=`WITH eq AS (\n   SELECT DISTINCT equipment_name AS name, area FROM section_event_log WHERE deleted_at IS NULL AND equipment_name IS NOT NULL\n   UNION SELECT DISTINCT equipment_name AS name, NULL::text AS area FROM technical_document_chunks WHERE equipment_name IS NOT NULL\n   UNION SELECT DISTINCT equipment AS name, area FROM lmmm_master_records WHERE equipment IS NOT NULL\n ) SELECT name,area FROM eq WHERE (${clauses.join(' OR ')})\n ORDER BY CASE WHEN ${areaP} IS NOT NULL AND LOWER(COALESCE(area,''))=LOWER(${areaP}) THEN 0 ELSE 1 END, name LIMIT 12`;
- return (await pool.query(sql,vals)).rows;
+ // First use deterministic contains matching against every authorised master/event equipment source.
+ const direct=(await pool.query(`WITH eq AS (
+   SELECT DISTINCT equipment_name AS name, area FROM section_event_log WHERE deleted_at IS NULL AND equipment_name IS NOT NULL
+   UNION SELECT DISTINCT equipment_name AS name, NULL::text AS area FROM technical_document_chunks WHERE equipment_name IS NOT NULL
+   UNION SELECT DISTINCT equipment AS name, area FROM lmmm_master_records WHERE equipment IS NOT NULL
+ ) SELECT name,area FROM eq WHERE LOWER(name) LIKE LOWER('%'||$1::text||'%')
+ ORDER BY CASE WHEN $2::text IS NOT NULL AND LOWER(COALESCE(area,''))=LOWER($2::text) THEN 0 ELSE 1 END,name LIMIT 20`,[term,contextArea])).rows;
+ if(direct.length)return direct.slice(0,12);
+ // Typo-tolerant fallback is candidate discovery only. It NEVER changes canonical stored names/IDs.
+ // Conservative threshold prevents a misspelling from silently becoming an unrelated asset.
+ const all=(await pool.query(`WITH eq AS (
+   SELECT DISTINCT equipment_name AS name, area FROM section_event_log WHERE deleted_at IS NULL AND equipment_name IS NOT NULL
+   UNION SELECT DISTINCT equipment_name AS name, NULL::text AS area FROM technical_document_chunks WHERE equipment_name IS NOT NULL
+   UNION SELECT DISTINCT equipment AS name, area FROM lmmm_master_records WHERE equipment IS NOT NULL
+ ) SELECT name,area FROM eq ORDER BY name LIMIT 1500`)).rows;
+ const scored=all.map(x=>({...x,_score:fuzzyEquipmentScore(term,x.name)})).filter(x=>x._score>=0.72)
+   .sort((a,b)=>((contextArea&&String(b.area||'').toLowerCase()===contextArea.toLowerCase())?1:0)-((contextArea&&String(a.area||'').toLowerCase()===contextArea.toLowerCase())?1:0)||b._score-a._score||String(a.name).localeCompare(String(b.name)));
+ return scored.slice(0,12).map(({_score,...x})=>x);
+}
+async function exactIdentifierKnowledge(q){
+ const raw=String(q||'').trim();
+ const ids=[...new Set((raw.toUpperCase().match(/\b(?=[A-Z0-9_/.:-]*\d)[A-Z0-9]{2,}(?:[-_/.:-][A-Z0-9]+)+\b/g)||[]))];
+ if(!ids.length)return [];
+ const r=await pool.query(`SELECT uid,'knowledge' AS record_type,NULL::text AS equipment,NULL::text AS area,NULL::text AS event_date,raw_text AS record_text,source_name,'{}'::jsonb AS source_payload
+ FROM lmmm_knowledge_records WHERE identifiers && $1::text[] LIMIT 20`,[ids]);
+ return r.rows;
 }
 async function eventSearch(q,u,equipment=null,dateRange=null){
  const intent=searchIntent(q), terms=queryTokens(stripIntentWords(q)); const vals=[]; let where=`deleted_at IS NULL`;
@@ -2362,6 +2395,12 @@ async function universalSearch(q,u){
  if(intent==='drawing' || intent==='procedure'){
    const contextual=(ctx?.equipment_name && !/\b(wbf[- ]?[12]|furnace[- ]?[12])\b/i.test(original))?`${ctx.equipment_name} ${original}`:original;
    return {knowledgeQuery:contextual,referenceIntent:intent};
+ }
+ // Exact drawing/part/SAP/equipment-like identifiers outrank fuzzy text discovery.
+ // If the indexed knowledge contains the exact identifier, return that evidence directly and never fuzzy-rewrite the ID.
+ const exactIdRows=await exactIdentifierKnowledge(original);
+ if(exactIdRows.length && /[-_/.]/.test(original) && !/\b(defect|job|history|inspection|vibration|cbm|shutdown|spare|production|delay)\b/i.test(original)){
+   return {text:`Exact identifier match\n\n${formatBundledResults(exactIdRows)}`,status:'OK'};
  }
  let candidates=entity?await equipmentCandidates(entity,ctx):[];
  const searchScope=await effectiveSearchScope(u);
