@@ -1200,6 +1200,43 @@ async function effectiveAuthority(employeeNumber) {
 }
 
 
+
+// V7.7.49 AUTO RESPONSIBILITY MODEL
+// Registration area drives equipment responsibility; production responsibility is universal.
+// Responsibility is scope, not privilege: it never grants PDF/Analysis/RCM by itself.
+const LMMM_CORE_AREAS = ['BDM','BAR MILL','FINISHING'];
+function canonicalAreaName(v=''){
+  const x=String(v||'').trim().replace(/\s+/g,' ');
+  if(!x) return NA;
+  const n=x.toUpperCase().replace(/[-_]+/g,' ');
+  if(n==='BDM') return 'BDM';
+  if(n==='BAR MILL'||n==='BARMILL') return 'Bar Mill';
+  if(n==='FINISHING'||n==='FINISHING MILL') return 'Finishing';
+  return x;
+}
+async function upsertResponsibilityRow(employeeNumber, role, section, area, assignedBy='SYSTEM'){
+  const found=await pool.query(`SELECT id FROM user_responsibilities WHERE employee_number=$1 AND UPPER(responsibility_role)=UPPER($2) AND UPPER(COALESCE(scope_section,''))=UPPER($3) AND UPPER(COALESCE(scope_area,''))=UPPER($4) AND active=true LIMIT 1`,[employeeNumber,role,section||NA,area||NA]);
+  if(found.rows.length) return found.rows[0].id;
+  const r=await pool.query(`INSERT INTO user_responsibilities(employee_number,responsibility_role,scope_section,scope_area,assigned_by) VALUES($1,$2,$3,$4,$5) RETURNING id`,[employeeNumber,role,section||NA,area||NA,assignedBy]);
+  return r.rows[0]?.id;
+}
+async function syncAutomaticResponsibilities(employeeNumber, assignedBy='SYSTEM'){
+  const u=await byEmp(employeeNumber); if(!u) return [];
+  const section=u.section_department||NA;
+  const area=canonicalAreaName(u.area_of_working||NA);
+  // Universal production responsibility for every approved LMMM user.
+  await upsertResponsibilityRow(employeeNumber,'Production Responsibility',section,'ALL LMMM PRODUCTION',assignedBy);
+  // Every user owns equipment responsibility for the registered area by default.
+  if(area!==NA) await upsertResponsibilityRow(employeeNumber,'Area Equipment Responsibility',section,area,assignedBy);
+  // Section In-charge gets all three LMMM production-area equipment scopes automatically.
+  const roles=(await pool.query(`SELECT responsibility_role FROM user_responsibilities WHERE employee_number=$1 AND active=true`,[employeeNumber])).rows.map(x=>String(x.responsibility_role||'').toLowerCase());
+  if(roles.some(x=>x==='section in-charge'||x==='section incharge')){
+    for(const a of LMMM_CORE_AREAS) await upsertResponsibilityRow(employeeNumber,'Section Equipment Responsibility',section,a==='BAR MILL'?'Bar Mill':a[0]+a.slice(1).toLowerCase(),assignedBy);
+  }
+  try{ await pool.query(`INSERT INTO authority_audit(employee_number,action,scope_section,scope_area,performed_by,details) VALUES($1,'SYNC_AUTO_RESPONSIBILITY',$2,$3,$4,$5::jsonb)`,[employeeNumber,section,area,assignedBy,JSON.stringify({production:true,registered_area:area,section_incharge_all_areas:roles.some(x=>x==='section in-charge'||x==='section incharge')})]); }catch(e){ console.error('[AUTO RESPONSIBILITY AUDIT NONFATAL]',e.message); }
+  return (await pool.query(`SELECT responsibility_role,scope_section,scope_area FROM user_responsibilities WHERE employee_number=$1 AND active=true ORDER BY created_at`,[employeeNumber])).rows;
+}
+
 const RESPONSIBILITY_OPTIONS = [
   ['HOD','HOD'],
   ['SECTION_INCHARGE','Section In-charge'],
@@ -1242,14 +1279,15 @@ async function setResponsibility(from, employeeNumber, code) {
   // Until exact Section/Area masters are supplied, use authenticated registration scope.
   const section = code==='HOD' ? 'ALL SECTIONS' : (u.section_department || NA);
   const area = code==='HOD' ? 'ALL AREAS' :
-               code==='SECTION_INCHARGE' ? 'ALL AREAS' :
+               code==='SECTION_INCHARGE' ? 'BDM + Bar Mill + Finishing' :
                (u.area_of_working || NA);
 
   await pool.query('BEGIN');
   try{
     await pool.query(
       `UPDATE user_responsibilities SET active=false
-       WHERE employee_number=$1 AND active=true`,[employeeNumber]
+       WHERE employee_number=$1 AND active=true
+         AND responsibility_role IN ('HOD','Section In-charge','Area In-charge','Shift In-charge','General Shift','Normal Employee')`,[employeeNumber]
     );
     await pool.query(
       `INSERT INTO user_responsibilities
@@ -1270,6 +1308,7 @@ async function setResponsibility(from, employeeNumber, code) {
     await pool.query('COMMIT');
   }catch(e){ await pool.query('ROLLBACK'); throw e; }
 
+  await syncAutomaticResponsibilities(employeeNumber,from);
   await syncDefaultAccess(employeeNumber,from,'Approved responsibility / hierarchy changed');
   await sendButtons(
     from,
@@ -1808,8 +1847,9 @@ async function sendAccessChangeFeedback(adminWa,emp){
  const label=st?.base==='FULL_ACCESS'?'FULL ACCESS':st?.base==='EDIT'?'VIEW + EDIT / ENTRY':'VIEW ONLY';
  const msg=`Access updated successfully\n${target.name||emp} / ${emp}\nEffective Access: ${label}\n${p.full?'Full Access Bundle: ACTIVE\n':''}PDF / Print: ${p.pdf?'YES':'NO'}\nAnalysis: ${p.analysis?'YES':'NO'}\nReports: ${p.reports?'YES':'NO'}\nRCM: ${p.rcm?'YES':'NO'}\nChange is effective immediately.`;
  await sendText(adminWa,msg);
- const a=String(adminWa||'').replace(/\D/g,''), b=String(target.whatsapp_number||'').replace(/\D/g,'');
- if(b && a!==b) await sendText(target.whatsapp_number,`Your LMMM access has been updated.\nEffective Access: ${label}\n${p.full?'Full Access Bundle: ACTIVE\n':''}PDF / Print: ${p.pdf?'YES':'NO'}\nAnalysis: ${p.analysis?'YES':'NO'}\nReports: ${p.reports?'YES':'NO'}\nRCM: ${p.rcm?'YES':'NO'}`);
+ // V7.7.48: access-change feedback is intentionally ADMIN-ONLY.
+ // Target users receive no permission-change notification; their next request is evaluated
+ // against the freshly committed authoritative runtime access snapshot.
 }
 async function runtimeAccessSnapshot(employeeNumber){
  const emp=String(employeeNumber||'').trim(); if(!emp)return null;
@@ -3058,6 +3098,7 @@ async function ownerCommand(from, text) {
       ]
     );
 
+    await syncAutomaticResponsibilities(m[1],from);
     await syncDefaultAccess(m[1],from,'Registration approved: designation + section + registered area baseline');
     await sendText(u.whatsapp_number, 'Welcome to LMMM AI Maintenance.');
     if (from.replace(/\D/g, '') !== u.whatsapp_number.replace(/\D/g, '')) {
