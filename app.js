@@ -1953,7 +1953,7 @@ function searchIntent(q=''){
 function stripIntentWords(q=''){
  // Date/range tokens are filters, never equipment/entity search terms.
  return String(q)
-  .replace(/\b(defects?|faults?|problems?|jobs?|work\s*orders?|history|previous|old|past|inspection|condition|monitoring|vibration|cbm|shutdown|spares?|inventory|stock|drawings?|drg|drawing\s*(?:no|number)|part\s*drawing|job\s*procedure|procedure|steps|method|how\s+to|manuals?|details?|about|tell|show|find|search|cheppu|gurinchi|pm|preventive|scheduled?|maintenance|rcm|reliability)\b/ig,' ')
+  .replace(/\b(defects?|faults?|problems?|jobs?|work\s*orders?|history|previous|old|past|inspection|condition|monitoring|vibrations?|cbm|shutdown|spares?|inventory|stock|drawings?|drg|drawing\s*(?:no|number)|part\s*drawing|job\s*procedure|procedure|steps|method|how\s+to|manuals?|details?|about|tell|show|find|search|cheppu|gurinchi|pm|preventive|scheduled?|maintenance|rcm|reliability)\b/ig,' ')
   .replace(/\b(?:from|to)\b/ig,' ')
   .replace(/(?:\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[-\/.]\d{1,2}[-\/.]\d{4})/g,' ')
   .replace(/\s+/g,' ').trim();
@@ -2405,10 +2405,13 @@ async function conditionSearchForEquipment(equipment,u,dr=null){
  // and actual measurement evidence; never substitute ordinary defect/job text.
  if(rows.length<20){
    const keys=analysisEquipmentKeys(equipment), sc=await effectiveSearchScope(u);
-   const extra=(await pool.query(`SELECT uid,'knowledge' record_type,NULL::text equipment,NULL::text area,NULL::text event_date,raw_text record_text,source_name,'{}'::jsonb source_payload FROM lmmm_knowledge_records WHERE (LOWER(source_name) LIKE '%vibr%' OR LOWER(normalized_text) LIKE '%vibr%') LIMIT 5000`)).rows;
+   const extra=(await pool.query(`SELECT uid,'knowledge' record_type,NULL::text equipment,NULL::text area,NULL::text event_date,raw_text record_text,source_name,source_payload FROM lmmm_knowledge_records WHERE (LOWER(source_name) LIKE '%vibr%' OR LOWER(normalized_text) LIKE '%vibr%' OR LOWER(COALESCE(source_payload::text,'')) LIKE '%vibr%') LIMIT 8000`)).rows;
+   const unit=String(equipment||'').match(/^ECS-([12])$/i);
+   const legacyKeys=[...keys];
+   if(unit){const n=unit[1];[`ecs-${n}`,`ecs ${n}`,`ecs${n}`,`wbf-${n}`,`wbf ${n}`,`furnace-${n}`,`furnace ${n}`].forEach(x=>legacyKeys.push(scopeKey(x)));}
    for(const r of extra){
-     const hay=scopeKey(`${r.record_text||''} ${r.source_name||''}`);
-     if(!keys.some(k=>k && (hay.includes(k)||hay.replace(/\s+/g,'').includes(k.replace(/\s+/g,'')))))continue;
+     const hay=scopeKey(`${r.record_text||''} ${r.source_name||''} ${JSON.stringify(r.source_payload||{})}`);
+     if(!legacyKeys.some(k=>k && (hay.includes(k)||hay.replace(/\s+/g,'').includes(k.replace(/\s+/g,'')))))continue;
      if(!isTrueCbmRow(r))continue;
      if(!areaMatchesScope(r.area,sc,r.equipment||r.record_text))continue;
      rows.push(r);
@@ -2463,6 +2466,8 @@ async function universalSearch(q,u){
  ctx=await getSearchContext(u); let entity=stripIntentWords(naturalSearchAliases(original)); const alias=await resolveAlias(entity); if(alias)entity=alias.equipment_name||alias.canonical_text;
  if(!entity && ctx?.equipment_name)entity=ctx.equipment_name;
  const intent=searchIntent(original);
+ // Plural maintenance words must preserve intent; "ECS vibrations" resolves as the ECS family, not generic knowledge.
+ if(intent==='condition' && /^ecs(?:\s+vibrations?)?$/i.test(String(entity||'').trim())) entity='ECS';
  const family=familySearchSpec(entity);
  if(family){
    const familyRows=await familyCombinedRows(family,intent,u,range,20);
@@ -2487,7 +2492,15 @@ async function universalSearch(q,u){
  if(exactIdRows.length && /[-_/.]/.test(original) && !/\b(defect|job|history|inspection|vibration|cbm|shutdown|spare|production|delay)\b/i.test(original)){
    return {text:`Exact identifier match\n\n${formatBundledResults(exactIdRows)}`,status:'OK'};
  }
- let candidates=entity?await equipmentCandidates(entity,ctx):[];
+ // Dept-35 ECS hierarchy is authoritative: ECS-1 belongs to WBF-1 and ECS-2 belongs to WBF-2.
+ // Never create fake area variants such as "ECS-2 — Bar mill" from noisy legacy text.
+ const ecsExact=String(entity||'').trim().match(/^ECS-([12])$/i);
+ if(ecsExact){
+   const canonical=`ECS-${ecsExact[1]}`;
+   entity=canonical;
+   await setSearchContext(u,canonical,`WBF-${ecsExact[1]}`);
+ }
+ let candidates=ecsExact?[{name:`ECS-${ecsExact[1]}`,area:`WBF-${ecsExact[1]}`}]:entity?await equipmentCandidates(entity,ctx):[];
  const searchScope=await effectiveSearchScope(u);
  const unscopedCandidates=[...candidates];
  candidates=candidates.filter(x=>areaMatchesScope(x.area,searchScope,x.name));
