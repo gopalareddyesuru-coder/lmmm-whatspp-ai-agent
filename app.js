@@ -1688,7 +1688,7 @@ async function effectiveSearchScope(u){
  const a=await effectiveAuthority(u.employee_number); if(!a)return null;
  const ps=new Set((a.special_permissions||[]).map(x=>String(x).toUpperCase()));
  const roles=(a.responsibilities||[]).map(x=>String(x.responsibility_role||'').toLowerCase());
- const plantWide=isOwner(u?.whatsapp_number)||a.scope==='PLANT_WIDE'||ps.has('SUPER_ADMIN')||ps.has('OWNER');
+ const plantWide=(!a.has_access_override && isOwner(u?.whatsapp_number)) || a.scope==='PLANT_WIDE' || (!a.has_access_override && (ps.has('SUPER_ADMIN')||ps.has('OWNER'))); // V7.7.37 explicit employee override beats phone/legacy owner bypass
  const sections=new Set(),areas=new Set();
  const rs=cleanScopeValue(a.registered_section),ra=cleanScopeValue(a.registered_area); if(rs)sections.add(rs);if(ra)areas.add(ra);
  for(const r of (a.responsibilities||[])){const ss=cleanScopeValue(r.scope_section),sa=cleanScopeValue(r.scope_area);if(ss)sections.add(ss);if(sa)areas.add(sa);}
@@ -1741,7 +1741,7 @@ async function searchPermissions(u){
  const effective=override ? new Set(overrideCodes) : new Set([...inherited,...legacy]);
  // Only the configured owner number bypasses employee overrides. No designation/role can silently
  // restore FULL_ACCESS once Super Admin has explicitly downgraded this employee.
- const full=owner || effective.has('FULL_ACCESS') || (!override && (effective.has('SUPER_ADMIN')||effective.has('OWNER')));
+ const full=(owner && !override) || effective.has('FULL_ACCESS') || (!override && (effective.has('SUPER_ADMIN')||effective.has('OWNER'))); // V7.7.37: explicit employee override is authoritative even when testing from configured admin phone
  const canEdit=full || effective.has('EDIT') || effective.has('ENTRY');
  const canView=full || canEdit || effective.has('VIEW');
  const advanced=full || effective.has('ANALYSIS') || effective.has('ADVANCED_REPORTS');
@@ -1760,7 +1760,7 @@ async function searchPermissions(u){
    pdf:full||effective.has('PRINT_EXPORT')||effective.has('PDF_REPORT')||effective.has('ADVANCED_REPORTS'),
    rcm:full||effective.has('RCM')
  };
- console.log('[RUNTIME ACCESS]',emp,out.permissionSource,[...effective].sort().join(','),'view=',out.view,'edit=',out.edit,'analysis=',out.analysis,'pdf=',out.pdf,'rcm=',out.rcm);
+ console.log('[RUNTIME ACCESS V7.7.38]',emp,out.permissionSource,'ownerPhone=',owner,'override=',override,[...effective].sort().join(','),'view=',out.view,'edit=',out.edit,'analysis=',out.analysis,'reports=',out.reports,'pdf=',out.pdf,'rcm=',out.rcm);
  return out;
 }
 async function primarySearchButtons(u,hasMore=true){
@@ -3663,8 +3663,18 @@ async function processMessage(from, text, rawMessage = null) {
       if(us?.text){
         if(us.buttons?.length) await sendSearchTextAndButtons(from,us.text,us.buttons);
         else await sendLongText(from,us.text);
-        // Reports/PDF are never auto-generated from a normal search. They require an explicit
-        // authorised user action, and sendCurrentMaintenancePdf() re-checks current DB permissions.
+        // V7.7.38: printable-access users get the on-screen result first, then an automatic
+        // A4 table PDF for the SAME current search context. Runtime permission is re-read from DB
+        // inside sendCurrentMaintenancePdf(), so a Super Admin downgrade takes effect immediately.
+        // Do not auto-generate again for pagination/menu/date/analysis control commands.
+        const autoPdfControl=/^(SEARCH_MORE|more|next|SEARCH_DATA_MENU|select data|SEARCH_ANALYSIS|analysis|SEARCH_DATE|date range|CUSTOM_DATE_RANGE)$/i.test(String(clean||'').trim());
+        if(us.status==='OK' && !autoPdfControl){
+          const freshPerms=await searchPermissions(u);
+          if(freshPerms.pdf){
+            try{ await sendCurrentMaintenancePdf(from,u); }
+            catch(pdfErr){ console.error('[AUTO PDF V7.7.38]',pdfErr); await sendText(from,'Records are available, but the printable PDF could not be generated. Please retry PDF Report.'); }
+          }
+        }
         return;
       }
       const kq=us?.knowledgeQuery||clean;
