@@ -1813,18 +1813,17 @@ async function sendAccessChangeFeedback(adminWa,emp){
 }
 async function runtimeAccessSnapshot(employeeNumber){
  const emp=String(employeeNumber||'').trim(); if(!emp)return null;
- // V7.7.46: ONE runtime authority only: user_access_override.
- // This table is written by the Super Admin access control and is read fresh on every protected action.
- const o=(await pool.query(`SELECT enabled,permissions,updated_by,updated_at,reason FROM user_access_override WHERE employee_number=$1 LIMIT 1`,[emp])).rows[0];
- if(!(o?.enabled===true))return null;
- const arr=Array.isArray(o.permissions)?o.permissions.map(x=>String(x).toUpperCase()):[];
- const set=new Set(arr);
- const base=set.has('FULL_ACCESS')?'FULL_ACCESS':(set.has('EDIT')||set.has('ENTRY')?'EDIT':'VIEW');
- // Full Access is a bundle, not merely a label.
+ // V7.7.47: user_effective_access is the ONLY runtime authority after a Super Admin decision.
+ // Legacy tables are compatibility mirrors only and can never grant/revoke runtime capability.
+ const r=(await pool.query(`SELECT base_profile,extras,updated_by,updated_at,reason FROM user_effective_access WHERE employee_number=$1 LIMIT 1`,[emp])).rows[0];
+ if(!r)return null;
+ const base=String(r.base_profile||'VIEW').toUpperCase();
+ const extras=Array.isArray(r.extras)?r.extras.map(x=>String(x).toUpperCase()):[];
+ const set=new Set(extras);
  if(base==='FULL_ACCESS') ['FULL_ACCESS','VIEW','ENTRY','EDIT','PRINT_EXPORT','PDF_REPORT','ANALYSIS','REPORTS','ADVANCED_REPORTS','RCM','DELETE_UNDO','APPROVAL'].forEach(x=>set.add(x));
  else if(base==='EDIT'){set.add('VIEW');set.add('ENTRY');set.add('EDIT');set.delete('FULL_ACCESS');}
  else {set.add('VIEW');set.delete('FULL_ACCESS');set.delete('EDIT');set.delete('ENTRY');}
- return {manual:true,base,codes:[...set],updated_by:o.updated_by,updated_at:o.updated_at,source:'USER_ACCESS_OVERRIDE'};
+ return {manual:true,base,codes:[...set],updated_by:r.updated_by,updated_at:r.updated_at,source:'USER_EFFECTIVE_ACCESS'};
 }
 async function searchPermissions(u){
  const emp=String(u?.employee_number||'').trim();
@@ -1853,7 +1852,7 @@ async function searchPermissions(u){
  const unrestricted=full||!js.size||js.has('ALL')||js.has('NOT ASSIGNED');
  const jobAllowed=(...names)=>unrestricted||names.some(n=>js.has(n));
  const out={owner:false,full,scope,override:!!snap?.manual,permissionSource:source,view:canView,edit:canEdit,entry:canEdit,more:canView,date:canView,analysis:advanced,reports,repeat:advanced&&jobAllowed('DEFECTS','JOBS','HISTORY'),jobs:canView&&jobAllowed('JOBS','HISTORY'),history:canView&&jobAllowed('HISTORY','JOBS','DEFECTS'),mtbf:advanced,performance:advanced&&jobAllowed('DEFECTS','JOBS','HISTORY','PM','INSPECTION_CBM','BREAKDOWN'),pm:canView&&jobAllowed('PM'),cbm:canView&&jobAllowed('INSPECTION_CBM'),delay:advanced&&jobAllowed('BREAKDOWN'),pdf:full||effective.has('PRINT_EXPORT')||effective.has('PDF_REPORT')||effective.has('ADVANCED_REPORTS'),rcm:full||effective.has('RCM')};
- console.log('[RUNTIME ACCESS V7.7.46]',emp,'source=',source,'base=',base,'codes=',[...effective].sort().join(','),'view=',out.view,'edit=',out.edit,'analysis=',out.analysis,'reports=',out.reports,'pdf=',out.pdf,'rcm=',out.rcm);
+ console.log('[RUNTIME ACCESS V7.7.47]',emp,'source=',source,'base=',base,'codes=',[...effective].sort().join(','),'view=',out.view,'edit=',out.edit,'analysis=',out.analysis,'reports=',out.reports,'pdf=',out.pdf,'rcm=',out.rcm);
  return out;
 }
 async function primarySearchButtons(u,hasMore=true){
@@ -2861,42 +2860,43 @@ async function stageAdminOption(from,key,emp,code,sendFn){
 async function applyBaseAccessProfileDirect(from,emp,profile){
  if(!await requireSuperAdmin(from))return;
  const p=String(profile||'').toUpperCase();
- let permissions=[];
- if(p==='FULL_ACCESS') permissions=['FULL_ACCESS','VIEW','ENTRY','EDIT','PRINT_EXPORT','PDF_REPORT','ANALYSIS','REPORTS','ADVANCED_REPORTS','RCM','DELETE_UNDO','APPROVAL'];
- else if(p==='EDIT') permissions=['EDIT','ENTRY','VIEW'];
- else if(p==='VIEW') permissions=['VIEW'];
- else { await sendText(from,'Invalid access profile.'); return; }
- const client=await pool.connect();
+ if(!['VIEW','EDIT','FULL_ACCESS'].includes(p)){await sendText(from,'Invalid access profile.');return;}
+ // CRITICAL WRITE FIRST: one small UPSERT, no legacy table can roll it back.
  try{
-  await client.query('BEGIN');
-  // Manual override is a replacement, never an additive grant.
-  await client.query(`INSERT INTO user_access_override(employee_number,enabled,permissions,updated_by,updated_at,reason)
-    VALUES($1,true,$2::jsonb,$3,now(),$4)
-    ON CONFLICT(employee_number) DO UPDATE SET enabled=true,permissions=EXCLUDED.permissions,updated_by=EXCLUDED.updated_by,updated_at=now(),reason=EXCLUDED.reason`,
-    [emp,JSON.stringify(permissions),from,'Super Admin direct authoritative base profile']);
-  // Kill every old special permission first, including stale FULL_ACCESS/PDF/Analysis rights.
-  await client.query(`UPDATE user_special_permissions SET active=false,granted_by=$2,reason=$3,updated_at=now() WHERE employee_number=$1`,
-    [emp,from,'Replaced by Super Admin direct authoritative base profile']);
-  for(const code of permissions){
-   await client.query(`INSERT INTO user_special_permissions(employee_number,permission,active,granted_by,reason,updated_at)
-    VALUES($1,$2,true,$3,$4,now())
-    ON CONFLICT(employee_number,permission) DO UPDATE SET active=true,granted_by=EXCLUDED.granted_by,granted_at=now(),reason=EXCLUDED.reason,updated_at=now()`,
-    [emp,code,from,'Super Admin direct authoritative base profile']);
-  }
-  await client.query(`INSERT INTO authority_audit(employee_number,action,performed_by,details) VALUES($1,'SET_AUTHORITATIVE_BASE_PROFILE',$2,$3::jsonb)`,
-    [emp,from,JSON.stringify({profile:p,permissions,mode:'DIRECT_AUTHORITATIVE_V3'})]);
-  await client.query('COMMIT');
- }catch(e){ await client.query('ROLLBACK'); throw e; }finally{ client.release(); }
- await saveAuthoritativeAccess(emp,p,[],from,'Super Admin direct base profile V7.7.42');
+   await pool.query(`INSERT INTO user_effective_access(employee_number,base_profile,extras,updated_by,updated_at,reason)
+     VALUES($1,$2,'[]'::jsonb,$3,now(),$4)
+     ON CONFLICT(employee_number) DO UPDATE SET base_profile=EXCLUDED.base_profile,extras='[]'::jsonb,updated_by=EXCLUDED.updated_by,updated_at=now(),reason=EXCLUDED.reason`,
+     [emp,p,from,'Super Admin authoritative base profile V7.7.47']);
+ }catch(e){
+   console.error('[ACCESS V7.7.47 AUTHORITATIVE WRITE FAILED]',emp,e);
+   await sendText(from,`Access change FAILED for ${emp}. No change was confirmed.\n${String(e.message||e).slice(0,180)}`);
+   return;
+ }
+ // Verify the exact row before telling anyone that access changed.
+ const snap=await runtimeAccessSnapshot(emp);
+ if(!snap || snap.base!==p){
+   console.error('[ACCESS V7.7.47 VERIFY FAILED]',emp,p,snap);
+   await sendText(from,`Access verification FAILED for ${emp}. Please do not treat the change as applied.`);
+   return;
+ }
+ // Compatibility mirrors are BEST-EFFORT only. They never control runtime access.
+ const permissions=p==='FULL_ACCESS'?['FULL_ACCESS','VIEW','ENTRY','EDIT','PRINT_EXPORT','PDF_REPORT','ANALYSIS','REPORTS','ADVANCED_REPORTS','RCM','DELETE_UNDO','APPROVAL']:(p==='EDIT'?['VIEW','ENTRY','EDIT']:['VIEW']);
+ try{
+   await pool.query(`INSERT INTO user_access_override(employee_number,enabled,permissions,updated_by,updated_at,reason)
+     VALUES($1,true,$2::jsonb,$3,now(),$4)
+     ON CONFLICT(employee_number) DO UPDATE SET enabled=true,permissions=EXCLUDED.permissions,updated_by=EXCLUDED.updated_by,updated_at=now(),reason=EXCLUDED.reason`,
+     [emp,JSON.stringify(permissions),from,'Compatibility mirror V7.7.47']);
+ }catch(e){console.error('[ACCESS LEGACY MIRROR NONFATAL]',e.message);}
+ try{
+   await pool.query(`UPDATE user_special_permissions SET active=false,granted_by=$2,reason=$3,updated_at=now() WHERE employee_number=$1`,[emp,from,'Superseded by user_effective_access V7.7.47']);
+ }catch(e){console.error('[ACCESS SPECIAL CLEANUP NONFATAL]',e.message);}
+ try{await pool.query(`INSERT INTO authority_audit(employee_number,action,performed_by,details) VALUES($1,'SET_AUTHORITATIVE_BASE_PROFILE',$2,$3::jsonb)`,[emp,from,JSON.stringify({profile:p,source:'USER_EFFECTIVE_ACCESS_V7.7.47'})]);}catch(e){console.error('[ACCESS AUDIT NONFATAL]',e.message);}
  await selectionClear(from,'ADMIN_ACCESS',emp).catch(()=>{});
  await pool.query(`DELETE FROM search_context WHERE employee_number=$1`,[emp]).catch(()=>{});
  await pool.query(`DELETE FROM pending_search_choices WHERE employee_number=$1`,[emp]).catch(()=>{});
- const verified=await effectiveAuthority(emp);
- console.log('[ACCESS DIRECT VERIFIED]',emp,'override=',verified?.has_access_override,'effective=',verified?.effective_access,'permissions=',JSON.stringify(verified?.override_permissions||[]));
  await sendAccessChangeFeedback(from,emp);
  await sendAccessAdminMenu(from,emp);
 }
-
 async function applyAccessSelection(from,emp){
  if(!await requireSuperAdmin(from))return;
  const st=await selectionGet(from,'ADMIN_ACCESS',emp,[]),sel=new Set(st.selected.map(x=>String(x).toUpperCase()));
@@ -3870,7 +3870,7 @@ app.post('/webhook', (req, res) => {
 app.get('/api/status', (_q, r) =>
   r.status(200).json({
     status: 'ready',
-    registration: 'V7.7.24-project-wide-dynamic-multiselect',
+    registration: 'V7.7.47-authoritative-access-verified',
     webhook: '/webhook',
     super_admins_configured: SUPER_ADMIN_NUMBERS.size
   })
