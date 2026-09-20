@@ -1,0 +1,25 @@
+{
+  "build": {
+    "name": "LMMM DEPT35 AUTHORISED BIG MASTER",
+    "version": "GITHUB_TEST_2026-09-21",
+    "department_code": "35"
+  },
+  "counts": {
+    "equipment": 798,
+    "sap_raw": 2056,
+    "spares_source_rows": 15481,
+    "defects": 2301,
+    "history": 2467
+  },
+  "unified_retrieval_count": 23145,
+  "files": [
+    "master_core_records.json",
+    "unified_retrieval_records.json"
+  ],
+  "bot_rules": {
+    "missing_data": "Data ledu / confirm cheyyalenu.",
+    "search": "Exact ID > canonical/alias > fuzzy/transliteration > semantic/context",
+    "save": "Upload/read does not mean permanent Store.",
+    "estimates": "AI manpower/time estimate must be visibly labelled and never treated as actual."
+  }
+}
