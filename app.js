@@ -1777,7 +1777,7 @@ async function effectiveSearchScope(u){
  const plantWide=(!a.has_access_override && isOwner(u?.whatsapp_number)) || a.scope==='PLANT_WIDE' || (!a.has_access_override && (ps.has('SUPER_ADMIN')||ps.has('OWNER'))); // V7.7.37 explicit employee override beats phone/legacy owner bypass
  const sections=new Set(),areas=new Set();
  const rs=cleanScopeValue(a.registered_section),ra=cleanScopeValue(a.registered_area); if(rs)sections.add(rs);if(ra)areas.add(ra);
- for(const r of (a.responsibilities||[])){const ss=cleanScopeValue(r.scope_section),sa=cleanScopeValue(r.scope_area);if(ss)sections.add(ss);if(sa)areas.add(sa);}
+ for(const r of (a.responsibilities||[])){const ss=cleanScopeValue(r.scope_section),sa=cleanScopeValue(r.scope_area);if(ss)sections.add(ss);if(sa && !/^all lmmm production$/i.test(sa))areas.add(canonicalAreaName(sa));}
  const jobScopes=new Set();
  for(const r of (a.assignments||[])){
    const ss=cleanScopeValue(r.section),sa=cleanScopeValue(r.area); if(ss)sections.add(ss);if(sa)areas.add(sa);
@@ -2753,11 +2753,29 @@ const JOB_SCOPE_OPTIONS=[
 function isSuperAdminWA(wa=''){return SUPER_ADMIN_NUMBERS.has(String(wa).replace(/\D/g,''));}
 async function requireSuperAdmin(to){if(!isSuperAdminWA(to)){await sendText(to,'Not authorized. Super Admin access required.');return false;}return true;}
 async function findAdminEmployees(term){return employeeSearch(term);}
+function responsibilityDisplay(a,u){
+ const rows=a?.responsibilities||[];
+ const out=[];
+ const seen=new Set();
+ const add=x=>{x=String(x||'').trim(); if(x&&!seen.has(x.toUpperCase())){seen.add(x.toUpperCase());out.push(x);}};
+ const op=String(a?.operational_role||u?.operational_role||'').toUpperCase();
+ const roleNames=rows.map(r=>String(r.responsibility_role||'').toLowerCase());
+ const sectionIncharge=op==='SECTION_INCHARGE'||roleNames.some(x=>x==='section in-charge'||x==='section incharge');
+ if(sectionIncharge){ add('BDM Equipment'); add('Bar Mill Equipment'); add('Finishing Equipment'); }
+ else {
+   const eqAreas=rows.filter(r=>/equipment responsibility/i.test(String(r.responsibility_role||''))).map(r=>canonicalAreaName(r.scope_area)).filter(x=>x&&x!==NA&&!/^all lmmm production$/i.test(x));
+   if(eqAreas.length) eqAreas.forEach(a=>add(`${a} Equipment`));
+   else { const a=canonicalAreaName(u?.area_of_working||''); if(a&&a!==NA)add(`${a} Equipment`); }
+ }
+ // Production is a responsibility, never an area/scope label.
+ if(rows.some(r=>/production responsibility/i.test(String(r.responsibility_role||''))) || u?.approval_status==='approved') add('Production');
+ return out.join(', ')||'Not Assigned';
+}
 async function employeeGovernanceSummary(emp){
  const u=await byEmp(emp),a=await effectiveAuthority(emp); if(!u||!a)return null;
  const sc=await effectiveSearchScope(u), snap=await runtimeAccessSnapshot(emp), p=await searchPermissions(u);
  const inherited=(a.default_permissions||[]).map(x=>accessLabel(x.permission)).join(', ')||'None';
- const roles=(a.responsibilities||[]).map(x=>x.responsibility_role).filter(Boolean).join(', ')||u.responsibility||'Normal Employee';
+ const roles=responsibilityDisplay(a,u);
  const jobs=(sc.jobScopes||[]).join(', ')||'ALL';
  const base=snap?.base|| (p.full?'FULL_ACCESS':p.edit?'EDIT':'VIEW');
  const label=base==='FULL_ACCESS'?'FULL ACCESS':base==='EDIT'?'VIEW + EDIT / ENTRY':'VIEW ONLY';
