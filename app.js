@@ -1071,7 +1071,7 @@ async function defaultPermissionRows(employeeNumber){
 }
 
 async function effectiveAuthority(employeeNumber) {
-  // V7.7.50: lazy backfill guarantees existing approved users receive automatic responsibilities too.
+  // V7.7.52: lazy backfill guarantees existing approved users receive automatic responsibilities too.
   // Idempotent: no duplicate rows; audit is written only when a responsibility is newly created.
   try { await syncAutomaticResponsibilities(employeeNumber,'SYSTEM_AUTO'); } catch(e) { console.error('[AUTO RESPONSIBILITY ENSURE]',employeeNumber,e.message); }
   const ur = await pool.query(
@@ -2760,14 +2760,23 @@ function responsibilityDisplay(a,u){
  const add=x=>{x=String(x||'').trim(); if(x&&!seen.has(x.toUpperCase())){seen.add(x.toUpperCase());out.push(x);}};
  const op=String(a?.operational_role||u?.operational_role||'').toUpperCase();
  const roleNames=rows.map(r=>String(r.responsibility_role||'').toLowerCase());
+ const section=String(u?.section_department||a?.registered_section||'').trim().toUpperCase().replace(/[-_]+/g,' ');
+ const isOperations=/\b(OPERATION|OPERATIONS|PRODUCTION)\b/.test(section);
  const sectionIncharge=op==='SECTION_INCHARGE'||roleNames.some(x=>x==='section in-charge'||x==='section incharge');
- if(sectionIncharge){ add('BDM Equipment'); add('Bar Mill Equipment'); add('Finishing Equipment'); }
+ const areas=[];
+ const addArea=a0=>{const x=canonicalAreaName(a0); if(x&&x!==NA&&!/^all lmmm production$/i.test(x)&&!areas.some(y=>y.toUpperCase()===x.toUpperCase()))areas.push(x);};
+ if(sectionIncharge){ ['BDM','Bar Mill','Finishing'].forEach(addArea); }
  else {
-   const eqAreas=rows.filter(r=>/equipment responsibility/i.test(String(r.responsibility_role||''))).map(r=>canonicalAreaName(r.scope_area)).filter(x=>x&&x!==NA&&!/^all lmmm production$/i.test(x));
-   if(eqAreas.length) eqAreas.forEach(a=>add(`${a} Equipment`));
-   else { const a=canonicalAreaName(u?.area_of_working||''); if(a&&a!==NA)add(`${a} Equipment`); }
+   rows.filter(r=>/equipment responsibility/i.test(String(r.responsibility_role||''))).forEach(r=>addArea(r.scope_area));
+   if(!areas.length) addArea(u?.area_of_working||a?.registered_area||'');
  }
- // Production is a responsibility, never an area/scope label.
+ // Responsibility wording is section-aware. Operations owns safe operation + production;
+ // Mechanical/Electrical and all other support/agencies own equipment availability & maintenance + production.
+ for(const area of areas){
+   if(isOperations) add(`${area} Equipment Safety`);
+   else add(`${area} Equipment Availability & Maintenance`);
+ }
+ // Production responsibility is universal for approved LMMM users and is never an area label.
  if(rows.some(r=>/production responsibility/i.test(String(r.responsibility_role||''))) || u?.approval_status==='approved') add('Production');
  return out.join(', ')||'Not Assigned';
 }
