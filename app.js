@@ -1901,7 +1901,7 @@ async function searchPermissions(u){
  const unrestricted=full||!js.size||js.has('ALL')||js.has('NOT ASSIGNED');
  const jobAllowed=(...names)=>unrestricted||names.some(n=>js.has(n));
  const out={owner:false,full,scope,override:!!snap?.manual,permissionSource:source,view:canView,edit:canEdit,entry:canEdit,more:canView,date:canView,analysis:advanced,reports,repeat:advanced&&jobAllowed('DEFECTS','JOBS','HISTORY'),jobs:canView&&jobAllowed('JOBS','HISTORY'),history:canView&&jobAllowed('HISTORY','JOBS','DEFECTS'),mtbf:advanced,performance:advanced&&jobAllowed('DEFECTS','JOBS','HISTORY','PM','INSPECTION_CBM','BREAKDOWN'),pm:canView&&jobAllowed('PM'),cbm:canView&&jobAllowed('INSPECTION_CBM'),delay:advanced&&jobAllowed('BREAKDOWN'),pdf:full||effective.has('PRINT_EXPORT')||effective.has('PDF_REPORT')||effective.has('ADVANCED_REPORTS'),rcm:full||effective.has('RCM')};
- console.log('[RUNTIME ACCESS V7.7.47]',emp,'source=',source,'base=',base,'codes=',[...effective].sort().join(','),'view=',out.view,'edit=',out.edit,'analysis=',out.analysis,'reports=',out.reports,'pdf=',out.pdf,'rcm=',out.rcm);
+ console.log('[RUNTIME ACCESS V7.7.55]',emp,'source=',source,'base=',base,'codes=',[...effective].sort().join(','),'view=',out.view,'edit=',out.edit,'analysis=',out.analysis,'reports=',out.reports,'pdf=',out.pdf,'rcm=',out.rcm);
  return out;
 }
 async function primarySearchButtons(u,hasMore=true){
@@ -1961,6 +1961,20 @@ function stripIntentWords(q=''){
 async function getSearchContext(u){return (await pool.query(`SELECT * FROM search_context WHERE employee_number=$1`,[u.employee_number])).rows[0]||null;}
 async function setSearchContext(u,equipment,area=null){await pool.query(`INSERT INTO search_context(employee_number,department_code,area,equipment_name,updated_at) VALUES($1,'35',$2,$3,now()) ON CONFLICT(employee_number) DO UPDATE SET area=COALESCE(EXCLUDED.area,search_context.area),equipment_name=EXCLUDED.equipment_name,updated_at=now()`,[u.employee_number,area,equipment]);}
 async function resolveAlias(term){if(!term)return null;const r=await pool.query(`UPDATE search_aliases SET usage_count=usage_count+1,last_used_at=now() WHERE department_code='35' AND confirmed=TRUE AND LOWER(alias_text)=LOWER($1) RETURNING canonical_text,equipment_name`,[term]);return r.rows[0]||null;}
+function safeLearnableAlias(term=''){
+ const t=String(term||'').trim(); if(!t||t.length<3||t.length>80)return false;
+ if(GENERIC_ASSET_WORDS.test(t) && queryTokens(t).length<=2)return false;
+ if(/^[0-9]+$/.test(t))return false;
+ return true;
+}
+async function learnSharedSearchAlias(term,equipment,u,reason='confirmed_selection'){
+ const a=String(term||'').trim(), e=String(equipment||'').trim();
+ if(!e||!safeLearnableAlias(a))return;
+ try{await pool.query(`INSERT INTO search_aliases(department_code,alias_text,canonical_text,equipment_name,confidence,confirmed,usage_count,learned_from,created_by,last_used_at)
+ VALUES('35',$1,$2,$2,0.99,TRUE,1,$3,$4,now()) ON CONFLICT(department_code,alias_text,canonical_text) DO UPDATE SET equipment_name=EXCLUDED.equipment_name,confidence=GREATEST(search_aliases.confidence,EXCLUDED.confidence),confirmed=TRUE,usage_count=search_aliases.usage_count+1,last_used_at=now(),learned_from=EXCLUDED.learned_from`,[a,e,reason,String(u?.employee_number||'')]);}
+ catch(err){console.error('[SEARCH LEARNING]',err.message);}
+}
+
 function searchNorm(v=''){return String(v||'').toLowerCase().replace(/[^a-z0-9]+/g,'').trim();}
 function editDistance(a='',b=''){
  a=searchNorm(a);b=searchNorm(b);if(!a)return b.length;if(!b)return a.length;
@@ -1982,7 +1996,18 @@ async function equipmentCandidates(term,ctx){
    UNION SELECT DISTINCT equipment AS name, area FROM lmmm_master_records WHERE equipment IS NOT NULL
  ) SELECT name,area FROM eq WHERE LOWER(name) LIKE LOWER('%'||$1::text||'%')
  ORDER BY CASE WHEN $2::text IS NOT NULL AND LOWER(COALESCE(area,''))=LOWER($2::text) THEN 0 ELSE 1 END,name LIMIT 20`,[term,contextArea])).rows;
- if(direct.length)return direct.slice(0,12);
+ if(direct.length){
+   const canon=searchNorm(term);
+   const exact=direct.filter(x=>searchNorm(x.name)===canon);
+   if(exact.length)return exact.slice(0,4);
+   const assetLike=direct.filter(x=>{
+     const n=String(x.name||'');
+     if(n.length>55||n.includes(','))return false;
+     if(/\b(?:pack|pinion|metaflex|disc|alloy steel|series|for ecs pump)\b/i.test(n))return false;
+     return true;
+   });
+   return (assetLike.length?assetLike:direct).slice(0,12);
+ }
  // Typo-tolerant fallback is candidate discovery only. It NEVER changes canonical stored names/IDs.
  // Conservative threshold prevents a misspelling from silently becoming an unrelated asset.
  const all=(await pool.query(`WITH eq AS (
@@ -2375,14 +2400,28 @@ function strictSelectedAssetRow(r,equipment){
 }
 async function conditionSearchForEquipment(equipment,u,dr=null){
  const fake={equipment_name:equipment,date_from:dr?.from||null,date_to:dr?.to||null};
- const rows=(await allAnalysisRows(fake,u,8000)).filter(isTrueCbmRow);
+ let rows=(await allAnalysisRows(fake,u,10000)).filter(isTrueCbmRow);
+ // Legacy vibration imports may have blank equipment columns. Require BOTH the selected asset token
+ // and actual measurement evidence; never substitute ordinary defect/job text.
+ if(rows.length<20){
+   const keys=analysisEquipmentKeys(equipment), sc=await effectiveSearchScope(u);
+   const extra=(await pool.query(`SELECT uid,'knowledge' record_type,NULL::text equipment,NULL::text area,NULL::text event_date,raw_text record_text,source_name,'{}'::jsonb source_payload FROM lmmm_knowledge_records WHERE (LOWER(source_name) LIKE '%vibr%' OR LOWER(normalized_text) LIKE '%vibr%') LIMIT 5000`)).rows;
+   for(const r of extra){
+     const hay=scopeKey(`${r.record_text||''} ${r.source_name||''}`);
+     if(!keys.some(k=>k && (hay.includes(k)||hay.replace(/\s+/g,'').includes(k.replace(/\s+/g,'')))))continue;
+     if(!isTrueCbmRow(r))continue;
+     if(!areaMatchesScope(r.area,sc,r.equipment||r.record_text))continue;
+     rows.push(r);
+   }
+ }
+ const seen=new Set(); rows=rows.filter(r=>{const k=scopeKey(`${r.event_date||''}|${r.record_text||''}|${r.source_name||''}`);if(!k||seen.has(k))return false;seen.add(k);return true;});
  return rows.slice(0,20);
 }
 async function familyCombinedRows(spec,intent,u,dr=null,limit=20){
  const scope=await effectiveSearchScope(u), out=[],seen=new Set();
  for(const member of spec.members){
    const iq=intent==='defect'?`${member} defects`:intent==='history'?`${member} history`:intent==='job_action'?`${member} jobs`:member;
-   const rows=await searchBundledMaster(iq,120,dr,0);
+   const rows=intent==='condition'?await conditionSearchForEquipment(member,u,dr):await searchBundledMaster(iq,120,dr,0);
    for(const r of rows){
      if(!areaMatchesScope(r.area,scope,r.equipment))continue;
      const rk=scopeKey(r.equipment||''); if(rk!==scopeKey(member))continue;
@@ -2419,7 +2458,7 @@ async function universalSearch(q,u){
  }
  if(/^\d+$/.test(original)){
    const pr=(await pool.query(`SELECT * FROM pending_search_choices WHERE employee_number=$1 AND created_at>now()-interval '30 minutes'`,[u.employee_number])).rows[0];
-   if(pr){const choices=typeof pr.choices==='string'?JSON.parse(pr.choices):pr.choices;const pick=choices[Number(original)-1];if(pick){await setSearchContext(u,pick.name,pick.area||null);await pool.query(`DELETE FROM pending_search_choices WHERE employee_number=$1`,[u.employee_number]);return universalSearch(pr.original_query,u);}}
+   if(pr){const choices=typeof pr.choices==='string'?JSON.parse(pr.choices):pr.choices;const pick=choices[Number(original)-1];if(pick){const prior=String(pr.original_query||'');const learned=stripIntentWords(naturalSearchAliases(prior));await setSearchContext(u,pick.name,pick.area||null);await learnSharedSearchAlias(learned,pick.name,u,'user_selection');await pool.query(`DELETE FROM pending_search_choices WHERE employee_number=$1`,[u.employee_number]);const pi=searchIntent(prior);const suffix=pi==='defect'?' defects':pi==='history'?' history':pi==='job_action'?' jobs':pi==='condition'?' vibration':pi==='spares'?' spares':'';return universalSearch(`${pick.name}${suffix}`.trim(),u);}}
  }
  ctx=await getSearchContext(u); let entity=stripIntentWords(naturalSearchAliases(original)); const alias=await resolveAlias(entity); if(alias)entity=alias.equipment_name||alias.canonical_text;
  if(!entity && ctx?.equipment_name)entity=ctx.equipment_name;
@@ -2429,7 +2468,7 @@ async function universalSearch(q,u){
    const familyRows=await familyCombinedRows(family,intent,u,range,20);
    const choices=family.members.map(name=>({name,area:null}));
    await pool.query(`INSERT INTO pending_search_choices(employee_number,original_query,choices,created_at) VALUES($1,$2,$3,now()) ON CONFLICT(employee_number) DO UPDATE SET original_query=EXCLUDED.original_query,choices=EXCLUDED.choices,created_at=now()`,[u.employee_number,original,JSON.stringify(choices)]);
-   const body=familyRows.length?`${family.label} — ${intent==='defect'?'Defects':intent==='history'?'History':intent==='job_action'?'Jobs':'Maintenance'}\nShowing latest ${familyRows.length} across ${family.members.join(' + ')}\n\n${formatBundledResults(familyRows)}\n\nSelect equipment:\n${family.members.map((x,i)=>`${i+1}. ${x}`).join('\n')}`:`${family.label}\nSelect equipment:\n${family.members.map((x,i)=>`${i+1}. ${x}`).join('\n')}`;
+   const body=familyRows.length?`${family.label} — ${intent==='defect'?'Defects':intent==='history'?'History':intent==='job_action'?'Jobs':intent==='condition'?'Vibration / CBM':'Maintenance'}\nShowing latest ${familyRows.length} across ${family.members.join(' + ')}\n\n${formatBundledResults(familyRows)}\n\nSelect equipment:\n${family.members.map((x,i)=>`${i+1}. ${x}`).join('\n')}`:`${family.label}\nSelect equipment:\n${family.members.map((x,i)=>`${i+1}. ${x}`).join('\n')}`;
    return {text:body,buttons:family.members.map((x,i)=>({id:String(i+1),title:x}))};
  }
  // A clearly new asset search must not inherit an old date filter accidentally. Date-only follow-ups keep context above.
@@ -2459,7 +2498,9 @@ async function universalSearch(q,u){
  // Exact canonical equipment/known alias always outranks fuzzy contains matches.
  const canonicalEntity=naturalSearchAliases(entity||'').trim().toLowerCase();
  const exact=candidates.filter(x=>String(x.name||'').trim().toLowerCase()===canonicalEntity);
- if(exact.length===1)candidates=exact;
+ if(exact.length){
+   const seenExact=new Set(); candidates=exact.filter(x=>{const k=searchNorm(x.name);if(seenExact.has(k))return false;seenExact.add(k);return true;});
+ }
  // A family query such as "Furnace defects" must offer only the actual furnace assets,
  // never every part whose description happens to contain the word furnace.
  if(/^furnaces?$/i.test(String(entity||'').trim())){
@@ -2471,7 +2512,7 @@ async function universalSearch(q,u){
    const buttons=candidates.length<=3?candidates.map((x,i)=>({id:String(i+1),title:String(x.name).slice(0,20)})):null;
    return {text:`Multiple matches found. Which one?\n\n`+candidates.map((x,i)=>`${i+1}. ${x.name}${x.area?` — ${x.area}`:''}`).join('\n'),...(buttons?{buttons}:{})};
  }
- const equipment=candidates.length===1?candidates[0].name:(ctx?.equipment_name && !entity?ctx.equipment_name:null); if(equipment){await setSearchContext(u,equipment,candidates[0]?.area||ctx?.area||null);await setSearchFilters(u,{module:intent,offset:0,lastQuery:original});}
+ const equipment=candidates.length===1?candidates[0].name:(ctx?.equipment_name && !entity?ctx.equipment_name:null); if(equipment){await setSearchContext(u,equipment,candidates[0]?.area||ctx?.area||null);await setSearchFilters(u,{module:intent,offset:0,lastQuery:original});if(entity&&searchNorm(entity)!==searchNorm(equipment)&&candidates.length===1)await learnSharedSearchAlias(entity,equipment,u,'unique_resolution');}
  ctx=await getSearchContext(u); const dr=range|| (ctx?.date_from?{from:String(ctx.date_from).slice(0,10),to:String(ctx.date_to||ctx.date_from).slice(0,10)}:null);
  if(intent==='condition' && equipment){
    const cbmRows=await conditionSearchForEquipment(equipment,u,dr);
