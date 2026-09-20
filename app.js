@@ -1098,7 +1098,7 @@ async function effectiveAuthority(employeeNumber) {
   const pr = { rows: prAll.rows.filter(x=>x.active===true) };
   // Manual override is explicit state, not inferred from legacy permission rows.
   // This prevents registration/hierarchy FULL access from leaking back after a Super Admin downgrade.
-  // V7.7.45: the SAME authoritative snapshot drives admin summary, scope and runtime gates.
+  // V7.7.46: the SAME authoritative snapshot drives admin summary, scope and runtime gates.
   // Never let the legacy override table disagree with user_effective_access.
   const authRow=(await pool.query(`SELECT base_profile,extras,updated_by,updated_at FROM user_effective_access WHERE employee_number=$1 LIMIT 1`,[employeeNumber])).rows[0]||null;
   const legacyOv=(await pool.query(`SELECT enabled,permissions,updated_by,updated_at FROM user_access_override WHERE employee_number=$1 LIMIT 1`,[employeeNumber])).rows[0]||null;
@@ -1798,7 +1798,7 @@ async function saveAuthoritativeAccess(employeeNumber,baseProfile,extras,updated
  if(base==='FULL_ACCESS') clean.length=0;
  await pool.query(`INSERT INTO user_effective_access(employee_number,base_profile,extras,updated_by,updated_at,reason) VALUES($1,$2,$3::jsonb,$4,now(),$5) ON CONFLICT(employee_number) DO UPDATE SET base_profile=EXCLUDED.base_profile,extras=EXCLUDED.extras,updated_by=EXCLUDED.updated_by,updated_at=now(),reason=EXCLUDED.reason`,[emp,base,JSON.stringify(clean),updatedBy,reason||'Super Admin access change']);
  // Keep legacy tables synchronized for audit/backward compatibility, but runtime never trusts them when snapshot exists.
- const perms=base==='FULL_ACCESS'?['FULL_ACCESS']:(base==='EDIT'?['VIEW','ENTRY','EDIT']:['VIEW']); perms.push(...clean);
+ const perms=base==='FULL_ACCESS'?['FULL_ACCESS','VIEW','ENTRY','EDIT','PRINT_EXPORT','PDF_REPORT','ANALYSIS','REPORTS','ADVANCED_REPORTS','RCM','DELETE_UNDO','APPROVAL']:(base==='EDIT'?['VIEW','ENTRY','EDIT']:['VIEW']); perms.push(...clean);
  await pool.query(`INSERT INTO user_access_override(employee_number,enabled,permissions,updated_by,updated_at,reason) VALUES($1,true,$2::jsonb,$3,now(),$4) ON CONFLICT(employee_number) DO UPDATE SET enabled=true,permissions=EXCLUDED.permissions,updated_by=EXCLUDED.updated_by,updated_at=now(),reason=EXCLUDED.reason`,[emp,JSON.stringify([...new Set(perms)]),updatedBy,reason||'Mirrored authoritative access']);
  return {base,extras:clean,permissions:[...new Set(perms)]};
 }
@@ -1813,55 +1813,38 @@ async function sendAccessChangeFeedback(adminWa,emp){
 }
 async function runtimeAccessSnapshot(employeeNumber){
  const emp=String(employeeNumber||'').trim(); if(!emp)return null;
- // V7.7.45 SINGLE AUTHORITY: user_effective_access is authoritative whenever it exists.
- // Legacy user_access_override is consulted only if the authoritative row does not yet exist.
- const n=(await pool.query(`SELECT base_profile,extras,updated_by,updated_at FROM user_effective_access WHERE employee_number=$1 LIMIT 1`,[emp])).rows[0];
- if(n){
-   const extras=Array.isArray(n.extras)?n.extras.map(x=>String(x).toUpperCase()):[];
-   const base=String(n.base_profile||'VIEW').toUpperCase();
-   const codes=new Set(extras);
-   if(base==='FULL_ACCESS')codes.add('FULL_ACCESS');
-   else if(base==='EDIT'){codes.add('VIEW');codes.add('ENTRY');codes.add('EDIT');}
-   else codes.add('VIEW');
-   return {manual:true,base,codes:[...codes],updated_by:n.updated_by,updated_at:n.updated_at,source:'AUTHORITATIVE_EFFECTIVE_ACCESS'};
- }
- const o=(await pool.query(`SELECT enabled,permissions,updated_by,updated_at FROM user_access_override WHERE employee_number=$1 LIMIT 1`,[emp])).rows[0];
+ // V7.7.46: ONE runtime authority only: user_access_override.
+ // This table is written by the Super Admin access control and is read fresh on every protected action.
+ const o=(await pool.query(`SELECT enabled,permissions,updated_by,updated_at,reason FROM user_access_override WHERE employee_number=$1 LIMIT 1`,[emp])).rows[0];
  if(!(o?.enabled===true))return null;
  const arr=Array.isArray(o.permissions)?o.permissions.map(x=>String(x).toUpperCase()):[];
  const set=new Set(arr);
  const base=set.has('FULL_ACCESS')?'FULL_ACCESS':(set.has('EDIT')||set.has('ENTRY')?'EDIT':'VIEW');
- const extras=arr.filter(x=>!['FULL_ACCESS','VIEW','EDIT','ENTRY'].includes(x));
- await saveAuthoritativeAccess(emp,base,extras,o.updated_by||'SYSTEM','One-time legacy access migration V7.7.44');
- return runtimeAccessSnapshot(emp);
+ // Full Access is a bundle, not merely a label.
+ if(base==='FULL_ACCESS') ['FULL_ACCESS','VIEW','ENTRY','EDIT','PRINT_EXPORT','PDF_REPORT','ANALYSIS','REPORTS','ADVANCED_REPORTS','RCM','DELETE_UNDO','APPROVAL'].forEach(x=>set.add(x));
+ else if(base==='EDIT'){set.add('VIEW');set.add('ENTRY');set.add('EDIT');set.delete('FULL_ACCESS');}
+ else {set.add('VIEW');set.delete('FULL_ACCESS');set.delete('EDIT');set.delete('ENTRY');}
+ return {manual:true,base,codes:[...set],updated_by:o.updated_by,updated_at:o.updated_at,source:'USER_ACCESS_OVERRIDE'};
 }
 async function searchPermissions(u){
  const emp=String(u?.employee_number||'').trim();
  const deny={owner:false,full:false,scope:null,view:false,edit:false,entry:false,more:false,date:false,analysis:false,reports:false,repeat:false,jobs:false,history:false,mtbf:false,performance:false,pm:false,cbm:false,delay:false,pdf:false,rcm:false,override:false,permissionSource:'DENY'};
  if(!emp)return deny;
  const [a,scope,snap]=await Promise.all([effectiveAuthority(emp),effectiveSearchScope(u),runtimeAccessSnapshot(emp)]);
- let effective=new Set(), source='REGISTRATION_SAFE_BASELINE', base='VIEW';
- if(snap?.manual){
-   effective=new Set((snap.codes||[]).map(x=>String(x).toUpperCase()));
-   source=snap.source||'AUTHORITATIVE_SNAPSHOT'; base=String(snap.base||'VIEW').toUpperCase();
- }else{
-   // V7.7.43 SAFE FALLBACK: registration/hierarchy may provide ordinary VIEW/ENTRY only.
-   // Advanced capabilities are NEVER inherited from stale/legacy permission rows.
-   const defs=new Set((a?.default_permissions||[]).map(x=>String(x.permission||'').toUpperCase()));
+ let effective=new Set(),source='REGISTRATION_SAFE_BASELINE',base='VIEW';
+ if(snap?.manual){ effective=new Set(snap.codes); base=snap.base; source=snap.source; }
+ else {
    effective.add('VIEW');
+   const defs=new Set((a?.default_permissions||[]).map(x=>String(x.permission||'').toUpperCase()));
    if(defs.has('ENTRY')||defs.has('EDIT')){effective.add('ENTRY');effective.add('EDIT');base='EDIT';}
-   // Management fallback applies ONLY when there is no explicit Super Admin snapshot.
-   // Owner phone, explicit authority role, or a hierarchy result of FULL may receive the baseline.
-   // Once a manual snapshot exists, that snapshot always wins (including an intentional downgrade).
    const role=String(a?.operational_role||u?.operational_role||'NORMAL_USER').toUpperCase();
    const ownerPhone=isOwner(u?.whatsapp_number);
    const hierarchyFull=String(a?.effective_access||'').toUpperCase()==='FULL';
-   const hierarchyRole=String(a?.responsibility||'').toUpperCase();
-   if(ownerPhone || hierarchyFull || ['DGM','HOD','SUPER_ADMIN','OWNER'].includes(role) || ['DGM','HOD','SUPER ADMIN','SUPER_ADMIN','OWNER'].includes(hierarchyRole)){
-     ['FULL_ACCESS','ANALYSIS','REPORTS','PRINT_EXPORT','ADVANCED_REPORTS','RCM'].forEach(x=>effective.add(x)); base='FULL_ACCESS'; source=ownerPhone?'OWNER_BASELINE':'CURRENT_HIERARCHY_BASELINE';
+   if(ownerPhone||hierarchyFull||['DGM','HOD','SUPER_ADMIN','OWNER'].includes(role)){
+     base='FULL_ACCESS'; ['FULL_ACCESS','VIEW','ENTRY','EDIT','PRINT_EXPORT','PDF_REPORT','ANALYSIS','REPORTS','ADVANCED_REPORTS','RCM','DELETE_UNDO','APPROVAL'].forEach(x=>effective.add(x)); source=ownerPhone?'OWNER_BASELINE':'CURRENT_HIERARCHY_BASELINE';
    }
  }
- const manual=!!snap?.manual;
- const full=base==='FULL_ACCESS' || effective.has('FULL_ACCESS');
+ const full=base==='FULL_ACCESS'||effective.has('FULL_ACCESS');
  const canEdit=full||base==='EDIT'||effective.has('EDIT')||effective.has('ENTRY');
  const canView=full||canEdit||effective.has('VIEW');
  const advanced=full||effective.has('ANALYSIS')||effective.has('ADVANCED_REPORTS');
@@ -1869,8 +1852,8 @@ async function searchPermissions(u){
  const js=new Set((scope?.jobScopes||[]).map(x=>String(x).toUpperCase()));
  const unrestricted=full||!js.size||js.has('ALL')||js.has('NOT ASSIGNED');
  const jobAllowed=(...names)=>unrestricted||names.some(n=>js.has(n));
- const out={owner:false,full,scope,override:manual,permissionSource:source,view:canView,edit:canEdit,entry:canEdit,more:canView,date:canView,analysis:advanced,reports,repeat:advanced&&jobAllowed('DEFECTS','JOBS','HISTORY'),jobs:canView&&jobAllowed('JOBS','HISTORY'),history:canView&&jobAllowed('HISTORY','JOBS','DEFECTS'),mtbf:advanced,performance:advanced&&jobAllowed('DEFECTS','JOBS','HISTORY','PM','INSPECTION_CBM','BREAKDOWN'),pm:canView&&jobAllowed('PM'),cbm:canView&&jobAllowed('INSPECTION_CBM'),delay:advanced&&jobAllowed('BREAKDOWN'),pdf:full||effective.has('PRINT_EXPORT')||effective.has('PDF_REPORT')||effective.has('ADVANCED_REPORTS'),rcm:full||effective.has('RCM')};
- console.log('[RUNTIME ACCESS V7.7.45]',emp,'source=',source,'base=',base,'codes=',[...effective].sort().join(','),'view=',out.view,'edit=',out.edit,'analysis=',out.analysis,'reports=',out.reports,'pdf=',out.pdf,'rcm=',out.rcm);
+ const out={owner:false,full,scope,override:!!snap?.manual,permissionSource:source,view:canView,edit:canEdit,entry:canEdit,more:canView,date:canView,analysis:advanced,reports,repeat:advanced&&jobAllowed('DEFECTS','JOBS','HISTORY'),jobs:canView&&jobAllowed('JOBS','HISTORY'),history:canView&&jobAllowed('HISTORY','JOBS','DEFECTS'),mtbf:advanced,performance:advanced&&jobAllowed('DEFECTS','JOBS','HISTORY','PM','INSPECTION_CBM','BREAKDOWN'),pm:canView&&jobAllowed('PM'),cbm:canView&&jobAllowed('INSPECTION_CBM'),delay:advanced&&jobAllowed('BREAKDOWN'),pdf:full||effective.has('PRINT_EXPORT')||effective.has('PDF_REPORT')||effective.has('ADVANCED_REPORTS'),rcm:full||effective.has('RCM')};
+ console.log('[RUNTIME ACCESS V7.7.46]',emp,'source=',source,'base=',base,'codes=',[...effective].sort().join(','),'view=',out.view,'edit=',out.edit,'analysis=',out.analysis,'reports=',out.reports,'pdf=',out.pdf,'rcm=',out.rcm);
  return out;
 }
 async function primarySearchButtons(u,hasMore=true){
@@ -2728,17 +2711,14 @@ async function requireSuperAdmin(to){if(!isSuperAdminWA(to)){await sendText(to,'
 async function findAdminEmployees(term){return employeeSearch(term);}
 async function employeeGovernanceSummary(emp){
  const u=await byEmp(emp),a=await effectiveAuthority(emp); if(!u||!a)return null;
- const sc=await effectiveSearchScope(u);
- // Show the same permission source that runtime authorization uses. Legacy special-permission rows
- // are retained only for compatibility/audit; once an override exists they must never be displayed
- // as the employee's current manual access.
- const __snap=await authoritativeAccessState(emp); const runtimePerms=__snap?.manual?__snap.codes:((a.has_access_override?a.override_permissions:a.special_permissions)||[]);
- const perms=runtimePerms.map(accessLabel).join(', ')||'None';
- const auth=(a.authority_grants||[]).join(', ')||'None';
+ const sc=await effectiveSearchScope(u), snap=await runtimeAccessSnapshot(emp), p=await searchPermissions(u);
+ const inherited=(a.default_permissions||[]).map(x=>accessLabel(x.permission)).join(', ')||'None';
  const roles=(a.responsibilities||[]).map(x=>x.responsibility_role).filter(Boolean).join(', ')||u.responsibility||'Normal Employee';
  const jobs=(sc.jobScopes||[]).join(', ')||'ALL';
- const inherited=(a.default_permissions||[]).map(x=>accessLabel(x.permission)).join(', ')||'None';
- return `Employee Control\n${u.name} / ${emp}\nDesignation: ${u.designation}\nDepartment/Section: ${u.section_department}\nRegistered Area: ${u.area_of_working}\nOperational Role: ${String(a.operational_role||'NORMAL_USER').replaceAll('_',' ')}\nResponsibility: ${roles}\n\nDefault / Inherited Access: ${inherited}\nDefault Source: Registration + approved hierarchy\nEffective Access Level: ${String(a.effective_access).replaceAll('_',' + ')}\nAuthority Scope: ${String(a.scope).replaceAll('_',' ')}\nEffective Area(s): ${sc.plantWide?'ALL':(sc.areas||[]).join(', ')||'Registered'}\nJob Scope: ${jobs}\nAccess Override: ${a.has_access_override?'YES — Super Admin selection':'NO — hierarchy defaults'}\nManual Override Access: ${perms}\nAuthority Grants: ${auth}`;
+ const base=snap?.base|| (p.full?'FULL_ACCESS':p.edit?'EDIT':'VIEW');
+ const label=base==='FULL_ACCESS'?'FULL ACCESS':base==='EDIT'?'VIEW + EDIT / ENTRY':'VIEW ONLY';
+ const source=snap?.manual?'SUPER ADMIN OVERRIDE':'REGISTRATION / HIERARCHY';
+ return `Employee Control\n${u.name} / ${emp}\nDesignation: ${u.designation}\nDepartment/Section: ${u.section_department}\nRegistered Area: ${u.area_of_working}\nOperational Role: ${String(a.operational_role||'NORMAL_USER').replaceAll('_',' ')}\nResponsibility: ${roles}\n\nDefault / Inherited Access: ${inherited}\nCurrent Effective Access: ${label}\nAccess Source: ${source}\nEffective Area(s): ${sc.plantWide?'ALL':(sc.areas||[]).join(', ')||'Registered'}\nJob Scope: ${jobs}\n\nRuntime Permissions\nView: ${p.view?'YES':'NO'} • Edit/Entry: ${p.edit?'YES':'NO'}\nPDF/Print: ${p.pdf?'YES':'NO'} • Analysis: ${p.analysis?'YES':'NO'}\nReports: ${p.reports?'YES':'NO'} • RCM: ${p.rcm?'YES':'NO'}`;
 }
 async function sendAccessAdminMenu(to,emp){
  if(!await requireSuperAdmin(to))return;
@@ -2882,7 +2862,7 @@ async function applyBaseAccessProfileDirect(from,emp,profile){
  if(!await requireSuperAdmin(from))return;
  const p=String(profile||'').toUpperCase();
  let permissions=[];
- if(p==='FULL_ACCESS') permissions=['FULL_ACCESS'];
+ if(p==='FULL_ACCESS') permissions=['FULL_ACCESS','VIEW','ENTRY','EDIT','PRINT_EXPORT','PDF_REPORT','ANALYSIS','REPORTS','ADVANCED_REPORTS','RCM','DELETE_UNDO','APPROVAL'];
  else if(p==='EDIT') permissions=['EDIT','ENTRY','VIEW'];
  else if(p==='VIEW') permissions=['VIEW'];
  else { await sendText(from,'Invalid access profile.'); return; }
