@@ -1801,27 +1801,26 @@ async function sendAccessChangeFeedback(adminWa,emp){
 }
 async function runtimeAccessSnapshot(employeeNumber){
  const emp=String(employeeNumber||'').trim(); if(!emp)return null;
- // Read BOTH generations of the access store and use the newest explicit Super Admin decision.
- // This prevents an older FULL_ACCESS row from surviving a later downgrade.
- const [nq,oq]=await Promise.all([
-   pool.query(`SELECT base_profile,extras,updated_by,updated_at FROM user_effective_access WHERE employee_number=$1 LIMIT 1`,[emp]),
-   pool.query(`SELECT enabled,permissions,updated_by,updated_at FROM user_access_override WHERE employee_number=$1 LIMIT 1`,[emp])
- ]);
- const n=nq.rows[0], o=oq.rows[0];
- const nt=n?.updated_at?new Date(n.updated_at).getTime():0, ot=(o?.enabled===true&&o?.updated_at)?new Date(o.updated_at).getTime():0;
- if(!n && !(o?.enabled===true))return null;
- if(o?.enabled===true && ot>=nt){
-   const arr=Array.isArray(o.permissions)?o.permissions.map(x=>String(x).toUpperCase()):[];
-   const set=new Set(arr);
-   const base=set.has('FULL_ACCESS')?'FULL_ACCESS':(set.has('EDIT')||set.has('ENTRY')?'EDIT':'VIEW');
-   const extras=arr.filter(x=>!['FULL_ACCESS','VIEW','EDIT','ENTRY'].includes(x));
-   const codes=new Set(extras); if(base==='FULL_ACCESS')codes.add('FULL_ACCESS'); else if(base==='EDIT'){codes.add('VIEW');codes.add('ENTRY');codes.add('EDIT');} else codes.add('VIEW');
-   return {manual:true,base,codes:[...codes],updated_by:o.updated_by,updated_at:o.updated_at,source:'OVERRIDE_NEWEST'};
+ // V7.7.44 SINGLE SOURCE: user_effective_access is authoritative whenever it exists.
+ // Legacy user_access_override is consulted only if the authoritative row does not yet exist.
+ const n=(await pool.query(`SELECT base_profile,extras,updated_by,updated_at FROM user_effective_access WHERE employee_number=$1 LIMIT 1`,[emp])).rows[0];
+ if(n){
+   const extras=Array.isArray(n.extras)?n.extras.map(x=>String(x).toUpperCase()):[];
+   const base=String(n.base_profile||'VIEW').toUpperCase();
+   const codes=new Set(extras);
+   if(base==='FULL_ACCESS')codes.add('FULL_ACCESS');
+   else if(base==='EDIT'){codes.add('VIEW');codes.add('ENTRY');codes.add('EDIT');}
+   else codes.add('VIEW');
+   return {manual:true,base,codes:[...codes],updated_by:n.updated_by,updated_at:n.updated_at,source:'AUTHORITATIVE_EFFECTIVE_ACCESS'};
  }
- const extras=Array.isArray(n?.extras)?n.extras.map(x=>String(x).toUpperCase()):[];
- const base=String(n?.base_profile||'VIEW').toUpperCase();
- const codes=new Set(extras); if(base==='FULL_ACCESS')codes.add('FULL_ACCESS'); else if(base==='EDIT'){codes.add('VIEW');codes.add('ENTRY');codes.add('EDIT');} else codes.add('VIEW');
- return {manual:true,base,codes:[...codes],updated_by:n?.updated_by,updated_at:n?.updated_at,source:'EFFECTIVE_NEWEST'};
+ const o=(await pool.query(`SELECT enabled,permissions,updated_by,updated_at FROM user_access_override WHERE employee_number=$1 LIMIT 1`,[emp])).rows[0];
+ if(!(o?.enabled===true))return null;
+ const arr=Array.isArray(o.permissions)?o.permissions.map(x=>String(x).toUpperCase()):[];
+ const set=new Set(arr);
+ const base=set.has('FULL_ACCESS')?'FULL_ACCESS':(set.has('EDIT')||set.has('ENTRY')?'EDIT':'VIEW');
+ const extras=arr.filter(x=>!['FULL_ACCESS','VIEW','EDIT','ENTRY'].includes(x));
+ await saveAuthoritativeAccess(emp,base,extras,o.updated_by||'SYSTEM','One-time legacy access migration V7.7.44');
+ return runtimeAccessSnapshot(emp);
 }
 async function searchPermissions(u){
  const emp=String(u?.employee_number||'').trim();
@@ -1838,10 +1837,15 @@ async function searchPermissions(u){
    const defs=new Set((a?.default_permissions||[]).map(x=>String(x.permission||'').toUpperCase()));
    effective.add('VIEW');
    if(defs.has('ENTRY')||defs.has('EDIT')){effective.add('ENTRY');effective.add('EDIT');base='EDIT';}
-   // Only an explicit current operational role may create management defaults when no manual snapshot exists.
+   // Management fallback applies ONLY when there is no explicit Super Admin snapshot.
+   // Owner phone, explicit authority role, or a hierarchy result of FULL may receive the baseline.
+   // Once a manual snapshot exists, that snapshot always wins (including an intentional downgrade).
    const role=String(a?.operational_role||u?.operational_role||'NORMAL_USER').toUpperCase();
-   if(['DGM','HOD','SUPER_ADMIN'].includes(role)){
-     ['FULL_ACCESS','ANALYSIS','REPORTS','PRINT_EXPORT','ADVANCED_REPORTS','RCM'].forEach(x=>effective.add(x)); base='FULL_ACCESS'; source='CURRENT_ROLE_BASELINE';
+   const ownerPhone=isOwner(u?.whatsapp_number);
+   const hierarchyFull=String(a?.effective_access||'').toUpperCase()==='FULL';
+   const hierarchyRole=String(a?.responsibility||'').toUpperCase();
+   if(ownerPhone || hierarchyFull || ['DGM','HOD','SUPER_ADMIN','OWNER'].includes(role) || ['DGM','HOD','SUPER ADMIN','SUPER_ADMIN','OWNER'].includes(hierarchyRole)){
+     ['FULL_ACCESS','ANALYSIS','REPORTS','PRINT_EXPORT','ADVANCED_REPORTS','RCM'].forEach(x=>effective.add(x)); base='FULL_ACCESS'; source=ownerPhone?'OWNER_BASELINE':'CURRENT_HIERARCHY_BASELINE';
    }
  }
  const manual=!!snap?.manual;
@@ -1854,7 +1858,7 @@ async function searchPermissions(u){
  const unrestricted=full||!js.size||js.has('ALL')||js.has('NOT ASSIGNED');
  const jobAllowed=(...names)=>unrestricted||names.some(n=>js.has(n));
  const out={owner:false,full,scope,override:manual,permissionSource:source,view:canView,edit:canEdit,entry:canEdit,more:canView,date:canView,analysis:advanced,reports,repeat:advanced&&jobAllowed('DEFECTS','JOBS','HISTORY'),jobs:canView&&jobAllowed('JOBS','HISTORY'),history:canView&&jobAllowed('HISTORY','JOBS','DEFECTS'),mtbf:advanced,performance:advanced&&jobAllowed('DEFECTS','JOBS','HISTORY','PM','INSPECTION_CBM','BREAKDOWN'),pm:canView&&jobAllowed('PM'),cbm:canView&&jobAllowed('INSPECTION_CBM'),delay:advanced&&jobAllowed('BREAKDOWN'),pdf:full||effective.has('PRINT_EXPORT')||effective.has('PDF_REPORT')||effective.has('ADVANCED_REPORTS'),rcm:full||effective.has('RCM')};
- console.log('[RUNTIME ACCESS V7.7.43]',emp,'source=',source,'base=',base,'codes=',[...effective].sort().join(','),'view=',out.view,'edit=',out.edit,'analysis=',out.analysis,'reports=',out.reports,'pdf=',out.pdf,'rcm=',out.rcm);
+ console.log('[RUNTIME ACCESS V7.7.44]',emp,'source=',source,'base=',base,'codes=',[...effective].sort().join(','),'view=',out.view,'edit=',out.edit,'analysis=',out.analysis,'reports=',out.reports,'pdf=',out.pdf,'rcm=',out.rcm);
  return out;
 }
 async function primarySearchButtons(u,hasMore=true){
