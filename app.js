@@ -1,4 +1,4 @@
-// V7.7.28 ACCESS AUTHORITY CONSOLIDATED
+// V7.7.36 AUTHORITATIVE RUNTIME PERMISSION GATE
 import express from 'express';
 import 'dotenv/config';
 import pg from 'pg';
@@ -1725,19 +1725,23 @@ function areaMatchesScope(area,scope,equipment=''){
  return scope.areas.some(x=>scopeAreaMatches(x,area,equipment));
 }
 async function searchPermissions(u){
- const a=await effectiveAuthority(u.employee_number);
- const legacyPs=new Set((a?.special_permissions||[]).map(x=>String(x).toUpperCase()));
- const override=!!a?.has_access_override;
- // Once Super Admin applies a profile, this snapshot is the ONLY feature-right source.
- const ps=new Set((override?(a?.override_permissions||[]):[...legacyPs]).map(x=>String(x).toUpperCase()));
- // Owner/Super Admin is determined from the approved user's WhatsApp number and always has full controls.
+ // V7.7.36: runtime authorization reads the authoritative override DIRECTLY from PostgreSQL.
+ // Never depend on cached UI/search state or legacy special-permission rows after an override exists.
+ const emp=String(u?.employee_number||'').trim();
+ if(!emp) return {owner:false,full:false,scope:null,view:false,edit:false,entry:false,more:false,date:false,analysis:false,reports:false,repeat:false,jobs:false,history:false,mtbf:false,performance:false,pm:false,cbm:false,delay:false,pdf:false,rcm:false};
+ const a=await effectiveAuthority(emp);
  const owner=isOwner(u?.whatsapp_number);
  const scope=await effectiveSearchScope(u);
+ const oq=await pool.query(`SELECT enabled,permissions,updated_at FROM user_access_override WHERE employee_number=$1 LIMIT 1`,[emp]);
+ const ov=oq.rows[0]||null;
+ const override=ov?.enabled===true;
+ const overrideCodes=override && Array.isArray(ov.permissions) ? ov.permissions.map(x=>String(x).toUpperCase()) : [];
  const inherited=new Set((a?.default_permissions||[]).map(x=>String(x.permission||'').toUpperCase()));
- const effective=override?new Set([...ps]):new Set([...inherited,...ps]);
- // IMPORTANT: when override=true, hierarchy/default permissions are intentionally ignored.
- // A Super Admin downgrade therefore removes inherited FULL/REPORT/PDF/ANALYSIS capabilities immediately.
- const full=owner || effective.has('FULL_ACCESS') || effective.has('SUPER_ADMIN') || effective.has('OWNER');
+ const legacy=new Set((a?.special_permissions||[]).map(x=>String(x).toUpperCase()));
+ const effective=override ? new Set(overrideCodes) : new Set([...inherited,...legacy]);
+ // Only the configured owner number bypasses employee overrides. No designation/role can silently
+ // restore FULL_ACCESS once Super Admin has explicitly downgraded this employee.
+ const full=owner || effective.has('FULL_ACCESS') || (!override && (effective.has('SUPER_ADMIN')||effective.has('OWNER')));
  const canEdit=full || effective.has('EDIT') || effective.has('ENTRY');
  const canView=full || canEdit || effective.has('VIEW');
  const advanced=full || effective.has('ANALYSIS') || effective.has('ADVANCED_REPORTS');
@@ -1745,26 +1749,19 @@ async function searchPermissions(u){
  const js=new Set((scope?.jobScopes||[]).map(x=>String(x).toUpperCase()));
  const unrestricted=full || !js.size || js.has('ALL') || js.has('NOT ASSIGNED');
  const jobAllowed=(...names)=>unrestricted || names.some(n=>js.has(n));
- return {
-   owner, full, scope,
-   view: canView,
-   edit: canEdit,
-   entry: canEdit,
-   more: canView,
-   date: canView,
-   analysis: advanced,
-   reports,
-   repeat: advanced && jobAllowed('DEFECTS','JOBS','HISTORY'),
-   jobs: canView && jobAllowed('JOBS','HISTORY'),
-   history: canView && jobAllowed('HISTORY','JOBS','DEFECTS'),
-   mtbf: advanced,
-   performance: advanced && jobAllowed('DEFECTS','JOBS','HISTORY','PM','INSPECTION_CBM','BREAKDOWN'),
-   pm: canView && jobAllowed('PM'),
-   cbm: canView && jobAllowed('INSPECTION_CBM'),
-   delay: advanced && jobAllowed('BREAKDOWN'),
-   pdf: full || effective.has('PRINT_EXPORT') || effective.has('PDF_REPORT') || effective.has('ADVANCED_REPORTS'),
-   rcm: full || effective.has('RCM')
+ const out={
+   owner,full,scope,override,permissionSource:override?'AUTHORITATIVE_OVERRIDE':'REGISTRATION_HIERARCHY',
+   view:canView,edit:canEdit,entry:canEdit,more:canView,date:canView,
+   analysis:advanced,reports,
+   repeat:advanced&&jobAllowed('DEFECTS','JOBS','HISTORY'),
+   jobs:canView&&jobAllowed('JOBS','HISTORY'),history:canView&&jobAllowed('HISTORY','JOBS','DEFECTS'),
+   mtbf:advanced,performance:advanced&&jobAllowed('DEFECTS','JOBS','HISTORY','PM','INSPECTION_CBM','BREAKDOWN'),
+   pm:canView&&jobAllowed('PM'),cbm:canView&&jobAllowed('INSPECTION_CBM'),delay:advanced&&jobAllowed('BREAKDOWN'),
+   pdf:full||effective.has('PRINT_EXPORT')||effective.has('PDF_REPORT')||effective.has('ADVANCED_REPORTS'),
+   rcm:full||effective.has('RCM')
  };
+ console.log('[RUNTIME ACCESS]',emp,out.permissionSource,[...effective].sort().join(','),'view=',out.view,'edit=',out.edit,'analysis=',out.analysis,'pdf=',out.pdf,'rcm=',out.rcm);
+ return out;
 }
 async function primarySearchButtons(u,hasMore=true){
  const perms=await searchPermissions(u);
@@ -2622,7 +2619,11 @@ async function findAdminEmployees(term){return employeeSearch(term);}
 async function employeeGovernanceSummary(emp){
  const u=await byEmp(emp),a=await effectiveAuthority(emp); if(!u||!a)return null;
  const sc=await effectiveSearchScope(u);
- const perms=(a.special_permissions||[]).join(', ')||'None';
+ // Show the same permission source that runtime authorization uses. Legacy special-permission rows
+ // are retained only for compatibility/audit; once an override exists they must never be displayed
+ // as the employee's current manual access.
+ const runtimePerms=(a.has_access_override?a.override_permissions:a.special_permissions)||[];
+ const perms=runtimePerms.map(accessLabel).join(', ')||'None';
  const auth=(a.authority_grants||[]).join(', ')||'None';
  const roles=(a.responsibilities||[]).map(x=>x.responsibility_role).filter(Boolean).join(', ')||u.responsibility||'Normal Employee';
  const jobs=(sc.jobScopes||[]).join(', ')||'ALL';
@@ -2760,12 +2761,50 @@ async function stageAdminOption(from,key,emp,code,sendFn){
    else if(c==='EDIT'){ set.clear(); set.add('EDIT'); set.add('ENTRY'); set.add('VIEW'); }
    else { if(set.has(c))set.delete(c); else set.add(c); }
    await selectionReset(from,key,emp,[...set],st.context);
-   // V7.7.33: base access profile changes apply immediately. No second Apply tap required.
-   // Optional capabilities (Reports/PDF/Analysis/etc.) remain multi-select and use Apply Selection.
-   if(['FULL_ACCESS','VIEW','EDIT'].includes(c)){ await applyAccessSelection(from,emp); return; }
+   // V7.7.35: base profile is written DIRECTLY as an authoritative DB snapshot.
+   // Do not depend on staged selection state for a downgrade: this prevents an old FULL_ACCESS
+   // row/session/default from surviving when Super Admin selects View or View + Edit.
+   if(['FULL_ACCESS','VIEW','EDIT'].includes(c)){ await applyBaseAccessProfileDirect(from,emp,c); return; }
  } else await selectionToggle(from,key,emp,code,[]);
  await sendFn(from,emp);
 }
+async function applyBaseAccessProfileDirect(from,emp,profile){
+ if(!await requireSuperAdmin(from))return;
+ const p=String(profile||'').toUpperCase();
+ let permissions=[];
+ if(p==='FULL_ACCESS') permissions=['FULL_ACCESS'];
+ else if(p==='EDIT') permissions=['EDIT','ENTRY','VIEW'];
+ else if(p==='VIEW') permissions=['VIEW'];
+ else { await sendText(from,'Invalid access profile.'); return; }
+ const client=await pool.connect();
+ try{
+  await client.query('BEGIN');
+  // Manual override is a replacement, never an additive grant.
+  await client.query(`INSERT INTO user_access_override(employee_number,enabled,permissions,updated_by,updated_at,reason)
+    VALUES($1,true,$2::jsonb,$3,now(),$4)
+    ON CONFLICT(employee_number) DO UPDATE SET enabled=true,permissions=EXCLUDED.permissions,updated_by=EXCLUDED.updated_by,updated_at=now(),reason=EXCLUDED.reason`,
+    [emp,JSON.stringify(permissions),from,'Super Admin direct authoritative base profile']);
+  // Kill every old special permission first, including stale FULL_ACCESS/PDF/Analysis rights.
+  await client.query(`UPDATE user_special_permissions SET active=false,granted_by=$2,reason=$3,updated_at=now() WHERE employee_number=$1`,
+    [emp,from,'Replaced by Super Admin direct authoritative base profile']);
+  for(const code of permissions){
+   await client.query(`INSERT INTO user_special_permissions(employee_number,permission,active,granted_by,reason,updated_at)
+    VALUES($1,$2,true,$3,$4,now())
+    ON CONFLICT(employee_number,permission) DO UPDATE SET active=true,granted_by=EXCLUDED.granted_by,granted_at=now(),reason=EXCLUDED.reason,updated_at=now()`,
+    [emp,code,from,'Super Admin direct authoritative base profile']);
+  }
+  await client.query(`INSERT INTO authority_audit(employee_number,action,performed_by,details) VALUES($1,'SET_AUTHORITATIVE_BASE_PROFILE',$2,$3::jsonb)`,
+    [emp,from,JSON.stringify({profile:p,permissions,mode:'DIRECT_AUTHORITATIVE_V3'})]);
+  await client.query('COMMIT');
+ }catch(e){ await client.query('ROLLBACK'); throw e; }finally{ client.release(); }
+ await selectionClear(from,'ADMIN_ACCESS',emp).catch(()=>{});
+ await pool.query(`DELETE FROM search_context WHERE employee_number=$1`,[emp]).catch(()=>{});
+ await pool.query(`DELETE FROM pending_search_choices WHERE employee_number=$1`,[emp]).catch(()=>{});
+ const verified=await effectiveAuthority(emp);
+ console.log('[ACCESS DIRECT VERIFIED]',emp,'override=',verified?.has_access_override,'effective=',verified?.effective_access,'permissions=',JSON.stringify(verified?.override_permissions||[]));
+ await sendAccessAdminMenu(from,emp);
+}
+
 async function applyAccessSelection(from,emp){
  if(!await requireSuperAdmin(from))return;
  const st=await selectionGet(from,'ADMIN_ACCESS',emp,[]),sel=new Set(st.selected.map(x=>String(x).toUpperCase()));
@@ -2798,6 +2837,10 @@ async function applyAccessSelection(from,emp){
   await client.query('COMMIT');
  }catch(e){await client.query('ROLLBACK');throw e;}finally{client.release();}
  await selectionClear(from,'ADMIN_ACCESS',emp);
+ // Access changes are effective immediately. Remove stale search/ambiguity context so an old
+ // Full-Access session cannot continue with cached report/search controls after a downgrade.
+ await pool.query(`DELETE FROM search_context WHERE employee_number=$1`,[emp]).catch(()=>{});
+ await pool.query(`DELETE FROM pending_search_choices WHERE employee_number=$1`,[emp]).catch(()=>{});
  // Re-read from PostgreSQL after commit; never trust staged/UI state as authorization state.
  const verified=await effectiveAuthority(emp); const active=new Set(((verified?.has_access_override?verified?.override_permissions:verified?.special_permissions)||[]).map(x=>String(x).toUpperCase()));
  console.log('[ACCESS APPLY VERIFIED]',emp,[...active].sort().join(','));
@@ -3177,7 +3220,9 @@ async function processMessage(from, text, rawMessage = null) {
   // V7.7.23 routing guard: governance commands are private to Super Admin /
   // authorised admin routing. Never let a non-admin ACCESS command fall
   // through into employee/equipment/maintenance search. Silent by design.
-  if (/^(?:ACCESS(?:\s+CONTROL)?|USER\s+CONTROL)(?:\b|:|_)/i.test(clean)) {
+  if (/^(?:ACCESS(?:\s+CONTROL)?|USER(?:\s+CONTROL)?)(?=\s|:|_|$)/i.test(clean)) {
+    // Never interpret an access/governance phrase as maintenance knowledge or an event.
+    // Admins were already handled above by ownerCommand(); everyone else stops here.
     return;
   }
 
@@ -3618,16 +3663,8 @@ async function processMessage(from, text, rawMessage = null) {
       if(us?.text){
         if(us.buttons?.length) await sendSearchTextAndButtons(from,us.text,us.buttons);
         else await sendLongText(from,us.text);
-        // Print-access UX: an initial structured equipment/module search returns the WhatsApp list first,
-        // then automatically creates the printable A4 report for the same active filters.
-        // Do not auto-regenerate on More, date-menu commands, Analysis, or no-data responses.
-        try{
-          const p=await searchPermissions(u), c=await getSearchContext(u);
-          const isControl=/^(more|next|search_more|analysis|search_analysis|select data|search_data_menu|date range|search_date)$/i.test(clean);
-          if(p.pdf && us.status==='OK' && c?.equipment_name && c?.module && Number(c.page_offset||0)===0 && !isControl){
-            await sendCurrentMaintenancePdf(from,u);
-          }
-        }catch(pe){console.error('[AUTO PRINT PDF]',pe);}
+        // Reports/PDF are never auto-generated from a normal search. They require an explicit
+        // authorised user action, and sendCurrentMaintenancePdf() re-checks current DB permissions.
         return;
       }
       const kq=us?.knowledgeQuery||clean;
