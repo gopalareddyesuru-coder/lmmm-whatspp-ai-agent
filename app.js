@@ -2354,6 +2354,44 @@ async function analysisAction(q,u){
  if(action==='rcm')return {text:`${eq}${period}\nRCM Analysis requires linked failure modes, consequences, existing tasks and historical evidence. The bot will not generate an unsupported RCM conclusion from defect counts alone.`};
  return null;
 }
+
+function familySearchSpec(entity=''){
+ const e=searchNorm(entity);
+ if(e==='furnace'||e==='furnaces'||e==='wbf')return {label:'Furnace',members:['WBF-1','WBF-2']};
+ if(e==='ecs')return {label:'ECS',members:['ECS-1','ECS-2']};
+ if(e==='caf')return {label:'CAF',members:['CAF-1','CAF-2']};
+ return null;
+}
+function rowPayloadText(r){return String(`${r?.record_text||''} ${JSON.stringify(r?.source_payload||{})}`);}
+function strictSelectedAssetRow(r,equipment){
+ if(!equipment)return true;
+ const eq=scopeKey(equipment), rowEq=scopeKey(r?.equipment||'');
+ if(rowEq===eq)return true;
+ // For sub-equipment/component searches, accept an explicit structured payload match, not a loose mention anywhere in a job.
+ const p=r?.source_payload||{};
+ const structured=[p.sub_equipment,p.subequipment,p.sub_equipment_name,p.equipment,p.equipment_name,p.asset,p.asset_name,p.component,p.component_name]
+   .filter(Boolean).map(scopeKey);
+ return structured.some(x=>x===eq);
+}
+async function conditionSearchForEquipment(equipment,u,dr=null){
+ const fake={equipment_name:equipment,date_from:dr?.from||null,date_to:dr?.to||null};
+ const rows=(await allAnalysisRows(fake,u,8000)).filter(isTrueCbmRow);
+ return rows.slice(0,20);
+}
+async function familyCombinedRows(spec,intent,u,dr=null,limit=20){
+ const scope=await effectiveSearchScope(u), out=[],seen=new Set();
+ for(const member of spec.members){
+   const iq=intent==='defect'?`${member} defects`:intent==='history'?`${member} history`:intent==='job_action'?`${member} jobs`:member;
+   const rows=await searchBundledMaster(iq,120,dr,0);
+   for(const r of rows){
+     if(!areaMatchesScope(r.area,scope,r.equipment))continue;
+     const rk=scopeKey(r.equipment||''); if(rk!==scopeKey(member))continue;
+     const k=`${r.uid||''}|${r.event_date||''}|${r.record_text||''}`; if(seen.has(k))continue;seen.add(k);out.push(r);
+   }
+ }
+ out.sort((a,b)=>String(b.event_date||'').localeCompare(String(a.event_date||''))||String(a.uid||'').localeCompare(String(b.uid||'')));
+ return out.slice(0,limit);
+}
 async function universalSearch(q,u){
  const rawOriginal=String(q||'').trim(); if(!rawOriginal)return null;
  const original=naturalSearchAliases(rawOriginal);
@@ -2386,6 +2424,14 @@ async function universalSearch(q,u){
  ctx=await getSearchContext(u); let entity=stripIntentWords(naturalSearchAliases(original)); const alias=await resolveAlias(entity); if(alias)entity=alias.equipment_name||alias.canonical_text;
  if(!entity && ctx?.equipment_name)entity=ctx.equipment_name;
  const intent=searchIntent(original);
+ const family=familySearchSpec(entity);
+ if(family){
+   const familyRows=await familyCombinedRows(family,intent,u,range,20);
+   const choices=family.members.map(name=>({name,area:null}));
+   await pool.query(`INSERT INTO pending_search_choices(employee_number,original_query,choices,created_at) VALUES($1,$2,$3,now()) ON CONFLICT(employee_number) DO UPDATE SET original_query=EXCLUDED.original_query,choices=EXCLUDED.choices,created_at=now()`,[u.employee_number,original,JSON.stringify(choices)]);
+   const body=familyRows.length?`${family.label} — ${intent==='defect'?'Defects':intent==='history'?'History':intent==='job_action'?'Jobs':'Maintenance'}\nShowing latest ${familyRows.length} across ${family.members.join(' + ')}\n\n${formatBundledResults(familyRows)}\n\nSelect equipment:\n${family.members.map((x,i)=>`${i+1}. ${x}`).join('\n')}`:`${family.label}\nSelect equipment:\n${family.members.map((x,i)=>`${i+1}. ${x}`).join('\n')}`;
+   return {text:body,buttons:family.members.map((x,i)=>({id:String(i+1),title:x}))};
+ }
  // A clearly new asset search must not inherit an old date filter accidentally. Date-only follow-ups keep context above.
  if(!range && entity && !/^(more|next|search_more|analysis|search_analysis)$/i.test(original)){
    await clearSearchDates(u); ctx=await getSearchContext(u);
@@ -2427,12 +2473,18 @@ async function universalSearch(q,u){
  }
  const equipment=candidates.length===1?candidates[0].name:(ctx?.equipment_name && !entity?ctx.equipment_name:null); if(equipment){await setSearchContext(u,equipment,candidates[0]?.area||ctx?.area||null);await setSearchFilters(u,{module:intent,offset:0,lastQuery:original});}
  ctx=await getSearchContext(u); const dr=range|| (ctx?.date_from?{from:String(ctx.date_from).slice(0,10),to:String(ctx.date_to||ctx.date_from).slice(0,10)}:null);
+ if(intent==='condition' && equipment){
+   const cbmRows=await conditionSearchForEquipment(equipment,u,dr);
+   return {text:cbmRows.length?`${equipment} — Vibration / CBM${dr?` | ${dr.from} to ${dr.to}`:''}\n\n${formatBundledResults(cbmRows)}`:`${equipment}\nNo actual vibration/CBM measurement records were found in the currently indexed data. Defect/job text is not substituted for vibration readings.`,buttons:await primarySearchButtons(u,cbmRows.length===20),status:'OK'};
+ }
  // Totals/trends need a time frame; do not silently calculate lifetime analytics.
  if(['production','delay','analysis','maintenance','condition'].includes(intent) && !dr && /\b(total|cumulative|mtbf|mtbr|mttr|performance|trend|schedule|scheduled|production|delay|delays)\b/i.test(original)) return {text:'Select a time frame first.\nToday | Last 7 days | Last 30 days | This month | Custom date range'};
  const limit=wantsOverall(original)?30:20;
  const liveEvents=(await eventSearch(original,u,equipment,dr)).filter(x=>usefulLiveEvent(x,original));
  const unscopedMasterRows=await searchBundledMaster(original,Math.max(limit,200),dr,0);
- let masterRows=unscopedMasterRows.filter(r=>areaMatchesScope(r.area,searchScope,r.equipment)).slice(0,limit); const perms=await searchPermissions(u);
+ let scopedMasterRows=unscopedMasterRows.filter(r=>areaMatchesScope(r.area,searchScope,r.equipment));
+ if(equipment && GENERIC_ASSET_WORDS.test(String(entity||''))) scopedMasterRows=scopedMasterRows.filter(r=>strictSelectedAssetRow(r,equipment));
+ let masterRows=scopedMasterRows.slice(0,limit); const perms=await searchPermissions(u);
  if(unscopedMasterRows.length && !masterRows.length && searchScope && !searchScope.plantWide){
    console.log('[SCOPE] OUT_OF_SCOPE records',{employee:u.employee_number,areas:searchScope?.areas,equipment,query:original,sample:unscopedMasterRows.slice(0,5).map(r=>({equipment:r.equipment,area:r.area}))});
    return {text:'Matching LMMM records exist, but they are outside your authorised work scope.',status:'OUT_OF_SCOPE'};
