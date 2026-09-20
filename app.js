@@ -1825,29 +1825,36 @@ async function runtimeAccessSnapshot(employeeNumber){
 }
 async function searchPermissions(u){
  const emp=String(u?.employee_number||'').trim();
- const deny={owner:false,full:false,scope:null,view:false,edit:false,entry:false,more:false,date:false,analysis:false,reports:false,repeat:false,jobs:false,history:false,mtbf:false,performance:false,pm:false,cbm:false,delay:false,pdf:false,rcm:false};
+ const deny={owner:false,full:false,scope:null,view:false,edit:false,entry:false,more:false,date:false,analysis:false,reports:false,repeat:false,jobs:false,history:false,mtbf:false,performance:false,pm:false,cbm:false,delay:false,pdf:false,rcm:false,override:false,permissionSource:'DENY'};
  if(!emp)return deny;
- const a=await effectiveAuthority(emp), owner=isOwner(u?.whatsapp_number), scope=await effectiveSearchScope(u);
- const snap=await runtimeAccessSnapshot(emp);
- let effective;
- if(snap?.manual) effective=new Set(snap.codes);
- else {
-   const inherited=new Set((a?.default_permissions||[]).map(x=>String(x.permission||'').toUpperCase()));
-   const legacy=new Set((a?.special_permissions||[]).map(x=>String(x).toUpperCase()));
-   effective=new Set([...inherited,...legacy]);
+ const [a,scope,snap]=await Promise.all([effectiveAuthority(emp),effectiveSearchScope(u),runtimeAccessSnapshot(emp)]);
+ let effective=new Set(), source='REGISTRATION_SAFE_BASELINE', base='VIEW';
+ if(snap?.manual){
+   effective=new Set((snap.codes||[]).map(x=>String(x).toUpperCase()));
+   source=snap.source||'AUTHORITATIVE_SNAPSHOT'; base=String(snap.base||'VIEW').toUpperCase();
+ }else{
+   // V7.7.43 SAFE FALLBACK: registration/hierarchy may provide ordinary VIEW/ENTRY only.
+   // Advanced capabilities are NEVER inherited from stale/legacy permission rows.
+   const defs=new Set((a?.default_permissions||[]).map(x=>String(x.permission||'').toUpperCase()));
+   effective.add('VIEW');
+   if(defs.has('ENTRY')||defs.has('EDIT')){effective.add('ENTRY');effective.add('EDIT');base='EDIT';}
+   // Only an explicit current operational role may create management defaults when no manual snapshot exists.
+   const role=String(a?.operational_role||u?.operational_role||'NORMAL_USER').toUpperCase();
+   if(['DGM','HOD','SUPER_ADMIN'].includes(role)){
+     ['FULL_ACCESS','ANALYSIS','REPORTS','PRINT_EXPORT','ADVANCED_REPORTS','RCM'].forEach(x=>effective.add(x)); base='FULL_ACCESS'; source='CURRENT_ROLE_BASELINE';
+   }
  }
  const manual=!!snap?.manual;
- // EXPLICIT MANUAL SNAPSHOT ALWAYS WINS, including over owner/designation/defaults.
- const full=manual ? snap.base==='FULL_ACCESS' : (owner || effective.has('FULL_ACCESS') || effective.has('SUPER_ADMIN') || effective.has('OWNER'));
- const canEdit=full || effective.has('EDIT') || effective.has('ENTRY');
- const canView=full || canEdit || effective.has('VIEW');
- const advanced=full || effective.has('ANALYSIS') || effective.has('ADVANCED_REPORTS');
- const reports=full || effective.has('REPORTS') || effective.has('ADVANCED_REPORTS');
+ const full=base==='FULL_ACCESS' || effective.has('FULL_ACCESS');
+ const canEdit=full||base==='EDIT'||effective.has('EDIT')||effective.has('ENTRY');
+ const canView=full||canEdit||effective.has('VIEW');
+ const advanced=full||effective.has('ANALYSIS')||effective.has('ADVANCED_REPORTS');
+ const reports=full||effective.has('REPORTS')||effective.has('ADVANCED_REPORTS');
  const js=new Set((scope?.jobScopes||[]).map(x=>String(x).toUpperCase()));
- const unrestricted=full || !js.size || js.has('ALL') || js.has('NOT ASSIGNED');
- const jobAllowed=(...names)=>unrestricted || names.some(n=>js.has(n));
- const out={owner,full,scope,override:manual,permissionSource:manual?(snap.source||'MANUAL_SNAPSHOT'):'REGISTRATION_HIERARCHY',view:canView,edit:canEdit,entry:canEdit,more:canView,date:canView,analysis:advanced,reports,repeat:advanced&&jobAllowed('DEFECTS','JOBS','HISTORY'),jobs:canView&&jobAllowed('JOBS','HISTORY'),history:canView&&jobAllowed('HISTORY','JOBS','DEFECTS'),mtbf:advanced,performance:advanced&&jobAllowed('DEFECTS','JOBS','HISTORY','PM','INSPECTION_CBM','BREAKDOWN'),pm:canView&&jobAllowed('PM'),cbm:canView&&jobAllowed('INSPECTION_CBM'),delay:advanced&&jobAllowed('BREAKDOWN'),pdf:full||effective.has('PRINT_EXPORT')||effective.has('PDF_REPORT')||effective.has('ADVANCED_REPORTS'),rcm:full||effective.has('RCM')};
- console.log('[RUNTIME ACCESS V7.7.41]',emp,out.permissionSource,'base=',snap?.base||'DEFAULT','codes=',[...effective].sort().join(','),'view=',out.view,'edit=',out.edit,'analysis=',out.analysis,'reports=',out.reports,'pdf=',out.pdf,'rcm=',out.rcm);
+ const unrestricted=full||!js.size||js.has('ALL')||js.has('NOT ASSIGNED');
+ const jobAllowed=(...names)=>unrestricted||names.some(n=>js.has(n));
+ const out={owner:false,full,scope,override:manual,permissionSource:source,view:canView,edit:canEdit,entry:canEdit,more:canView,date:canView,analysis:advanced,reports,repeat:advanced&&jobAllowed('DEFECTS','JOBS','HISTORY'),jobs:canView&&jobAllowed('JOBS','HISTORY'),history:canView&&jobAllowed('HISTORY','JOBS','DEFECTS'),mtbf:advanced,performance:advanced&&jobAllowed('DEFECTS','JOBS','HISTORY','PM','INSPECTION_CBM','BREAKDOWN'),pm:canView&&jobAllowed('PM'),cbm:canView&&jobAllowed('INSPECTION_CBM'),delay:advanced&&jobAllowed('BREAKDOWN'),pdf:full||effective.has('PRINT_EXPORT')||effective.has('PDF_REPORT')||effective.has('ADVANCED_REPORTS'),rcm:full||effective.has('RCM')};
+ console.log('[RUNTIME ACCESS V7.7.43]',emp,'source=',source,'base=',base,'codes=',[...effective].sort().join(','),'view=',out.view,'edit=',out.edit,'analysis=',out.analysis,'reports=',out.reports,'pdf=',out.pdf,'rcm=',out.rcm);
  return out;
 }
 async function primarySearchButtons(u,hasMore=true){
@@ -3116,6 +3123,14 @@ async function ownerCommand(from, text) {
     return true;
   }
 
+  m = text.match(/^access\s+check\s+(\d+)$/i);
+  if(m){
+    const tu=await byEmp(m[1]); if(!tu){await sendText(from,'Employee not found.');return true;}
+    const pp=await searchPermissions(tu), ss=await runtimeAccessSnapshot(m[1]);
+    await sendText(from,`Runtime Access Check\n${tu.name||m[1]} / ${m[1]}\nSource: ${pp.permissionSource}\nBase: ${ss?.base||'REGISTRATION SAFE BASELINE'}\nView: ${pp.view?'YES':'NO'}\nEdit/Entry: ${pp.edit?'YES':'NO'}\nPDF: ${pp.pdf?'YES':'NO'}\nAnalysis: ${pp.analysis?'YES':'NO'}\nReports: ${pp.reports?'YES':'NO'}\nRCM: ${pp.rcm?'YES':'NO'}`);
+    return true;
+  }
+
   m = text.match(/^(grant|revoke)\s+(\d+)\s+(ENTRY|VIEW|EDIT|DELETE_UNDO|APPROVAL|PRINT_EXPORT|ANALYSIS|REPORTS|RCM|MASTER_EDIT|ACCESS_ADMIN|ADVANCED_REPORTS|FULL_ACCESS)$/i);
   if (m) {
     const active = m[1].toLowerCase() === 'grant';
@@ -3133,10 +3148,18 @@ async function ownerCommand(from, text) {
     );
 
     await pool.query(`INSERT INTO authority_audit(employee_number,action,performed_by,details) VALUES($1,$2,$3,$4::jsonb)`,[m[2],active?'GRANT_PERMISSION':'REVOKE_PERMISSION',from,JSON.stringify({permission:m[3].toUpperCase(),source:'admin_text_command'})]);
-    await sendText(
-      from,
-      `${m[3].toUpperCase()} ${active ? 'granted' : 'revoked'} for ${m[2]}.`
-    );
+    // V7.7.43: text grant/revoke must update the SAME authoritative snapshot used at runtime.
+    const cur=await runtimeAccessSnapshot(m[2]);
+    let codes=new Set((cur?.codes||['VIEW']).map(x=>String(x).toUpperCase()));
+    const code=m[3].toUpperCase(); if(active)codes.add(code); else codes.delete(code);
+    let base=codes.has('FULL_ACCESS')?'FULL_ACCESS':(codes.has('EDIT')||codes.has('ENTRY')?'EDIT':'VIEW');
+    if(base==='FULL_ACCESS') codes=new Set(['FULL_ACCESS']);
+    else { codes.delete('FULL_ACCESS'); codes.add('VIEW'); if(base==='EDIT'){codes.add('EDIT');codes.add('ENTRY');} else {codes.delete('EDIT');codes.delete('ENTRY');} }
+    const extras=[...codes].filter(x=>!['FULL_ACCESS','VIEW','EDIT','ENTRY'].includes(x));
+    await saveAuthoritativeAccess(m[2],base,extras,from,'Super Admin text access change V7.7.43');
+    await pool.query(`DELETE FROM search_context WHERE employee_number=$1`,[m[2]]).catch(()=>{});
+    await pool.query(`DELETE FROM pending_search_choices WHERE employee_number=$1`,[m[2]]).catch(()=>{});
+    await sendAccessChangeFeedback(from,m[2]);
     return true;
   }
 
