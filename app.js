@@ -1098,9 +1098,21 @@ async function effectiveAuthority(employeeNumber) {
   const pr = { rows: prAll.rows.filter(x=>x.active===true) };
   // Manual override is explicit state, not inferred from legacy permission rows.
   // This prevents registration/hierarchy FULL access from leaking back after a Super Admin downgrade.
-  const ovRow=(await pool.query(`SELECT enabled,permissions,updated_by,updated_at FROM user_access_override WHERE employee_number=$1 LIMIT 1`,[employeeNumber])).rows[0]||null;
-  const hasAccessOverride = ovRow?.enabled===true;
-  const overridePermissions = hasAccessOverride && Array.isArray(ovRow.permissions) ? ovRow.permissions.map(x=>String(x).toUpperCase()) : [];
+  // V7.7.45: the SAME authoritative snapshot drives admin summary, scope and runtime gates.
+  // Never let the legacy override table disagree with user_effective_access.
+  const authRow=(await pool.query(`SELECT base_profile,extras,updated_by,updated_at FROM user_effective_access WHERE employee_number=$1 LIMIT 1`,[employeeNumber])).rows[0]||null;
+  const legacyOv=(await pool.query(`SELECT enabled,permissions,updated_by,updated_at FROM user_access_override WHERE employee_number=$1 LIMIT 1`,[employeeNumber])).rows[0]||null;
+  const hasAccessOverride = !!authRow || legacyOv?.enabled===true;
+  let overridePermissions=[];
+  if(authRow){
+    const base=String(authRow.base_profile||'VIEW').toUpperCase();
+    const extras=Array.isArray(authRow.extras)?authRow.extras.map(x=>String(x).toUpperCase()):[];
+    if(base==='FULL_ACCESS') overridePermissions=['FULL_ACCESS'];
+    else if(base==='EDIT') overridePermissions=['VIEW','ENTRY','EDIT',...extras];
+    else overridePermissions=['VIEW',...extras];
+  }else if(legacyOv?.enabled===true && Array.isArray(legacyOv.permissions)){
+    overridePermissions=legacyOv.permissions.map(x=>String(x).toUpperCase());
+  }
   const agr = await pool.query(
     `SELECT authority_code FROM user_authority_grants
      WHERE employee_number=$1 AND active=true
@@ -1794,14 +1806,14 @@ async function sendAccessChangeFeedback(adminWa,emp){
  const target=await byEmp(emp); if(!target)return;
  const p=await searchPermissions(target); const st=await runtimeAccessSnapshot(emp);
  const label=st?.base==='FULL_ACCESS'?'FULL ACCESS':st?.base==='EDIT'?'VIEW + EDIT / ENTRY':'VIEW ONLY';
- const msg=`Access updated successfully\n${target.name||emp} / ${emp}\nEffective Access: ${label}\nPDF / Print: ${p.pdf?'YES':'NO'}\nAnalysis: ${p.analysis?'YES':'NO'}\nReports: ${p.reports?'YES':'NO'}\nRCM: ${p.rcm?'YES':'NO'}\nChange is effective immediately.`;
+ const msg=`Access updated successfully\n${target.name||emp} / ${emp}\nEffective Access: ${label}\n${p.full?'Full Access Bundle: ACTIVE\n':''}PDF / Print: ${p.pdf?'YES':'NO'}\nAnalysis: ${p.analysis?'YES':'NO'}\nReports: ${p.reports?'YES':'NO'}\nRCM: ${p.rcm?'YES':'NO'}\nChange is effective immediately.`;
  await sendText(adminWa,msg);
  const a=String(adminWa||'').replace(/\D/g,''), b=String(target.whatsapp_number||'').replace(/\D/g,'');
- if(b && a!==b) await sendText(target.whatsapp_number,`Your LMMM access has been updated.\nEffective Access: ${label}\nPDF / Print: ${p.pdf?'YES':'NO'}\nAnalysis: ${p.analysis?'YES':'NO'}\nReports: ${p.reports?'YES':'NO'}\nRCM: ${p.rcm?'YES':'NO'}`);
+ if(b && a!==b) await sendText(target.whatsapp_number,`Your LMMM access has been updated.\nEffective Access: ${label}\n${p.full?'Full Access Bundle: ACTIVE\n':''}PDF / Print: ${p.pdf?'YES':'NO'}\nAnalysis: ${p.analysis?'YES':'NO'}\nReports: ${p.reports?'YES':'NO'}\nRCM: ${p.rcm?'YES':'NO'}`);
 }
 async function runtimeAccessSnapshot(employeeNumber){
  const emp=String(employeeNumber||'').trim(); if(!emp)return null;
- // V7.7.44 SINGLE SOURCE: user_effective_access is authoritative whenever it exists.
+ // V7.7.45 SINGLE AUTHORITY: user_effective_access is authoritative whenever it exists.
  // Legacy user_access_override is consulted only if the authoritative row does not yet exist.
  const n=(await pool.query(`SELECT base_profile,extras,updated_by,updated_at FROM user_effective_access WHERE employee_number=$1 LIMIT 1`,[emp])).rows[0];
  if(n){
@@ -1858,7 +1870,7 @@ async function searchPermissions(u){
  const unrestricted=full||!js.size||js.has('ALL')||js.has('NOT ASSIGNED');
  const jobAllowed=(...names)=>unrestricted||names.some(n=>js.has(n));
  const out={owner:false,full,scope,override:manual,permissionSource:source,view:canView,edit:canEdit,entry:canEdit,more:canView,date:canView,analysis:advanced,reports,repeat:advanced&&jobAllowed('DEFECTS','JOBS','HISTORY'),jobs:canView&&jobAllowed('JOBS','HISTORY'),history:canView&&jobAllowed('HISTORY','JOBS','DEFECTS'),mtbf:advanced,performance:advanced&&jobAllowed('DEFECTS','JOBS','HISTORY','PM','INSPECTION_CBM','BREAKDOWN'),pm:canView&&jobAllowed('PM'),cbm:canView&&jobAllowed('INSPECTION_CBM'),delay:advanced&&jobAllowed('BREAKDOWN'),pdf:full||effective.has('PRINT_EXPORT')||effective.has('PDF_REPORT')||effective.has('ADVANCED_REPORTS'),rcm:full||effective.has('RCM')};
- console.log('[RUNTIME ACCESS V7.7.44]',emp,'source=',source,'base=',base,'codes=',[...effective].sort().join(','),'view=',out.view,'edit=',out.edit,'analysis=',out.analysis,'reports=',out.reports,'pdf=',out.pdf,'rcm=',out.rcm);
+ console.log('[RUNTIME ACCESS V7.7.45]',emp,'source=',source,'base=',base,'codes=',[...effective].sort().join(','),'view=',out.view,'edit=',out.edit,'analysis=',out.analysis,'reports=',out.reports,'pdf=',out.pdf,'rcm=',out.rcm);
  return out;
 }
 async function primarySearchButtons(u,hasMore=true){
@@ -2756,7 +2768,7 @@ async function sendPermissionAdmin(to,emp,page=1){
  rows.push({id:`ACCESS_APPLY:${emp}`,title:'✓ Apply Selection',description:`${staged.size} manual selection(s)`});
  await sendList(to,`Access • ${emp} • ${page===2?'More':'Main'}
 ↳ Default/Inherited • ✓ Manual override selection • ○ Available
-View Only / View + Edit / Full Access is the base profile and replaces the previous base immediately. Reports, PDF/Print, Analysis, Advanced Reports and RCM are separate privileges. Scope is controlled separately by Department/Section/Area/Job responsibility. Super Admin changes are authoritative and effective immediately.`,`Select`,rows,'Access');
+View Only / View + Edit / Full Access is the base profile and replaces the previous base immediately. Full Access includes PDF/Print, Analysis, Reports and RCM. For View/View+Edit, those are separate optional privileges. Scope is controlled separately by Department/Section/Area/Job responsibility. Super Admin changes are authoritative and effective immediately.`,`Select`,rows,'Access');
 }
 async function togglePermissionAdmin(from,emp,permission){
  if(!await requireSuperAdmin(from))return;if(!ACCESS_PERMISSION_OPTIONS.some(x=>x[0]===permission)){await sendText(from,'Invalid permission.');return;}
