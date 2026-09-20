@@ -1735,9 +1735,13 @@ async function searchPermissions(u){
  const oq=await pool.query(`SELECT enabled,permissions,updated_at FROM user_access_override WHERE employee_number=$1 LIMIT 1`,[emp]);
  const ov=oq.rows[0]||null;
  const override=ov?.enabled===true;
- const overrideCodes=override && Array.isArray(ov.permissions) ? ov.permissions.map(x=>String(x).toUpperCase()) : [];
+ let rawOverride=ov?.permissions;
+ if(typeof rawOverride==='string'){ try{ rawOverride=JSON.parse(rawOverride); }catch{ rawOverride=[]; } }
+ const overrideCodes=override && Array.isArray(rawOverride) ? rawOverride.map(x=>String(x).toUpperCase()).filter(Boolean) : [];
  const inherited=new Set((a?.default_permissions||[]).map(x=>String(x.permission||'').toUpperCase()));
  const legacy=new Set((a?.special_permissions||[]).map(x=>String(x).toUpperCase()));
+ // SINGLE SOURCE RULE: once a Super Admin override exists, defaults/legacy grants are informational only.
+ // Runtime menus and actions must use ONLY this exact override snapshot.
  const effective=override ? new Set(overrideCodes) : new Set([...inherited,...legacy]);
  // Only the configured owner number bypasses employee overrides. No designation/role can silently
  // restore FULL_ACCESS once Super Admin has explicitly downgraded this employee.
@@ -1763,11 +1767,30 @@ async function searchPermissions(u){
  console.log('[RUNTIME ACCESS V7.7.38]',emp,out.permissionSource,'ownerPhone=',owner,'override=',override,[...effective].sort().join(','),'view=',out.view,'edit=',out.edit,'analysis=',out.analysis,'reports=',out.reports,'pdf=',out.pdf,'rcm=',out.rcm);
  return out;
 }
+async function hasExplicitRuntimeCapability(u,cap){
+ const emp=String(u?.employee_number||'').trim(); if(!emp)return false;
+ const q=await pool.query(`SELECT enabled,permissions FROM user_access_override WHERE employee_number=$1 LIMIT 1`,[emp]);
+ const row=q.rows[0];
+ if(row?.enabled===true){
+   let a=row.permissions; if(typeof a==='string'){try{a=JSON.parse(a)}catch{a=[]}}
+   const set=new Set((Array.isArray(a)?a:[]).map(x=>String(x).toUpperCase()));
+   if(set.has('FULL_ACCESS'))return true;
+   if(cap==='PDF')return set.has('PRINT_EXPORT');
+   if(cap==='ANALYSIS')return set.has('ANALYSIS')||set.has('ADVANCED_REPORTS');
+   if(cap==='REPORTS')return set.has('REPORTS')||set.has('ADVANCED_REPORTS');
+   if(cap==='RCM')return set.has('RCM');
+   return set.has(cap);
+ }
+ const p=await searchPermissions(u);
+ if(cap==='PDF')return !!p.pdf; if(cap==='ANALYSIS')return !!p.analysis; if(cap==='REPORTS')return !!p.reports; if(cap==='RCM')return !!p.rcm;
+ return !!p[String(cap).toLowerCase()];
+}
+
 async function primarySearchButtons(u,hasMore=true){
  const perms=await searchPermissions(u);
  const b=[{id:'SEARCH_DATA_MENU',title:'Select Data'}];
  if(hasMore && perms.more)b.push({id:'SEARCH_MORE',title:'More'});
- if(perms.analysis)b.push({id:'SEARCH_ANALYSIS',title:'Analysis'});
+ if(perms.analysis && await hasExplicitRuntimeCapability(u,'ANALYSIS'))b.push({id:'SEARCH_ANALYSIS',title:'Analysis'});
  else if(perms.date)b.push({id:'SEARCH_DATE',title:'Date Range'});
  return b.slice(0,3);
 }
@@ -2127,7 +2150,8 @@ async function buildMaintenancePdf(ctx,u,codes){
 }
 async function sendCurrentMaintenancePdf(to,u){
  const perms=await searchPermissions(u);
- if(!perms.pdf){await sendText(to,'PDF / Print is not authorised for your current access level.');return {denied:true};}
+ const pdfAllowed=await hasExplicitRuntimeCapability(u,'PDF');
+ if(!perms.pdf || !pdfAllowed){await sendText(to,'PDF / Print is not authorised for your current access level.');return {denied:true};}
  const ctx=await getSearchContext(u);if(!ctx?.equipment_name){await sendText(to,'Select/search an equipment first.');return;}
  const st=await selectionGet(u.employee_number,'EQUIPMENT_DATA',ctx.equipment_name,[]);const codes=currentReportCodes(ctx,st.context?.applied?st.selected:[]);
  await sendText(to,`${ctx.equipment_name} printable A4 PDF report is being prepared (up to 200 validated matching records).`);
@@ -2139,6 +2163,7 @@ async function analysisAction(q,u){
  const action=analysisActionName(q); if(!action)return null;
  const ctx=await getSearchContext(u); if(!ctx?.equipment_name)return {text:'Select an equipment first, then open Analysis.'};
  const perms=await searchPermissions(u);
+ if(action!=='pdf' && !(await hasExplicitRuntimeCapability(u,'ANALYSIS')) && action!=='rcm') return {text:'Analysis is not authorised for your current access level.'};
  const actionPerm={repeat:'repeat',jobs:'jobs',history:'history',mtbf:'mtbf',performance:'performance',pm:'pm',cbm:'cbm',delay:'delay',pdf:'pdf',rcm:'rcm'}[action];
  if(actionPerm && !perms[actionPerm])return {text:'This option is not authorised for your access level.'};
  const eq=ctx.equipment_name,dr=ctxRange(ctx),period=dr?` | ${dr.from} to ${dr.to}`:'';
@@ -2566,7 +2591,7 @@ async function sendEquipmentDataMenu(to,u){
   const rows=opts.map(([c,t])=>({id:`DATA_TOGGLE:${c}`,title:`${selected.includes(c)?'✓':'○'} ${t}`.slice(0,24),description:`${av.counts[c]} available record(s)`}));
   rows.push({id:'DATA_APPLY',title:'✓ Continue / Apply',description:`${selected.length} selected`});
   // Analysis is the single home for analytics and printable reports.
-  if(perms.analysis)rows.push({id:'SEARCH_ANALYSIS',title:'Analysis',description:'Analysis + printable PDF'});
+  if(perms.analysis && await hasExplicitRuntimeCapability(u,'ANALYSIS'))rows.push({id:'SEARCH_ANALYSIS',title:'Analysis',description:'Analysis + printable PDF'});
   rows.push({id:'SEARCH_DATE',title:'Date Range',description:'Apply one period to all selected data'});
   await sendList(to,`${ctx.equipment_name} • Select Data\nSelect one or more. Tap options to toggle, then Continue.`,`Select`,rows.slice(0,10),'Equipment Data');
 }
@@ -2768,6 +2793,26 @@ async function stageAdminOption(from,key,emp,code,sendFn){
  } else await selectionToggle(from,key,emp,code,[]);
  await sendFn(from,emp);
 }
+async function sendAccessChangeFeedback(adminWa,emp,permissions,mode='Super Admin override'){
+ const u=await byEmp(emp).catch(()=>null); const codes=[...new Set((permissions||[]).map(x=>String(x).toUpperCase()))];
+ const set=new Set(codes), full=set.has('FULL_ACCESS');
+ const summary=[
+  `✅ Access updated successfully`,
+  `Employee: ${u?.name||'-'} (${emp})`,
+  `Mode: ${mode}`,
+  `Effective access: ${full?'FULL ACCESS':codes.map(accessLabel).join(', ')||'NO ACCESS'}`,
+  `PDF / Print: ${full||set.has('PRINT_EXPORT')?'YES':'NO'}`,
+  `Analysis: ${full||set.has('ANALYSIS')||set.has('ADVANCED_REPORTS')?'YES':'NO'}`,
+  `Reports: ${full||set.has('REPORTS')||set.has('ADVANCED_REPORTS')?'YES':'NO'}`,
+  `RCM: ${full||set.has('RCM')?'YES':'NO'}`,
+  `This change is effective immediately.`
+ ].join('\n');
+ await sendText(adminWa,summary).catch(()=>{});
+ if(u?.whatsapp_number && String(u.whatsapp_number)!==String(adminWa)){
+   await sendText(u.whatsapp_number,`Your LMMM access has been updated.\nEffective access: ${full?'Full Access':codes.map(accessLabel).join(', ')||'No Access'}\nThe new access is effective immediately.`).catch(()=>{});
+ }
+}
+
 async function applyBaseAccessProfileDirect(from,emp,profile){
  if(!await requireSuperAdmin(from))return;
  const p=String(profile||'').toUpperCase();
@@ -2802,6 +2847,9 @@ async function applyBaseAccessProfileDirect(from,emp,profile){
  await pool.query(`DELETE FROM pending_search_choices WHERE employee_number=$1`,[emp]).catch(()=>{});
  const verified=await effectiveAuthority(emp);
  console.log('[ACCESS DIRECT VERIFIED]',emp,'override=',verified?.has_access_override,'effective=',verified?.effective_access,'permissions=',JSON.stringify(verified?.override_permissions||[]));
+ const fresh=(await pool.query(`SELECT enabled,permissions FROM user_access_override WHERE employee_number=$1`,[emp])).rows[0];
+ let fp=fresh?.permissions; if(typeof fp==='string'){try{fp=JSON.parse(fp)}catch{fp=[]}}
+ await sendAccessChangeFeedback(from,emp,Array.isArray(fp)?fp:permissions,'Super Admin manual override');
  await sendAccessAdminMenu(from,emp);
 }
 
@@ -2844,6 +2892,7 @@ async function applyAccessSelection(from,emp){
  // Re-read from PostgreSQL after commit; never trust staged/UI state as authorization state.
  const verified=await effectiveAuthority(emp); const active=new Set(((verified?.has_access_override?verified?.override_permissions:verified?.special_permissions)||[]).map(x=>String(x).toUpperCase()));
  console.log('[ACCESS APPLY VERIFIED]',emp,[...active].sort().join(','));
+ await sendAccessChangeFeedback(from,emp,[...active],'Super Admin manual override');
  await sendAccessAdminMenu(from,emp);
 }
 async function applyAuthoritySelection(from,emp){
@@ -3659,7 +3708,7 @@ async function processMessage(from, text, rawMessage = null) {
         {id:'Today',title:'Today'},{id:'Yesterday',title:'Yesterday'},{id:'Last 7 days',title:'Last 7 Days'},
         {id:'Last 30 days',title:'Last 30 Days'},{id:'This month',title:'This Month'},{id:'CUSTOM_DATE_RANGE',title:'Custom Range'}
       ],'Date Range');return;}
-      if(us?.analysisMenu){const perms=await searchPermissions(u);const rows=allowedAnalysisRows(perms);if(!rows.length){await sendText(from,'No analysis options are available for your access level.');return;}await sendList(from,us.text,'Select',rows.slice(0,10),'Options');return;}
+      if(us?.analysisMenu){const perms=await searchPermissions(u);if(!(await hasExplicitRuntimeCapability(u,'ANALYSIS'))){await sendText(from,'Analysis is not authorised for your current access level.');return;}const rows=allowedAnalysisRows(perms);if(!rows.length){await sendText(from,'No analysis options are available for your access level.');return;}await sendList(from,us.text,'Select',rows.slice(0,10),'Options');return;}
       if(us?.text){
         if(us.buttons?.length) await sendSearchTextAndButtons(from,us.text,us.buttons);
         else await sendLongText(from,us.text);
@@ -3670,7 +3719,8 @@ async function processMessage(from, text, rawMessage = null) {
         const autoPdfControl=/^(SEARCH_MORE|more|next|SEARCH_DATA_MENU|select data|SEARCH_ANALYSIS|analysis|SEARCH_DATE|date range|CUSTOM_DATE_RANGE)$/i.test(String(clean||'').trim());
         if(us.status==='OK' && !autoPdfControl){
           const freshPerms=await searchPermissions(u);
-          if(freshPerms.pdf){
+          const explicitPdf=await hasExplicitRuntimeCapability(u,'PDF');
+          if(freshPerms.pdf && explicitPdf){
             try{ await sendCurrentMaintenancePdf(from,u); }
             catch(pdfErr){ console.error('[AUTO PDF V7.7.38]',pdfErr); await sendText(from,'Records are available, but the printable PDF could not be generated. Please retry PDF Report.'); }
           }
