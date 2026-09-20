@@ -1071,6 +1071,9 @@ async function defaultPermissionRows(employeeNumber){
 }
 
 async function effectiveAuthority(employeeNumber) {
+  // V7.7.50: lazy backfill guarantees existing approved users receive automatic responsibilities too.
+  // Idempotent: no duplicate rows; audit is written only when a responsibility is newly created.
+  try { await syncAutomaticResponsibilities(employeeNumber,'SYSTEM_AUTO'); } catch(e) { console.error('[AUTO RESPONSIBILITY ENSURE]',employeeNumber,e.message); }
   const ur = await pool.query(
     `SELECT employee_number,designation,section_department,area_of_working,approval_status,is_active,operational_role
      FROM users WHERE employee_number=$1 LIMIT 1`,
@@ -1216,24 +1219,26 @@ function canonicalAreaName(v=''){
 }
 async function upsertResponsibilityRow(employeeNumber, role, section, area, assignedBy='SYSTEM'){
   const found=await pool.query(`SELECT id FROM user_responsibilities WHERE employee_number=$1 AND UPPER(responsibility_role)=UPPER($2) AND UPPER(COALESCE(scope_section,''))=UPPER($3) AND UPPER(COALESCE(scope_area,''))=UPPER($4) AND active=true LIMIT 1`,[employeeNumber,role,section||NA,area||NA]);
-  if(found.rows.length) return found.rows[0].id;
+  if(found.rows.length) return {id:found.rows[0].id,created:false};
   const r=await pool.query(`INSERT INTO user_responsibilities(employee_number,responsibility_role,scope_section,scope_area,assigned_by) VALUES($1,$2,$3,$4,$5) RETURNING id`,[employeeNumber,role,section||NA,area||NA,assignedBy]);
-  return r.rows[0]?.id;
+  return {id:r.rows[0]?.id,created:true};
 }
 async function syncAutomaticResponsibilities(employeeNumber, assignedBy='SYSTEM'){
   const u=await byEmp(employeeNumber); if(!u) return [];
   const section=u.section_department||NA;
   const area=canonicalAreaName(u.area_of_working||NA);
+  let changed=false;
   // Universal production responsibility for every approved LMMM user.
-  await upsertResponsibilityRow(employeeNumber,'Production Responsibility',section,'ALL LMMM PRODUCTION',assignedBy);
+  changed=(await upsertResponsibilityRow(employeeNumber,'Production Responsibility',section,'ALL LMMM PRODUCTION',assignedBy)).created||changed;
   // Every user owns equipment responsibility for the registered area by default.
-  if(area!==NA) await upsertResponsibilityRow(employeeNumber,'Area Equipment Responsibility',section,area,assignedBy);
-  // Section In-charge gets all three LMMM production-area equipment scopes automatically.
+  if(area!==NA) changed=(await upsertResponsibilityRow(employeeNumber,'Area Equipment Responsibility',section,area,assignedBy)).created||changed;
+  // Section In-charge gets BDM + Bar Mill + Finishing equipment responsibility automatically.
   const roles=(await pool.query(`SELECT responsibility_role FROM user_responsibilities WHERE employee_number=$1 AND active=true`,[employeeNumber])).rows.map(x=>String(x.responsibility_role||'').toLowerCase());
-  if(roles.some(x=>x==='section in-charge'||x==='section incharge')){
-    for(const a of LMMM_CORE_AREAS) await upsertResponsibilityRow(employeeNumber,'Section Equipment Responsibility',section,a==='BAR MILL'?'Bar Mill':a[0]+a.slice(1).toLowerCase(),assignedBy);
+  const isSectionIncharge=String(u.operational_role||'').toUpperCase()==='SECTION_INCHARGE' || roles.some(x=>x==='section in-charge'||x==='section incharge');
+  if(isSectionIncharge){
+    for(const a of ['BDM','Bar Mill','Finishing']) changed=(await upsertResponsibilityRow(employeeNumber,'Section Equipment Responsibility',section,a,assignedBy)).created||changed;
   }
-  try{ await pool.query(`INSERT INTO authority_audit(employee_number,action,scope_section,scope_area,performed_by,details) VALUES($1,'SYNC_AUTO_RESPONSIBILITY',$2,$3,$4,$5::jsonb)`,[employeeNumber,section,area,assignedBy,JSON.stringify({production:true,registered_area:area,section_incharge_all_areas:roles.some(x=>x==='section in-charge'||x==='section incharge')})]); }catch(e){ console.error('[AUTO RESPONSIBILITY AUDIT NONFATAL]',e.message); }
+  if(changed){try{ await pool.query(`INSERT INTO authority_audit(employee_number,action,scope_section,scope_area,performed_by,details) VALUES($1,'SYNC_AUTO_RESPONSIBILITY',$2,$3,$4,$5::jsonb)`,[employeeNumber,section,area,assignedBy,JSON.stringify({production:true,registered_area:area,section_incharge_all_areas:isSectionIncharge})]); }catch(e){ console.error('[AUTO RESPONSIBILITY AUDIT NONFATAL]',e.message); }}
   return (await pool.query(`SELECT responsibility_role,scope_section,scope_area FROM user_responsibilities WHERE employee_number=$1 AND active=true ORDER BY created_at`,[employeeNumber])).rows;
 }
 
