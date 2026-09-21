@@ -1,3 +1,4 @@
+// V7.7.58 SAFE USER EXIT + ADMIN DEACTIVATION
 // V7.7.57 HIERARCHY ROLE + AUTO AUTHORISATION FIX
 // V7.7.36 AUTHORITATIVE RUNTIME PERMISSION GATE
 import express from 'express';
@@ -965,6 +966,39 @@ async function deleteRegistrationByWA(wa) {
   const u = await byWA(wa);
   if (!u) return null;
   return deleteRegistrationByEmployee(u.employee_number);
+}
+
+
+async function deactivateUserByEmployee(employeeNumber, performedBy='SELF', reason='Access deactivated') {
+  const u=await byEmp(employeeNumber); if(!u) return null;
+  await pool.query('BEGIN');
+  try{
+    await pool.query(`UPDATE users SET is_active=false,updated_at=now() WHERE employee_number=$1`,[employeeNumber]);
+    await pool.query(`UPDATE user_shift_sessions SET updated_at=now() WHERE employee_number=$1`,[employeeNumber]).catch(()=>{});
+    await pool.query(`DELETE FROM search_context WHERE employee_number=$1`,[employeeNumber]).catch(()=>{});
+    await pool.query(`DELETE FROM pending_search_choices WHERE employee_number=$1`,[employeeNumber]).catch(()=>{});
+    await pool.query(`DELETE FROM ui_selection_sessions WHERE owner_key=$1`,[employeeNumber]).catch(()=>{});
+    await pool.query(`INSERT INTO authority_audit(employee_number,action,responsibility_role,scope_section,scope_area,performed_by,details)
+      VALUES($1,'DEACTIVATE_ACCESS',$2,$3,$4,$5,$6::jsonb)`,
+      [employeeNumber,u.operational_role||'NORMAL_USER',u.section_department||NA,u.area_of_working||NA,performedBy,
+       JSON.stringify({reason,preserved_registration:true,preserved_maintenance_history:true})]);
+    await pool.query('COMMIT');
+    return u;
+  }catch(e){await pool.query('ROLLBACK');throw e;}
+}
+async function reactivateUserByEmployee(employeeNumber, performedBy='SUPER_ADMIN', reason='Access reactivated') {
+  const u=await byEmp(employeeNumber); if(!u) return null;
+  await pool.query('BEGIN');
+  try{
+    await pool.query(`UPDATE users SET is_active=true,approval_status='approved',updated_at=now() WHERE employee_number=$1`,[employeeNumber]);
+    await pool.query(`INSERT INTO authority_audit(employee_number,action,responsibility_role,scope_section,scope_area,performed_by,details)
+      VALUES($1,'REACTIVATE_ACCESS',$2,$3,$4,$5,$6::jsonb)`,
+      [employeeNumber,u.operational_role||'NORMAL_USER',u.section_department||NA,u.area_of_working||NA,performedBy,
+       JSON.stringify({reason,hierarchy_recalculation:true})]);
+    await pool.query('COMMIT');
+    await syncHierarchyAndAccess(employeeNumber,performedBy,'Reactivation hierarchy/access recalculation');
+    return await byEmp(employeeNumber);
+  }catch(e){try{await pool.query('ROLLBACK');}catch{} throw e;}
 }
 
 async function notifyAdmins(d) {
@@ -3317,7 +3351,15 @@ async function ownerCommand(from, text) {
   const admin = from.replace(/\D/g, '');
   if (!SUPER_ADMIN_NUMBERS.has(admin)) return false;
 
-  text = String(text || '').replace(/^APPROVE:(\d+)$/i, 'approve $1').replace(/^REJECT:(\d+)$/i, 'reject $1').replace(/^CONFIRM_REMOVE:(\d+)$/i, 'confirm remove $1').replace(/^CANCEL_REMOVE:(\d+)$/i, 'cancel remove $1').replace(/^CONFIRM_RESET$/i, 'confirm reset registrations').replace(/^CANCEL_RESET$/i, 'cancel reset registrations');
+  text = String(text || '')
+    .replace(/^APPROVE:(\d+)$/i, 'approve $1')
+    .replace(/^REJECT:(\d+)$/i, 'reject $1')
+    .replace(/^CONFIRM_REMOVE:(\d+)$/i, 'confirm remove $1')
+    .replace(/^CANCEL_REMOVE:(\d+)$/i, 'cancel remove $1')
+    .replace(/^CONFIRM_SELF_DEACTIVATE$/i, 'confirm deactivate my account')
+    .replace(/^CANCEL_SELF_DEACTIVATE$/i, 'cancel deactivate my account')
+    .replace(/^CONFIRM_RESET$/i, 'confirm reset registrations')
+    .replace(/^CANCEL_RESET$/i, 'cancel reset registrations');
 
   let rx;
   if ((rx=text.match(/^(?:ACCESS|ACCESS CONTROL|USER|USER CONTROL)\s+(.+)$/i))) {
@@ -3506,12 +3548,15 @@ async function ownerCommand(from, text) {
       return true;
     }
 
-    await pool.query(
-      'UPDATE users SET is_active=$1,updated_at=now() WHERE employee_number=$2',
-      [m[1].toLowerCase() === 'enable', m[2]]
-    );
-
-    await sendText(from, `${m[2]} ${m[1].toLowerCase()}d.`);
+    if(m[1].toLowerCase()==='disable'){
+      await deactivateUserByEmployee(m[2],from,'Super Admin disabled access');
+      await sendText(exists.whatsapp_number,'Your LMMM AI Maintenance access has been disabled by Super Admin.');
+      await sendText(from, `${m[2]} disabled. Registration and maintenance history preserved.`);
+    }else{
+      await reactivateUserByEmployee(m[2],from,'Super Admin reactivated access');
+      await sendText(exists.whatsapp_number,'Your LMMM AI Maintenance access has been reactivated.');
+      await sendText(from, `${m[2]} enabled. Hierarchy and access recalculated.`);
+    }
     return true;
   }
 
@@ -3534,14 +3579,13 @@ async function ownerCommand(from, text) {
 
   m = text.match(/^confirm\s+remove\s+(\d+)$/i);
   if (m) {
-    const removed = await deleteRegistrationByEmployee(m[1]);
+    const removed = await deactivateUserByEmployee(m[1],from,'Super Admin remove/disable request');
     if (!removed) {
       await sendText(from, 'Not found.');
       return true;
     }
-
-    await sendText(removed.whatsapp_number, 'Registration removed.');
-    await sendText(from, `${m[1]} removed.`);
+    await sendText(removed.whatsapp_number, 'Your LMMM AI Maintenance access has been disabled. Your maintenance history is preserved.');
+    await sendText(from, `${m[1]} disabled safely. Registration and historical records preserved.`);
     return true;
   }
 
@@ -3685,18 +3729,23 @@ async function processMessage(from, text, rawMessage = null) {
     return;
   }
 
-  if (/^exit$/i.test(clean)) {
-    await sendText(from, T('exit', te));
+  if (/^(exit|deactivate my account|remove me|delete me|remove my registration)$/i.test(clean)) {
+    const self=await byWA(from);
+    if(!self){ await sendText(from,T('notfound',te)); return; }
+    await sendButtons(from,
+      'Deactivate your LMMM AI Maintenance access? Your registration and maintenance history will be preserved.',
+      [{id:'CONFIRM_SELF_DEACTIVATE',title:'Deactivate'},{id:'CANCEL_SELF_DEACTIVATE',title:'Cancel'}]);
     return;
   }
-
-  if (/^(remove me|delete me|remove my registration)$/i.test(clean)) {
-    const removed = await deleteRegistrationByWA(from);
-    if (!removed) {
-      await sendText(from, T('notfound', te));
-      return;
-    }
-    await sendText(from, T('removed', te));
+  if (/^cancel deactivate my account$/i.test(clean)) {
+    await sendText(from,'Cancelled. Your access remains active.');
+    return;
+  }
+  if (/^confirm deactivate my account$/i.test(clean)) {
+    const self=await byWA(from);
+    if(!self){ await sendText(from,T('notfound',te)); return; }
+    await deactivateUserByEmployee(self.employee_number,self.employee_number,'User self-deactivation');
+    await sendText(from,'Your LMMM AI Maintenance access is deactivated. Registration and maintenance history are preserved. Contact Super Admin to reactivate.');
     return;
   }
 
