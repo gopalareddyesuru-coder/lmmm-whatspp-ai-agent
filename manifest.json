@@ -1,0 +1,291 @@
+{
+  "version": "V8 JSON",
+  "core_counts": {
+    "equipment": 798,
+    "sap_sub_equipment": 2023,
+    "parts_source_rows": 15481,
+    "defects": 2301,
+    "maintenance_history": 2467,
+    "unresolved_sap": 1026,
+    "unresolved_parts": 7241
+  },
+  "modules": {
+    "equipment_master": {
+      "file": "equipment_master.json",
+      "records": 798,
+      "source_sheets": [
+        "Equipment Master"
+      ]
+    },
+    "hierarchy_index": {
+      "file": "hierarchy_index.json",
+      "records": 798,
+      "source_sheets": [
+        "Hierarchy Index"
+      ]
+    },
+    "sap_sub_equipment": {
+      "file": "sap_sub_equipment.json",
+      "records": 2023,
+      "source_sheets": [
+        "SAP Sub-Equipment"
+      ]
+    },
+    "parts_master": {
+      "file": "parts_master.json",
+      "records": 12479,
+      "source_sheets": [
+        "Parts Master"
+      ]
+    },
+    "parts_source_rows": {
+      "file": "parts_source_rows.json",
+      "records": 15481,
+      "source_sheets": [
+        "Parts Source Rows"
+      ]
+    },
+    "unresolved_sap": {
+      "file": "unresolved_sap.json",
+      "records": 1026,
+      "source_sheets": [
+        "Unresolved SAP"
+      ]
+    },
+    "unresolved_parts": {
+      "file": "unresolved_parts.json",
+      "records": 7241,
+      "source_sheets": [
+        "Unresolved Parts"
+      ]
+    },
+    "defects": {
+      "file": "defects.json",
+      "records": 2301,
+      "source_sheets": [
+        "Defects"
+      ]
+    },
+    "maintenance_history": {
+      "file": "maintenance_history.json",
+      "records": 2467,
+      "source_sheets": [
+        "Maintenance History"
+      ]
+    },
+    "spares": {
+      "file": "spares.json",
+      "records": 15931,
+      "source_sheets": [
+        "Legacy Spares Search",
+        "Stock - RHHF&PR",
+        "Stock - WATER SEGMENTS",
+        "Stock - WATER HOSE",
+        "Stock - Looper",
+        "Stock - Wobblers",
+        "Stock - Shear Pins",
+        "Stock - ScrewDown Seals",
+        "Stock - Liners",
+        "Stock - Aligning RT",
+        "Stock - Brake Slides",
+        "Stock - Sheet1",
+        "Stock - Sheet2",
+        "Stock - Sheet3",
+        "Stock - Sheet4",
+        "Stock - Sheet5",
+        "Stock - RIT Rolls",
+        "Stock - VALVES",
+        "Stock - Bush",
+        "Stock - PINS",
+        "Stock - Oil Barrel",
+        "Stock - MAIN GB STUDS",
+        "Stock - BS2 PNEU BRAKE"
+      ]
+    },
+    "knowledge": {
+      "file": "knowledge.json",
+      "records": 40,
+      "source_sheets": [
+        "Knowledge Notes",
+        "Manual Knowledge",
+        "Technical Specifications"
+      ]
+    },
+    "troubleshooting": {
+      "file": "troubleshooting.json",
+      "records": 9,
+      "source_sheets": [
+        "Troubleshooting",
+        "Troubleshooting Structured"
+      ]
+    },
+    "smp": {
+      "file": "smp.json",
+      "records": 17,
+      "source_sheets": [
+        "SMP",
+        "SMP Structured"
+      ]
+    },
+    "sop": {
+      "file": "sop.json",
+      "records": 4,
+      "source_sheets": [
+        "SOP",
+        "SOP Structured"
+      ]
+    },
+    "search_aliases": {
+      "file": "search_aliases.json",
+      "records": 25,
+      "source_sheets": [
+        "Search Alias Register",
+        "Search Aliases Master"
+      ]
+    },
+    "sources": {
+      "file": "sources.json",
+      "records": 52,
+      "source_sheets": [
+        "Source Register",
+        "Recovered Source Catalog",
+        "Source Coverage Master",
+        "Coverage Register",
+        "Manuals Register"
+      ]
+    },
+    "condition_monitoring": {
+      "file": "condition_monitoring.json",
+      "records": 332,
+      "source_sheets": [
+        "Condition Monitoring V2",
+        "CBM Recovered CAF",
+        "Condition Monitoring V3",
+        "Vibration & CBM",
+        "Measurements",
+        "Pipe Thickness",
+        "Door Loads",
+        "Wheel Diameters",
+        "Skid Surveys",
+        "Cylinder History"
+      ]
+    },
+    "jobs": {
+      "file": "jobs.json",
+      "records": 31,
+      "source_sheets": [
+        "Job Intelligence",
+        "Jobs & Work Orders"
+      ]
+    },
+    "breakdown_delay": {
+      "file": "breakdown_delay.json",
+      "records": 4,
+      "source_sheets": [
+        "Breakdown & Delay",
+        "Production & Delay"
+      ]
+    },
+    "shutdown": {
+      "file": "shutdown.json",
+      "records": 5,
+      "source_sheets": [
+        "Shutdown"
+      ]
+    },
+    "pm": {
+      "file": "pm.json",
+      "records": 25,
+      "source_sheets": [
+        "PM"
+      ]
+    },
+    "inspection": {
+      "file": "inspection.json",
+      "records": 12,
+      "source_sheets": [
+        "Inspection"
+      ]
+    },
+    "drawings": {
+      "file": "drawings.json",
+      "records": 17,
+      "source_sheets": [
+        "Drawings Register"
+      ]
+    },
+    "equipment_weights": {
+      "file": "equipment_weights.json",
+      "records": 0,
+      "source_sheets": [
+        "Equipment Weights"
+      ]
+    },
+    "rcm": {
+      "file": "rcm.json",
+      "records": 0,
+      "source_sheets": [
+        "RCM & Reliability"
+      ]
+    },
+    "manpower": {
+      "file": "manpower.json",
+      "records": 0,
+      "source_sheets": [
+        "Manpower",
+        "Employee Directory",
+        "Employee Attendance",
+        "Contract Attendance"
+      ]
+    },
+    "tools_tackles": {
+      "file": "tools_tackles.json",
+      "records": 62,
+      "source_sheets": [
+        "Tools & Tackles"
+      ]
+    },
+    "formats_permits": {
+      "file": "formats_permits.json",
+      "records": 18,
+      "source_sheets": [
+        "Formats & Permits",
+        "Formats & Permits Master"
+      ]
+    },
+    "multimodal_intake": {
+      "file": "multimodal_intake.json",
+      "records": 0,
+      "source_sheets": [
+        "Multimodal Intake"
+      ]
+    },
+    "audit_trail": {
+      "file": "audit_trail.json",
+      "records": 0,
+      "source_sheets": [
+        "Audit Trail"
+      ]
+    },
+    "needs_review": {
+      "file": "needs_review.json",
+      "records": 4,
+      "source_sheets": [
+        "Needs Review Master"
+      ]
+    },
+    "governance": {
+      "file": "governance.json",
+      "records": 111,
+      "source_sheets": [
+        "Mapping Rules",
+        "Final Master Rules",
+        "README",
+        "ALL BLOCKS INDEX",
+        "BIG MASTER STATUS",
+        "MASTER STATUS",
+        "Core Master Index"
+      ]
+    }
+  }
+}
