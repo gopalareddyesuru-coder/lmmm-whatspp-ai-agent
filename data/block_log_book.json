@@ -1,0 +1,36 @@
+{
+  "module": "log_book",
+  "schema_version": "V15",
+  "department_code": "35",
+  "fields": [
+    "record_id",
+    "department_code",
+    "submitted_by_employee_number",
+    "submitted_by_whatsapp",
+    "server_entry_timestamp",
+    "source_reference",
+    "source_record_id",
+    "review_status",
+    "event_date",
+    "event_time",
+    "shift",
+    "area_id",
+    "equipment_id",
+    "sub_equipment_id",
+    "observation",
+    "action",
+    "status",
+    "remarks"
+  ],
+  "relationships": {
+    "department": "35",
+    "equipment_key": "equipment_id where applicable",
+    "event_key": "event_id where applicable",
+    "job_key": "job_id where applicable",
+    "source_key": "source_id/source_reference"
+  },
+  "future_whatsapp_write_ready": true,
+  "search_retrieval_ready": true,
+  "record_count": 0,
+  "records": []
+}
