@@ -1,3 +1,4 @@
+// V7.7.59 STRICT EQUIPMENT ROUTING + DEACTIVATION FIX
 // V7.7.58 SAFE USER EXIT + ADMIN DEACTIVATION
 // V7.7.57 HIERARCHY ROLE + AUTO AUTHORISATION FIX
 // V7.7.36 AUTHORITATIVE RUNTIME PERMISSION GATE
@@ -1852,6 +1853,36 @@ async function syncBundledLmmmKnowledge(){
     }
   }catch(e){console.error('[V7.5 MASTER SYNC ERROR]',e);}
 }
+
+async function searchBundledMasterForEquipment(equipment,intent='general',limit=20,dateRange=null,offset=0){
+  const vals=[equipment]; let where=`LOWER(COALESCE(equipment,''))=LOWER($1)`;
+  if(intent==='defect'){vals.push('defect');where+=` AND record_type=$${vals.length}`;}
+  else if(intent==='history'||intent==='job_action'){vals.push('history');where+=` AND record_type=$${vals.length}`;}
+  else if(intent==='spares'){vals.push('spare');where+=` AND record_type=$${vals.length}`;}
+  if(dateRange?.from){vals.push(dateRange.from);where+=` AND CASE WHEN event_date ~ '^\\d{4}-\\d{2}-\\d{2}$' THEN event_date::date END >= $${vals.length}::date`;}
+  if(dateRange?.to){vals.push(dateRange.to);where+=` AND CASE WHEN event_date ~ '^\\d{4}-\\d{2}-\\d{2}$' THEN event_date::date END <= $${vals.length}::date`;}
+  vals.push(limit);const lp=vals.length;vals.push(Math.max(0,Number(offset)||0));const op=vals.length;
+  return (await pool.query(`SELECT uid,record_type,equipment,area,event_date,record_text,source_name,source_payload
+    FROM lmmm_master_records WHERE ${where}
+    ORDER BY CASE WHEN event_date ~ '^\\d{4}-\\d{2}-\\d{2}$' THEN event_date::date END DESC NULLS LAST,uid
+    LIMIT $${lp} OFFSET $${op}`,vals)).rows;
+}
+function explicitEquipmentModuleIntent(q=''){
+  return /\b(defects?|faults?|problems?|jobs?|work\s*orders?|history|previous|old|past|inspection|condition|monitoring|vibrations?|cbm|shutdown|capital\s*repairs?|spares?|inventory|stock|drawings?|drg|manuals?|smp|sop|pm|preventive|rcm|reliability|analysis|about|details?)\b/i.test(String(q||''));
+}
+function equipmentMenuResult(equipment){
+  const e=String(equipment||'').trim();
+  return {text:`${e}\nWhat do you want to see?`,buttons:[
+    {id:`${e} about`,title:'About'},
+    {id:`${e} defects`,title:'Defects'},
+    {id:`${e} jobs`,title:'Jobs'},
+    {id:`${e} history`,title:'History'},
+    {id:`${e} shutdown`,title:'Shutdown / CR'},
+    {id:`${e} vibration`,title:'CBM / Vibration'},
+    {id:`${e} spares`,title:'Spares'},
+    {id:`${e} drawings`,title:'Drawings / Docs'}
+  ]};
+}
 async function searchBundledMaster(question,limit=20,dateRange=null,offset=0){
   const q=naturalSearchAliases(question), intent=searchIntent(q), entity=stripIntentWords(q);
   const vals=[]; let where='TRUE';
@@ -2160,6 +2191,10 @@ async function equipmentCandidates(term,ctx){
      const n=String(x.name||'');
      if(n.length>55||n.includes(','))return false;
      if(/\b(?:pack|pinion|metaflex|disc|alloy steel|series|for ecs pump)\b/i.test(n))return false;
+     // A generic mechanical equipment query must not be polluted by MCC/PCC/PLC/control-panel
+     // assets that only mention the equipment in their description/name.
+     if(!/\b(mcc|pcc|plc|control|panel|drive)\b/i.test(String(term||'')) &&
+        /^\s*(?:\(?PLC\)?|MCC[- ]?\d|PCC[- ]?\d)/i.test(n)) return false;
      return true;
    });
    return (assetLike.length?assetLike:direct).slice(0,12);
@@ -2187,7 +2222,7 @@ async function eventSearch(q,u,equipment=null,dateRange=null){
  const intent=searchIntent(q), terms=queryTokens(stripIntentWords(q)); const vals=[]; let where=`deleted_at IS NULL`;
  if(dateRange?.from){vals.push(dateRange.from);where+=` AND event_date >= $${vals.length}::date`;}
  if(dateRange?.to){vals.push(dateRange.to);where+=` AND event_date <= $${vals.length}::date`;}
- if(equipment){vals.push(equipment);where+=` AND (LOWER(COALESCE(equipment_name,''))=LOWER($${vals.length}) OR LOWER(event_text) LIKE LOWER('%'||$${vals.length}||'%'))`;}
+ if(equipment){vals.push(equipment);where+=` AND LOWER(COALESCE(equipment_name,''))=LOWER($${vals.length})`;}
  for(const t of terms.slice(0,5)){vals.push(t);where+=` AND LOWER(event_text||' '||COALESCE(equipment_name,'')) LIKE LOWER('%'||$${vals.length}||'%')`;}
  if(intent==='defect'||intent==='job_action'){vals.push(intent);where+=` AND event_type=$${vals.length}`;}
  const r=await pool.query(`SELECT id,event_type,equipment_name,event_date,event_shift,event_text FROM section_event_log WHERE ${where} ORDER BY event_date DESC,entered_at DESC LIMIT 12`,vals);
@@ -2617,7 +2652,7 @@ async function universalSearch(q,u){
  }
  if(/^\d+$/.test(original)){
    const pr=(await pool.query(`SELECT * FROM pending_search_choices WHERE employee_number=$1 AND created_at>now()-interval '30 minutes'`,[u.employee_number])).rows[0];
-   if(pr){const choices=typeof pr.choices==='string'?JSON.parse(pr.choices):pr.choices;const pick=choices[Number(original)-1];if(pick){const prior=String(pr.original_query||'');const learned=stripIntentWords(naturalSearchAliases(prior));await setSearchContext(u,pick.name,pick.area||null);await learnSharedSearchAlias(learned,pick.name,u,'user_selection');await pool.query(`DELETE FROM pending_search_choices WHERE employee_number=$1`,[u.employee_number]);const pi=searchIntent(prior);const suffix=pi==='defect'?' defects':pi==='history'?' history':pi==='job_action'?' jobs':pi==='condition'?' vibration':pi==='spares'?' spares':'';return universalSearch(`${pick.name}${suffix}`.trim(),u);}}
+   if(pr){const choices=typeof pr.choices==='string'?JSON.parse(pr.choices):pr.choices;const pick=choices[Number(original)-1];if(pick){const prior=String(pr.original_query||'');const learned=stripIntentWords(naturalSearchAliases(prior));await setSearchContext(u,pick.name,pick.area||null);await learnSharedSearchAlias(learned,pick.name,u,'user_selection');await pool.query(`DELETE FROM pending_search_choices WHERE employee_number=$1`,[u.employee_number]);const pi=searchIntent(prior);const suffix=pi==='defect'?' defects':pi==='history'?' history':pi==='job_action'?' jobs':pi==='condition'?' vibration':pi==='spares'?' spares':'';if(!explicitEquipmentModuleIntent(prior))return equipmentMenuResult(pick.name);return universalSearch(`${pick.name}${suffix}`.trim(),u);}}
  }
  ctx=await getSearchContext(u); let entity=stripIntentWords(naturalSearchAliases(original)); const alias=await resolveAlias(entity); if(alias)entity=alias.equipment_name||alias.canonical_text;
  if(!entity && ctx?.equipment_name)entity=ctx.equipment_name;
@@ -2682,6 +2717,9 @@ async function universalSearch(q,u){
    return {text:`Multiple matches found. Which one?\n\n`+candidates.map((x,i)=>`${i+1}. ${x.name}${x.area?` — ${x.area}`:''}`).join('\n'),...(buttons?{buttons}:{})};
  }
  const equipment=candidates.length===1?candidates[0].name:(ctx?.equipment_name && !entity?ctx.equipment_name:null); if(equipment){await setSearchContext(u,equipment,candidates[0]?.area||ctx?.area||null);await setSearchFilters(u,{module:intent,offset:0,lastQuery:original});if(entity&&searchNorm(entity)!==searchNorm(equipment)&&candidates.length===1)await learnSharedSearchAlias(entity,equipment,u,'unique_resolution');}
+ if(equipment && !explicitEquipmentModuleIntent(original)){
+   return equipmentMenuResult(equipment);
+ }
  ctx=await getSearchContext(u); const dr=range|| (ctx?.date_from?{from:String(ctx.date_from).slice(0,10),to:String(ctx.date_to||ctx.date_from).slice(0,10)}:null);
  if(intent==='condition' && equipment){
    const cbmRows=await conditionSearchForEquipment(equipment,u,dr);
@@ -2691,9 +2729,11 @@ async function universalSearch(q,u){
  if(['production','delay','analysis','maintenance','condition'].includes(intent) && !dr && /\b(total|cumulative|mtbf|mtbr|mttr|performance|trend|schedule|scheduled|production|delay|delays)\b/i.test(original)) return {text:'Select a time frame first.\nToday | Last 7 days | Last 30 days | This month | Custom date range'};
  const limit=wantsOverall(original)?30:20;
  const liveEvents=(await eventSearch(original,u,equipment,dr)).filter(x=>usefulLiveEvent(x,original));
- const unscopedMasterRows=await searchBundledMaster(original,Math.max(limit,200),dr,0);
+ const unscopedMasterRows=equipment
+   ? await searchBundledMasterForEquipment(equipment,intent,Math.max(limit,200),dr,0)
+   : await searchBundledMaster(original,Math.max(limit,200),dr,0);
  let scopedMasterRows=unscopedMasterRows.filter(r=>areaMatchesScope(r.area,searchScope,r.equipment));
- if(equipment && GENERIC_ASSET_WORDS.test(String(entity||''))) scopedMasterRows=scopedMasterRows.filter(r=>strictSelectedAssetRow(r,equipment));
+ if(equipment) scopedMasterRows=scopedMasterRows.filter(r=>strictSelectedAssetRow(r,equipment));
  let masterRows=scopedMasterRows.slice(0,limit); const perms=await searchPermissions(u);
  if(unscopedMasterRows.length && !masterRows.length && searchScope && !searchScope.plantWide){
    console.log('[SCOPE] OUT_OF_SCOPE records',{employee:u.employee_number,areas:searchScope?.areas,equipment,query:original,sample:unscopedMasterRows.slice(0,5).map(r=>({equipment:r.equipment,area:r.area}))});
@@ -3567,8 +3607,8 @@ async function ownerCommand(from, text) {
       await sendText(from, 'Not found.');
       return true;
     }
-    await sendButtons(from, `Remove ${m[1]}?`, [
-      { id: `CONFIRM_REMOVE:${m[1]}`, title: 'Remove' },
+    await sendButtons(from, `Disable access for ${m[1]}? Historical records will be preserved.`, [
+      { id: `CONFIRM_REMOVE:${m[1]}`, title: 'Disable' },
       { id: `CANCEL_REMOVE:${m[1]}`, title: 'Cancel' }
     ]);
     return true;
@@ -3783,32 +3823,14 @@ async function processMessage(from, text, rawMessage = null) {
     return;
   }
 
-  // Defensive fallback for old rejected/removed rows left from an earlier build:
-  // registration details can replace them and start a fresh approval.
-  if (
-    u.approval_status === 'rejected' ||
-    u.approval_status === 'removed' ||
-    u.is_active === false
-  ) {
-    const d = parseReg(clean);
-    if (!d) {
-      await sendText(from, T('register', te));
-      return;
-    }
-
-    await deleteRegistrationByWA(from);
-    const saved = await saveFreshRegistration(from, d);
-
-    if (!saved.ok) {
-      await sendText(from, 'Employee Number already active.');
-      return;
-    }
-
-    await sendText(from, T('pending', te));
-    const notified = await notifyAdmins(d);
-    if (!notified) {
-      console.error('[REGISTRATION] Re-registration saved; admin notification failed:', d.employee_number);
-    }
+  // V7.7.59: a deactivated user is blocked at the gate. Never auto-delete/re-register
+  // and never fall through to the normal "How can I help you?" path.
+  if (u.is_active === false) {
+    await sendText(from,'Your LMMM AI Maintenance access is inactive. Contact Super Admin for reactivation.');
+    return;
+  }
+  if (u.approval_status === 'rejected' || u.approval_status === 'removed') {
+    await sendText(from,'Your registration is not active. Contact Super Admin.');
     return;
   }
 
