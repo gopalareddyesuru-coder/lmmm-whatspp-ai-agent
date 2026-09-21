@@ -1,0 +1,17 @@
+{
+  "version": "V17 FINAL IPHONE/GITHUB",
+  "department_code": "35",
+  "json_count_before_manifest": 178,
+  "all_json_under_20_mib": true,
+  "largest_json": {
+    "file": "all_workbook_sheets_raw.json",
+    "bytes": 19168467,
+    "sha256": "7b48bf4c60be0c386aa68aa3314aa54de11eca44695725c0f63ec71a524ede7f"
+  },
+  "split_original_count": 4,
+  "readme": "README.md",
+  "chunk_index": "chunk_index_v17.json",
+  "routing": "whatsapp_postgres_interlink_routing_v17.json",
+  "validation": "All JSON syntax PASS; ZIP integrity PASS after packaging.",
+  "scope_note": "Current V16 lineage/source set preserved; no claim of byte-for-byte original V11 audit because standalone V11 ZIP is unavailable."
+}

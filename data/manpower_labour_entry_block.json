@@ -1,0 +1,23 @@
+{
+  "module": "manpower_labour",
+  "schema_version": "V14",
+  "purpose": "Future-ready entry block; empty until authorised source/user entry exists.",
+  "fields": [
+    "record_id",
+    "date",
+    "shift",
+    "area",
+    "equipment_id",
+    "job_work_order",
+    "trade_skill",
+    "required_manpower",
+    "available_manpower",
+    "contractor",
+    "remarks",
+    "submitted_by",
+    "server_entry_timestamp",
+    "source_reference"
+  ],
+  "record_count": 0,
+  "records": []
+}

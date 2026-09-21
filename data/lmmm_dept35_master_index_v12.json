@@ -1,0 +1,188 @@
+{
+  "meta": {
+    "version": "V12 GITHUB SAFE SOURCE-EXPANDED INTERLINKED",
+    "department_code": 35,
+    "rule": "No guessed identifiers or events. Reference/manual evidence is indexed separately from operational events.",
+    "github_file_limit_design": "Every JSON file kept below 100 MB"
+  },
+  "module_files": {
+    "equipment_master": [
+      "equipment_master.json"
+    ],
+    "hierarchy_index": [
+      "hierarchy_index.json"
+    ],
+    "sap_sub_equipment": [
+      "sap_sub_equipment.json"
+    ],
+    "parts_master": [
+      "parts_master.json"
+    ],
+    "parts_source_rows": [
+      "parts_source_rows.json"
+    ],
+    "unresolved_sap": [
+      "unresolved_sap.json"
+    ],
+    "unresolved_parts": [
+      "unresolved_parts.json"
+    ],
+    "defects": [
+      "defects.json"
+    ],
+    "maintenance_history": [
+      "maintenance_history.json"
+    ],
+    "spares": [
+      "spares.json"
+    ],
+    "knowledge": [
+      "knowledge.json"
+    ],
+    "troubleshooting": [
+      "troubleshooting.json"
+    ],
+    "smp": [
+      "smp.json"
+    ],
+    "sop": [
+      "sop.json"
+    ],
+    "search_aliases": [
+      "search_aliases.json"
+    ],
+    "sources": [
+      "sources.json"
+    ],
+    "condition_monitoring": [
+      "condition_monitoring.json"
+    ],
+    "jobs": [
+      "jobs.json"
+    ],
+    "breakdown_delay": [
+      "breakdown_delay.json"
+    ],
+    "shutdown": [
+      "shutdown.json"
+    ],
+    "pm": [
+      "pm.json"
+    ],
+    "inspection": [
+      "inspection.json"
+    ],
+    "drawings": [
+      "drawings.json"
+    ],
+    "equipment_weights": [],
+    "rcm": [],
+    "manpower": [],
+    "tools_tackles": [
+      "tools_tackles.json"
+    ],
+    "formats_permits": [
+      "formats_permits.json"
+    ],
+    "multimodal_intake": [],
+    "audit_trail": [],
+    "needs_review": [
+      "needs_review.json"
+    ],
+    "governance": [
+      "governance.json"
+    ],
+    "locked_requirements": [
+      "locked_requirements.json"
+    ],
+    "equipment_weights_source_full": [
+      "equipment_weights_source_full.json"
+    ],
+    "drawings_source_full": [
+      "drawings_source_full.json"
+    ],
+    "unified_retrieval_records": [
+      "unified_retrieval_records.json"
+    ],
+    "cross_module_links": [
+      "cross_module_links.json"
+    ],
+    "manual_documents": [
+      "manual_documents.json"
+    ],
+    "manual_pages_full": [
+      "manual_pages_full.json"
+    ],
+    "equipment_relation_index": [],
+    "source_core_records_full": [],
+    "source_workbook_rows_full": [
+      "source_workbook_rows_full_part_01.json",
+      "source_workbook_rows_full_part_02.json"
+    ],
+    "module_coverage_ledger": [
+      "module_coverage_ledger.json"
+    ],
+    "source_audit_registry": [
+      "source_audit_registry.json"
+    ],
+    "manpower_evidence": [
+      "manpower_evidence.json"
+    ],
+    "knowledge_evidence": [
+      "knowledge_evidence.json"
+    ],
+    "rcm_evidence": [
+      "rcm_evidence.json"
+    ],
+    "delay_evidence": [
+      "delay_evidence.json"
+    ],
+    "condition_monitoring_evidence": [
+      "condition_monitoring_evidence.json"
+    ],
+    "vibration_evidence": [
+      "vibration_evidence.json"
+    ],
+    "permit_format_evidence": [
+      "permit_format_evidence.json"
+    ],
+    "motor_isolation_evidence": [
+      "motor_isolation_evidence.json"
+    ],
+    "shutdown_evidence": [
+      "shutdown_evidence.json"
+    ],
+    "smp_sop_evidence": [
+      "smp_sop_evidence.json"
+    ],
+    "cross_module_links_v12": [
+      "cross_module_links_v12.json"
+    ],
+    "source_parse_status_v12": [
+      "source_parse_status_v12.json"
+    ]
+  },
+  "source_archive_files": [
+    "source_archive_records_part_01.json",
+    "source_archive_records_part_02.json"
+  ],
+  "counts": {
+    "archive_files_examined": 852,
+    "machine_readable_archive_records": 85580,
+    "exact_identifier_link_groups": 2670,
+    "manpower_evidence": 140,
+    "knowledge_evidence": 902,
+    "rcm_evidence": 247,
+    "delay_evidence": 208,
+    "condition_monitoring_evidence": 352,
+    "vibration_evidence": 1276,
+    "permit_format_evidence": 434,
+    "motor_isolation_evidence": 1180,
+    "shutdown_evidence": 356,
+    "smp_sop_evidence": 92
+  },
+  "source_limitations": {
+    "legacy_xls_accdb_mdb_images": "Preserved/indexed but not all machine-parsed in this build; never fabricated.",
+    "condition_monitoring": "Existing validated records retained; Access vibration databases require exact table extraction before claiming all equipment readings."
+  }
+}

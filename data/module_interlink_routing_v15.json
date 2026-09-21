@@ -1,0 +1,439 @@
+{
+  "version": "V15",
+  "department_code": "35",
+  "module_count": 45,
+  "routing": {
+    "log_book": {
+      "block_file": "block_log_book.json",
+      "primary_links": [
+        "record_id",
+        "equipment_id",
+        "sub_equipment_id"
+      ],
+      "write_rule": "WhatsApp classified record -> validate -> save PostgreSQL table/block -> update event timeline/search index",
+      "read_rule": "Exact identifier/context -> module filter -> PostgreSQL/search index -> source-backed result"
+    },
+    "breakdown_delay": {
+      "block_file": "block_breakdown_delay.json",
+      "primary_links": [
+        "record_id",
+        "equipment_id",
+        "sub_equipment_id"
+      ],
+      "write_rule": "WhatsApp classified record -> validate -> save PostgreSQL table/block -> update event timeline/search index",
+      "read_rule": "Exact identifier/context -> module filter -> PostgreSQL/search index -> source-backed result"
+    },
+    "defects": {
+      "block_file": "block_defects.json",
+      "primary_links": [
+        "record_id",
+        "equipment_id",
+        "sub_equipment_id"
+      ],
+      "write_rule": "WhatsApp classified record -> validate -> save PostgreSQL table/block -> update event timeline/search index",
+      "read_rule": "Exact identifier/context -> module filter -> PostgreSQL/search index -> source-backed result"
+    },
+    "jobs_work_orders": {
+      "block_file": "block_jobs_work_orders.json",
+      "primary_links": [
+        "record_id",
+        "equipment_id",
+        "sub_equipment_id"
+      ],
+      "write_rule": "WhatsApp classified record -> validate -> save PostgreSQL table/block -> update event timeline/search index",
+      "read_rule": "Exact identifier/context -> module filter -> PostgreSQL/search index -> source-backed result"
+    },
+    "preventive_maintenance": {
+      "block_file": "block_preventive_maintenance.json",
+      "primary_links": [
+        "record_id",
+        "equipment_id",
+        "sub_equipment_id"
+      ],
+      "write_rule": "WhatsApp classified record -> validate -> save PostgreSQL table/block -> update event timeline/search index",
+      "read_rule": "Exact identifier/context -> module filter -> PostgreSQL/search index -> source-backed result"
+    },
+    "inspection_condition_monitoring": {
+      "block_file": "block_inspection_condition_monitoring.json",
+      "primary_links": [
+        "record_id",
+        "equipment_id",
+        "sub_equipment_id"
+      ],
+      "write_rule": "WhatsApp classified record -> validate -> save PostgreSQL table/block -> update event timeline/search index",
+      "read_rule": "Exact identifier/context -> module filter -> PostgreSQL/search index -> source-backed result"
+    },
+    "cbm_vibration": {
+      "block_file": "block_cbm_vibration.json",
+      "primary_links": [
+        "record_id",
+        "equipment_id",
+        "sub_equipment_id"
+      ],
+      "write_rule": "WhatsApp classified record -> validate -> save PostgreSQL table/block -> update event timeline/search index",
+      "read_rule": "Exact identifier/context -> module filter -> PostgreSQL/search index -> source-backed result"
+    },
+    "equipment_master": {
+      "block_file": "block_equipment_master.json",
+      "primary_links": [
+        "record_id",
+        "equipment_id"
+      ],
+      "write_rule": "WhatsApp classified record -> validate -> save PostgreSQL table/block -> update event timeline/search index",
+      "read_rule": "Exact identifier/context -> module filter -> PostgreSQL/search index -> source-backed result"
+    },
+    "sap_sub_equipment": {
+      "block_file": "block_sap_sub_equipment.json",
+      "primary_links": [
+        "record_id",
+        "equipment_id"
+      ],
+      "write_rule": "WhatsApp classified record -> validate -> save PostgreSQL table/block -> update event timeline/search index",
+      "read_rule": "Exact identifier/context -> module filter -> PostgreSQL/search index -> source-backed result"
+    },
+    "equipment_history": {
+      "block_file": "block_equipment_history.json",
+      "primary_links": [
+        "record_id",
+        "event_id",
+        "equipment_id",
+        "sub_equipment_id"
+      ],
+      "write_rule": "WhatsApp classified record -> validate -> save PostgreSQL table/block -> update event timeline/search index",
+      "read_rule": "Exact identifier/context -> module filter -> PostgreSQL/search index -> source-backed result"
+    },
+    "spares": {
+      "block_file": "block_spares.json",
+      "primary_links": [
+        "record_id",
+        "equipment_id",
+        "sub_equipment_id"
+      ],
+      "write_rule": "WhatsApp classified record -> validate -> save PostgreSQL table/block -> update event timeline/search index",
+      "read_rule": "Exact identifier/context -> module filter -> PostgreSQL/search index -> source-backed result"
+    },
+    "drawings_documents": {
+      "block_file": "block_drawings_documents.json",
+      "primary_links": [
+        "record_id",
+        "equipment_id",
+        "sub_equipment_id"
+      ],
+      "write_rule": "WhatsApp classified record -> validate -> save PostgreSQL table/block -> update event timeline/search index",
+      "read_rule": "Exact identifier/context -> module filter -> PostgreSQL/search index -> source-backed result"
+    },
+    "smp": {
+      "block_file": "block_smp.json",
+      "primary_links": [
+        "record_id",
+        "equipment_id"
+      ],
+      "write_rule": "WhatsApp classified record -> validate -> save PostgreSQL table/block -> update event timeline/search index",
+      "read_rule": "Exact identifier/context -> module filter -> PostgreSQL/search index -> source-backed result"
+    },
+    "sop": {
+      "block_file": "block_sop.json",
+      "primary_links": [
+        "record_id",
+        "equipment_id"
+      ],
+      "write_rule": "WhatsApp classified record -> validate -> save PostgreSQL table/block -> update event timeline/search index",
+      "read_rule": "Exact identifier/context -> module filter -> PostgreSQL/search index -> source-backed result"
+    },
+    "troubleshooting": {
+      "block_file": "block_troubleshooting.json",
+      "primary_links": [
+        "record_id",
+        "equipment_id"
+      ],
+      "write_rule": "WhatsApp classified record -> validate -> save PostgreSQL table/block -> update event timeline/search index",
+      "read_rule": "Exact identifier/context -> module filter -> PostgreSQL/search index -> source-backed result"
+    },
+    "rcm_reliability": {
+      "block_file": "block_rcm_reliability.json",
+      "primary_links": [
+        "record_id",
+        "equipment_id"
+      ],
+      "write_rule": "WhatsApp classified record -> validate -> save PostgreSQL table/block -> update event timeline/search index",
+      "read_rule": "Exact identifier/context -> module filter -> PostgreSQL/search index -> source-backed result"
+    },
+    "shutdown": {
+      "block_file": "block_shutdown.json",
+      "primary_links": [
+        "record_id",
+        "equipment_id",
+        "shutdown_id"
+      ],
+      "write_rule": "WhatsApp classified record -> validate -> save PostgreSQL table/block -> update event timeline/search index",
+      "read_rule": "Exact identifier/context -> module filter -> PostgreSQL/search index -> source-backed result"
+    },
+    "employee_attendance": {
+      "block_file": "block_employee_attendance.json",
+      "primary_links": [
+        "record_id",
+        "employee_number"
+      ],
+      "write_rule": "WhatsApp classified record -> validate -> save PostgreSQL table/block -> update event timeline/search index",
+      "read_rule": "Exact identifier/context -> module filter -> PostgreSQL/search index -> source-backed result"
+    },
+    "contract_worker_attendance": {
+      "block_file": "block_contract_worker_attendance.json",
+      "primary_links": [
+        "record_id",
+        "job_id",
+        "worker_id"
+      ],
+      "write_rule": "WhatsApp classified record -> validate -> save PostgreSQL table/block -> update event timeline/search index",
+      "read_rule": "Exact identifier/context -> module filter -> PostgreSQL/search index -> source-backed result"
+    },
+    "manpower_labour": {
+      "block_file": "block_manpower_labour.json",
+      "primary_links": [
+        "record_id",
+        "equipment_id",
+        "job_id"
+      ],
+      "write_rule": "WhatsApp classified record -> validate -> save PostgreSQL table/block -> update event timeline/search index",
+      "read_rule": "Exact identifier/context -> module filter -> PostgreSQL/search index -> source-backed result"
+    },
+    "production": {
+      "block_file": "block_production.json",
+      "primary_links": [
+        "record_id"
+      ],
+      "write_rule": "WhatsApp classified record -> validate -> save PostgreSQL table/block -> update event timeline/search index",
+      "read_rule": "Exact identifier/context -> module filter -> PostgreSQL/search index -> source-backed result"
+    },
+    "tools_tackles": {
+      "block_file": "block_tools_tackles.json",
+      "primary_links": [
+        "record_id",
+        "equipment_id"
+      ],
+      "write_rule": "WhatsApp classified record -> validate -> save PostgreSQL table/block -> update event timeline/search index",
+      "read_rule": "Exact identifier/context -> module filter -> PostgreSQL/search index -> source-backed result"
+    },
+    "formats_permits": {
+      "block_file": "block_formats_permits.json",
+      "primary_links": [
+        "record_id",
+        "equipment_id",
+        "job_id",
+        "shutdown_id"
+      ],
+      "write_rule": "WhatsApp classified record -> validate -> save PostgreSQL table/block -> update event timeline/search index",
+      "read_rule": "Exact identifier/context -> module filter -> PostgreSQL/search index -> source-backed result"
+    },
+    "job_intelligence": {
+      "block_file": "block_job_intelligence.json",
+      "primary_links": [
+        "record_id",
+        "equipment_id"
+      ],
+      "write_rule": "WhatsApp classified record -> validate -> save PostgreSQL table/block -> update event timeline/search index",
+      "read_rule": "Exact identifier/context -> module filter -> PostgreSQL/search index -> source-backed result"
+    },
+    "motor_drive_mapping": {
+      "block_file": "block_motor_drive_mapping.json",
+      "primary_links": [
+        "record_id",
+        "equipment_id",
+        "sub_equipment_id"
+      ],
+      "write_rule": "WhatsApp classified record -> validate -> save PostgreSQL table/block -> update event timeline/search index",
+      "read_rule": "Exact identifier/context -> module filter -> PostgreSQL/search index -> source-backed result"
+    },
+    "isolation_loto": {
+      "block_file": "block_isolation_loto.json",
+      "primary_links": [
+        "record_id",
+        "equipment_id",
+        "job_id",
+        "shutdown_id"
+      ],
+      "write_rule": "WhatsApp classified record -> validate -> save PostgreSQL table/block -> update event timeline/search index",
+      "read_rule": "Exact identifier/context -> module filter -> PostgreSQL/search index -> source-backed result"
+    },
+    "measurements": {
+      "block_file": "block_measurements.json",
+      "primary_links": [
+        "record_id",
+        "equipment_id"
+      ],
+      "write_rule": "WhatsApp classified record -> validate -> save PostgreSQL table/block -> update event timeline/search index",
+      "read_rule": "Exact identifier/context -> module filter -> PostgreSQL/search index -> source-backed result"
+    },
+    "pipe_thickness": {
+      "block_file": "block_pipe_thickness.json",
+      "primary_links": [
+        "record_id",
+        "equipment_id"
+      ],
+      "write_rule": "WhatsApp classified record -> validate -> save PostgreSQL table/block -> update event timeline/search index",
+      "read_rule": "Exact identifier/context -> module filter -> PostgreSQL/search index -> source-backed result"
+    },
+    "door_loads": {
+      "block_file": "block_door_loads.json",
+      "primary_links": [
+        "record_id",
+        "equipment_id"
+      ],
+      "write_rule": "WhatsApp classified record -> validate -> save PostgreSQL table/block -> update event timeline/search index",
+      "read_rule": "Exact identifier/context -> module filter -> PostgreSQL/search index -> source-backed result"
+    },
+    "wheel_diameters": {
+      "block_file": "block_wheel_diameters.json",
+      "primary_links": [
+        "record_id",
+        "equipment_id"
+      ],
+      "write_rule": "WhatsApp classified record -> validate -> save PostgreSQL table/block -> update event timeline/search index",
+      "read_rule": "Exact identifier/context -> module filter -> PostgreSQL/search index -> source-backed result"
+    },
+    "skid_surveys": {
+      "block_file": "block_skid_surveys.json",
+      "primary_links": [
+        "record_id",
+        "equipment_id"
+      ],
+      "write_rule": "WhatsApp classified record -> validate -> save PostgreSQL table/block -> update event timeline/search index",
+      "read_rule": "Exact identifier/context -> module filter -> PostgreSQL/search index -> source-backed result"
+    },
+    "hydraulic_history": {
+      "block_file": "block_hydraulic_history.json",
+      "primary_links": [
+        "record_id",
+        "equipment_id"
+      ],
+      "write_rule": "WhatsApp classified record -> validate -> save PostgreSQL table/block -> update event timeline/search index",
+      "read_rule": "Exact identifier/context -> module filter -> PostgreSQL/search index -> source-backed result"
+    },
+    "pneumatic_history": {
+      "block_file": "block_pneumatic_history.json",
+      "primary_links": [
+        "record_id",
+        "equipment_id"
+      ],
+      "write_rule": "WhatsApp classified record -> validate -> save PostgreSQL table/block -> update event timeline/search index",
+      "read_rule": "Exact identifier/context -> module filter -> PostgreSQL/search index -> source-backed result"
+    },
+    "crane_history": {
+      "block_file": "block_crane_history.json",
+      "primary_links": [
+        "record_id",
+        "equipment_id"
+      ],
+      "write_rule": "WhatsApp classified record -> validate -> save PostgreSQL table/block -> update event timeline/search index",
+      "read_rule": "Exact identifier/context -> module filter -> PostgreSQL/search index -> source-backed result"
+    },
+    "manual_reference_knowledge": {
+      "block_file": "block_manual_reference_knowledge.json",
+      "primary_links": [
+        "record_id",
+        "equipment_id"
+      ],
+      "write_rule": "WhatsApp classified record -> validate -> save PostgreSQL table/block -> update event timeline/search index",
+      "read_rule": "Exact identifier/context -> module filter -> PostgreSQL/search index -> source-backed result"
+    },
+    "parts_drawings": {
+      "block_file": "block_parts_drawings.json",
+      "primary_links": [
+        "record_id",
+        "equipment_id",
+        "sub_equipment_id"
+      ],
+      "write_rule": "WhatsApp classified record -> validate -> save PostgreSQL table/block -> update event timeline/search index",
+      "read_rule": "Exact identifier/context -> module filter -> PostgreSQL/search index -> source-backed result"
+    },
+    "source_registry": {
+      "block_file": "block_source_registry.json",
+      "primary_links": [
+        "record_id",
+        "source_id"
+      ],
+      "write_rule": "WhatsApp classified record -> validate -> save PostgreSQL table/block -> update event timeline/search index",
+      "read_rule": "Exact identifier/context -> module filter -> PostgreSQL/search index -> source-backed result"
+    },
+    "attachments": {
+      "block_file": "block_attachments.json",
+      "primary_links": [
+        "record_id",
+        "event_id",
+        "source_id"
+      ],
+      "write_rule": "WhatsApp classified record -> validate -> save PostgreSQL table/block -> update event timeline/search index",
+      "read_rule": "Exact identifier/context -> module filter -> PostgreSQL/search index -> source-backed result"
+    },
+    "search_aliases": {
+      "block_file": "block_search_aliases.json",
+      "primary_links": [
+        "record_id",
+        "equipment_id"
+      ],
+      "write_rule": "WhatsApp classified record -> validate -> save PostgreSQL table/block -> update event timeline/search index",
+      "read_rule": "Exact identifier/context -> module filter -> PostgreSQL/search index -> source-backed result"
+    },
+    "event_timeline": {
+      "block_file": "block_event_timeline.json",
+      "primary_links": [
+        "record_id",
+        "event_id",
+        "equipment_id",
+        "sub_equipment_id"
+      ],
+      "write_rule": "WhatsApp classified record -> validate -> save PostgreSQL table/block -> update event timeline/search index",
+      "read_rule": "Exact identifier/context -> module filter -> PostgreSQL/search index -> source-backed result"
+    },
+    "audit_log": {
+      "block_file": "block_audit_log.json",
+      "primary_links": [
+        "record_id",
+        "employee_number"
+      ],
+      "write_rule": "WhatsApp classified record -> validate -> save PostgreSQL table/block -> update event timeline/search index",
+      "read_rule": "Exact identifier/context -> module filter -> PostgreSQL/search index -> source-backed result"
+    },
+    "approval_workflow": {
+      "block_file": "block_approval_workflow.json",
+      "primary_links": [
+        "record_id"
+      ],
+      "write_rule": "WhatsApp classified record -> validate -> save PostgreSQL table/block -> update event timeline/search index",
+      "read_rule": "Exact identifier/context -> module filter -> PostgreSQL/search index -> source-backed result"
+    },
+    "employee_directory": {
+      "block_file": "block_employee_directory.json",
+      "primary_links": [
+        "record_id",
+        "employee_number"
+      ],
+      "write_rule": "WhatsApp classified record -> validate -> save PostgreSQL table/block -> update event timeline/search index",
+      "read_rule": "Exact identifier/context -> module filter -> PostgreSQL/search index -> source-backed result"
+    },
+    "contractor_directory": {
+      "block_file": "block_contractor_directory.json",
+      "primary_links": [
+        "record_id"
+      ],
+      "write_rule": "WhatsApp classified record -> validate -> save PostgreSQL table/block -> update event timeline/search index",
+      "read_rule": "Exact identifier/context -> module filter -> PostgreSQL/search index -> source-backed result"
+    },
+    "contract_worker_directory": {
+      "block_file": "block_contract_worker_directory.json",
+      "primary_links": [
+        "record_id",
+        "worker_id"
+      ],
+      "write_rule": "WhatsApp classified record -> validate -> save PostgreSQL table/block -> update event timeline/search index",
+      "read_rule": "Exact identifier/context -> module filter -> PostgreSQL/search index -> source-backed result"
+    }
+  },
+  "global_rules": {
+    "no_guessing": true,
+    "event_timestamp_separate_from_server_entry_timestamp": true,
+    "soft_delete_audit": true,
+    "exact_identifiers_preserved": true,
+    "empty_block_behavior": "Return 0 records / data not available; never borrow unrelated module data."
+  }
+}
