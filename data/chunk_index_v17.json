@@ -1,0 +1,87 @@
+{
+  "version": "V17",
+  "max_json_mib": 20,
+  "split_files": [
+    {
+      "original_file": "existing_data_to_module_map_v15.json",
+      "original_sha256": "83606a7358b602d9c05772b1f3b6e2d57c78a1d7a68cf089fecb2cef3243b526",
+      "parts": [
+        "existing_module_map__log_book__001.json",
+        "existing_module_map__breakdown_delay__001.json",
+        "existing_module_map__defects__001.json",
+        "existing_module_map__jobs_work_orders__001.json",
+        "existing_module_map__preventive_maintenance__001.json",
+        "existing_module_map__inspection_condition_monitoring__001.json",
+        "existing_module_map__cbm_vibration__001.json",
+        "existing_module_map__equipment_master__001.json",
+        "existing_module_map__sap_sub_equipment__001.json",
+        "existing_module_map__equipment_history__001.json",
+        "existing_module_map__spares__001.json",
+        "existing_module_map__spares__002.json",
+        "existing_module_map__drawings_documents__001.json",
+        "existing_module_map__smp__001.json",
+        "existing_module_map__sop__001.json",
+        "existing_module_map__troubleshooting__001.json",
+        "existing_module_map__rcm_reliability__001.json",
+        "existing_module_map__shutdown__001.json",
+        "existing_module_map__employee_attendance__001.json",
+        "existing_module_map__contract_worker_attendance__001.json",
+        "existing_module_map__manpower_labour__001.json",
+        "existing_module_map__production__001.json",
+        "existing_module_map__tools_tackles__001.json",
+        "existing_module_map__formats_permits__001.json",
+        "existing_module_map__job_intelligence__001.json",
+        "existing_module_map__motor_drive_mapping__001.json",
+        "existing_module_map__isolation_loto__001.json",
+        "existing_module_map__measurements__001.json",
+        "existing_module_map__pipe_thickness__001.json",
+        "existing_module_map__door_loads__001.json",
+        "existing_module_map__wheel_diameters__001.json",
+        "existing_module_map__skid_surveys__001.json",
+        "existing_module_map__hydraulic_history__001.json",
+        "existing_module_map__pneumatic_history__001.json",
+        "existing_module_map__crane_history__001.json",
+        "existing_module_map__manual_reference_knowledge__001.json",
+        "existing_module_map__parts_drawings__001.json",
+        "existing_module_map__parts_drawings__002.json",
+        "existing_module_map__source_registry__001.json",
+        "existing_module_map__attachments__001.json",
+        "existing_module_map__search_aliases__001.json",
+        "existing_module_map__event_timeline__001.json",
+        "existing_module_map__audit_log__001.json",
+        "existing_module_map__approval_workflow__001.json",
+        "existing_module_map__employee_directory__001.json",
+        "existing_module_map__contractor_directory__001.json",
+        "existing_module_map__contract_worker_directory__001.json"
+      ]
+    },
+    {
+      "original_file": "source_archive_records_part_01.json",
+      "original_sha256": "5983df6bbcd85547c8d9457fd6506899890465eb042618b650e918f22bfedddd",
+      "parts": [
+        "source_archive_records_part_01__chunk_001.json",
+        "source_archive_records_part_01__chunk_002.json",
+        "source_archive_records_part_01__chunk_003.json"
+      ]
+    },
+    {
+      "original_file": "source_workbook_rows_full.json",
+      "original_sha256": "27dbfd70fa3219e44d0cd1c70db0c66058bac99769d4ea4d890bc9ec576062a2",
+      "parts": [
+        "source_workbook_rows_full__chunk_001.json",
+        "source_workbook_rows_full__chunk_002.json",
+        "source_workbook_rows_full__chunk_003.json",
+        "source_workbook_rows_full__chunk_004.json"
+      ]
+    },
+    {
+      "original_file": "source_workbook_rows_full_part_01.json",
+      "original_sha256": "75ff21972eb168e2d5b978d1dcf1adde3b3df1e692bf769f15ec3b3dd38f0043",
+      "parts": [
+        "source_workbook_rows_full_part_01__chunk_001.json",
+        "source_workbook_rows_full_part_01__chunk_002.json",
+        "source_workbook_rows_full_part_01__chunk_003.json"
+      ]
+    }
+  ]
+}
