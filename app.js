@@ -1,3 +1,4 @@
+// V7.7.57 HIERARCHY ROLE + AUTO AUTHORISATION FIX
 // V7.7.36 AUTHORITATIVE RUNTIME PERMISSION GATE
 import express from 'express';
 import 'dotenv/config';
@@ -301,6 +302,24 @@ async function initDB() {
     calculated_at TIMESTAMPTZ DEFAULT now(), UNIQUE(employee_number,permission)
   )`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_default_permissions_emp ON user_default_permissions(employee_number,active)`);
+  // V7.7.57: authoritative employee hierarchy source.
+  // Import/admin processes may populate this table from approved employee hierarchy data.
+  // Registration never guesses an in-charge role from area or designation alone.
+  await pool.query(`CREATE TABLE IF NOT EXISTS employee_hierarchy_assignments(
+    id BIGSERIAL PRIMARY KEY,
+    employee_number TEXT NOT NULL,
+    operational_role TEXT NOT NULL,
+    section TEXT DEFAULT 'NOT ASSIGNED',
+    area TEXT DEFAULT 'NOT ASSIGNED',
+    shift TEXT DEFAULT 'NOT ASSIGNED',
+    source_reference TEXT,
+    active BOOLEAN DEFAULT TRUE,
+    valid_from TIMESTAMPTZ DEFAULT now(),
+    valid_to TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ DEFAULT now()
+  )`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_employee_hierarchy_active
+    ON employee_hierarchy_assignments(employee_number,active)`);
   // V7.7.31: one authoritative manual access snapshot per employee. Registration defaults remain separate.
   await pool.query(`CREATE TABLE IF NOT EXISTS user_access_override(
     employee_number TEXT PRIMARY KEY, enabled BOOLEAN NOT NULL DEFAULT TRUE,
@@ -1073,7 +1092,7 @@ async function defaultPermissionRows(employeeNumber){
 async function effectiveAuthority(employeeNumber) {
   // V7.7.52: lazy backfill guarantees existing approved users receive automatic responsibilities too.
   // Idempotent: no duplicate rows; audit is written only when a responsibility is newly created.
-  try { await syncAutomaticResponsibilities(employeeNumber,'SYSTEM_AUTO'); } catch(e) { console.error('[AUTO RESPONSIBILITY ENSURE]',employeeNumber,e.message); }
+  try { await syncHierarchyAndAccess(employeeNumber,'SYSTEM_AUTO','Lazy hierarchy/access synchronization'); } catch(e) { console.error('[AUTO HIERARCHY ENSURE]',employeeNumber,e.message); }
   const ur = await pool.query(
     `SELECT employee_number,designation,section_department,area_of_working,approval_status,is_active,operational_role
      FROM users WHERE employee_number=$1 LIMIT 1`,
@@ -1203,6 +1222,109 @@ async function effectiveAuthority(employeeNumber) {
 }
 
 
+
+
+// V7.7.57 AUTHORITATIVE HIERARCHY ROLE RESOLVER
+const AUTO_OPERATIONAL_ROLES = new Set(['NORMAL_USER','SHIFT_INCHARGE','AREA_INCHARGE','SECTION_INCHARGE','HOD','DGM','SUPER_ADMIN']);
+function roleCodeFromText(v=''){
+  const x=String(v||'').trim().toUpperCase().replace(/[–—-]+/g,' ').replace(/\s+/g,' ');
+  if(!x || x==='NOT ASSIGNED') return null;
+  if(/\b(SUPER ADMIN|OWNER)\b/.test(x)) return 'SUPER_ADMIN';
+  if(/\b(HOD|HEAD OF DEPARTMENT)\b/.test(x)) return 'HOD';
+  if(/\bSECTION\s+IN\s*CHARGE\b|\bSECTION\s+INCHARGE\b/.test(x)) return 'SECTION_INCHARGE';
+  if(/\bAREA\s+IN\s*CHARGE\b|\bAREA\s+INCHARGE\b/.test(x)) return 'AREA_INCHARGE';
+  if(/\bSHIFT\s+IN\s*CHARGE\b|\bSHIFT\s+INCHARGE\b/.test(x)) return 'SHIFT_INCHARGE';
+  return null;
+}
+function roleLabelFromCode(code=''){
+  return ({SUPER_ADMIN:'Super Admin',HOD:'HOD',SECTION_INCHARGE:'Section In-charge',
+    AREA_INCHARGE:'Area In-charge',SHIFT_INCHARGE:'Shift In-charge',DGM:'DGM',
+    NORMAL_USER:'Normal Employee'})[String(code).toUpperCase()]||'Normal Employee';
+}
+async function resolveHierarchyRole(employeeNumber, performedBy='SYSTEM_AUTO'){
+  const u=await byEmp(employeeNumber); if(!u) return null;
+  let role=null, source='REGISTRATION_BASELINE', sourceDetail='No authoritative in-charge assignment found';
+
+  // Owner/Super Admin identity is authoritative.
+  if(isOwner(u.whatsapp_number)){ role='SUPER_ADMIN'; source='OWNER_NUMBER'; sourceDetail='Configured owner/super-admin number'; }
+
+  // Imported/approved hierarchy master has highest non-owner priority.
+  if(!role){
+    const hr=(await pool.query(`SELECT * FROM employee_hierarchy_assignments
+      WHERE employee_number=$1 AND active=true
+        AND (valid_from IS NULL OR valid_from<=now()) AND (valid_to IS NULL OR valid_to>=now())
+      ORDER BY updated_at DESC,id DESC LIMIT 1`,[employeeNumber])).rows[0];
+    const hc=hr && roleCodeFromText(hr.operational_role);
+    if(hc){ role=hc; source='EMPLOYEE_HIERARCHY_MASTER'; sourceDetail=hr.source_reference||'Approved hierarchy assignment'; }
+  }
+
+  // Existing explicit responsibility is authoritative and supports old users.
+  if(!role){
+    const rr=(await pool.query(`SELECT responsibility_role FROM user_responsibilities
+      WHERE employee_number=$1 AND active=true
+        AND (valid_from IS NULL OR valid_from<=now()) AND (valid_to IS NULL OR valid_to>=now())
+      ORDER BY created_at DESC`,[employeeNumber])).rows;
+    for(const r of rr){ const c=roleCodeFromText(r.responsibility_role); if(c){role=c;source='EXPLICIT_RESPONSIBILITY';sourceDetail=r.responsibility_role;break;} }
+  }
+
+  // Existing assignment responsibility is also valid evidence.
+  if(!role){
+    const ar=(await pool.query(`SELECT responsibility FROM user_assignments
+      WHERE employee_number=$1 AND active=true
+        AND (valid_from IS NULL OR valid_from<=now()) AND (valid_to IS NULL OR valid_to>=now())
+      ORDER BY id DESC`,[employeeNumber])).rows;
+    for(const a of ar){ const c=roleCodeFromText(a.responsibility); if(c){role=c;source='USER_ASSIGNMENT';sourceDetail=a.responsibility;break;} }
+  }
+
+  // Registration fields may state an explicit in-charge role; never infer it merely from area.
+  if(!role){
+    const c=roleCodeFromText(u.responsibility)||roleCodeFromText(u.designation);
+    if(c){role=c;source='EXPLICIT_REGISTRATION_TEXT';sourceDetail=u.responsibility||u.designation;}
+  }
+
+  // DGM authority is designation-based by approved governance rule; this is not an in-charge guess.
+  if(!role && designationBand(u.designation)==='DGM'){
+    role='DGM'; source='DESIGNATION_BAND'; sourceDetail='DGM designation';
+  }
+  if(!role) role='NORMAL_USER';
+
+  const old=String(u.operational_role||'NORMAL_USER').toUpperCase();
+  // Preserve a previously explicit non-normal operational role unless hierarchy evidence now gives a role.
+  const finalRole=(old!=='NORMAL_USER' && AUTO_OPERATIONAL_ROLES.has(old) && role==='NORMAL_USER') ? old : role;
+  if(old!==finalRole){
+    await pool.query(`UPDATE users SET operational_role=$2,updated_at=now() WHERE employee_number=$1`,[employeeNumber,finalRole]);
+    try{ await pool.query(`INSERT INTO authority_audit(employee_number,action,responsibility_role,scope_section,scope_area,performed_by,details)
+      VALUES($1,'AUTO_RESOLVE_OPERATIONAL_ROLE',$2,$3,$4,$5,$6::jsonb)`,
+      [employeeNumber,roleLabelFromCode(finalRole),u.section_department||NA,u.area_of_working||NA,performedBy,
+       JSON.stringify({old_role:old,new_role:finalRole,source,source_detail:sourceDetail})]); }catch(e){ console.error('[ROLE AUDIT NONFATAL]',e.message); }
+  }
+
+  // Materialise the role as responsibility only when evidence says it is an actual hierarchy role.
+  if(['SUPER_ADMIN','HOD','SECTION_INCHARGE','AREA_INCHARGE','SHIFT_INCHARGE'].includes(finalRole)){
+    await upsertResponsibilityRow(employeeNumber,roleLabelFromCode(finalRole),
+      finalRole==='HOD'?'ALL SECTIONS':(u.section_department||NA),
+      finalRole==='HOD'?'ALL AREAS':(u.area_of_working||NA),performedBy);
+  }
+  return {role:finalRole,source,source_detail:sourceDetail};
+}
+
+async function syncHierarchyAndAccess(employeeNumber, performedBy='SYSTEM_AUTO', reason='Hierarchy/access synchronization'){
+  const resolved=await resolveHierarchyRole(employeeNumber,performedBy);
+  await syncAutomaticResponsibilities(employeeNumber,performedBy);
+  const permissions=await syncDefaultAccess(employeeNumber,performedBy,reason);
+  return {resolved,permissions};
+}
+
+async function backfillApprovedHierarchyAccess(){
+  const rows=(await pool.query(`SELECT employee_number FROM users WHERE approval_status='approved' AND is_active=true ORDER BY id`)).rows;
+  let ok=0,failed=0;
+  for(const r of rows){
+    try{ await syncHierarchyAndAccess(r.employee_number,'SYSTEM_STARTUP','V7.7.57 approved-user hierarchy/access backfill'); ok++; }
+    catch(e){ failed++; console.error('[V7.7.57 BACKFILL]',r.employee_number,e.message); }
+  }
+  console.log('[V7.7.57 HIERARCHY BACKFILL]',JSON.stringify({approved:rows.length,ok,failed}));
+  return {approved:rows.length,ok,failed};
+}
 
 // V7.7.49 AUTO RESPONSIBILITY MODEL
 // Registration area drives equipment responsibility; production responsibility is universal.
@@ -3275,8 +3397,7 @@ async function ownerCommand(from, text) {
       ]
     );
 
-    await syncAutomaticResponsibilities(m[1],from);
-    await syncDefaultAccess(m[1],from,'Registration approved: designation + section + registered area baseline');
+    await syncHierarchyAndAccess(m[1],from,'Registration approved: authoritative hierarchy + designation + section + area baseline');
     await sendText(u.whatsapp_number, 'Welcome to LMMM AI Maintenance.');
     if (from.replace(/\D/g, '') !== u.whatsapp_number.replace(/\D/g, '')) {
       await sendButtons(
@@ -4096,7 +4217,10 @@ app.get('/api/status', (_q, r) =>
 
 app.use((_q, r) => r.status(404).send('Not found'));
 
-initDB().then(()=>setTimeout(()=>kickBackgroundWorker().catch(e=>console.error('[BG STARTUP]',e)),1500)).catch(e => console.error('[DATABASE INIT ERROR]', e));
+initDB().then(async()=>{
+  try{ await backfillApprovedHierarchyAccess(); }catch(e){ console.error('[V7.7.57 STARTUP BACKFILL]',e.message); }
+  setTimeout(()=>kickBackgroundWorker().catch(e=>console.error('[BG STARTUP]',e)),1500);
+}).catch(e => console.error('[DATABASE INIT ERROR]', e));
 
 const server = http.createServer(app);
 server.on('error', (err) => {
