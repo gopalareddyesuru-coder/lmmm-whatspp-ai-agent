@@ -1,0 +1,26 @@
+{
+  "module": "production",
+  "schema_version": "V14",
+  "purpose": "Future-ready entry block; empty until authorised source/user entry exists.",
+  "fields": [
+    "record_id",
+    "department_code",
+    "area",
+    "production_date",
+    "event_time",
+    "shift",
+    "product_grade_section",
+    "planned_quantity",
+    "actual_quantity",
+    "unit",
+    "delay_minutes",
+    "delay_reference_ids",
+    "remarks",
+    "submitted_by",
+    "server_entry_timestamp",
+    "source_reference"
+  ],
+  "governance": "Modify only Super Admin/HOD/authorised Operations In-charge; others per access.",
+  "record_count": 0,
+  "records": []
+}
