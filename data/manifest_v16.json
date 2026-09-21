@@ -1,0 +1,18 @@
+{
+  "version": "V16 AUDITED COMPLETE FRAMEWORK",
+  "base": "V15 preserved",
+  "readme": "README.md",
+  "audit": "source_and_file_audit_v16.json",
+  "json_files_before_manifest": 124,
+  "largest_json": {
+    "file": "existing_data_to_module_map_v15.json",
+    "mb": 79.91
+  },
+  "github_under_100mb": true,
+  "known_limitations": [
+    "Some legacy XLS source files were preserved/indexed in prior archive processing but not all were machine-parsed.",
+    "Access ACCDB/MDB vibration/hydraulic/pneumatic databases are not yet fully table-extracted into structured records.",
+    "Scan-only PDF/TIFF/image pages may be preserved without exact numeric/text extraction.",
+    "Original standalone V11 ZIP is not currently available for byte-for-byte comparison; V11 no-loss certification is not claimed."
+  ]
+}
