@@ -1,3 +1,4 @@
+// V7.7.60 REMOVE/REREGISTER + ROLE + SEARCH FIX
 // V7.7.59 STRICT EQUIPMENT ROUTING + DEACTIVATION FIX
 // V7.7.58 SAFE USER EXIT + ADMIN DEACTIVATION
 // V7.7.57 HIERARCHY ROLE + AUTO AUTHORISATION FIX
@@ -987,6 +988,24 @@ async function deactivateUserByEmployee(employeeNumber, performedBy='SELF', reas
     return u;
   }catch(e){await pool.query('ROLLBACK');throw e;}
 }
+async function removeUserRegistrationForReregister(employeeNumber, performedBy='SUPER_ADMIN') {
+ const u=await byEmp(employeeNumber); if(!u)return null;
+ await pool.query('BEGIN');
+ try{
+  await pool.query(`UPDATE users SET is_active=false,approval_status='removed',updated_at=now() WHERE employee_number=$1`,[employeeNumber]);
+  await pool.query(`UPDATE user_assignments SET active=false WHERE employee_number=$1`,[employeeNumber]).catch(()=>{});
+  await pool.query(`UPDATE user_responsibilities SET active=false WHERE employee_number=$1`,[employeeNumber]).catch(()=>{});
+  await pool.query(`UPDATE user_default_permissions SET active=false,updated_at=now() WHERE employee_number=$1`,[employeeNumber]).catch(()=>{});
+  await pool.query(`DELETE FROM search_context WHERE employee_number=$1`,[employeeNumber]).catch(()=>{});
+  await pool.query(`DELETE FROM pending_search_choices WHERE employee_number=$1`,[employeeNumber]).catch(()=>{});
+  await pool.query(`DELETE FROM ui_selection_sessions WHERE owner_key=$1`,[employeeNumber]).catch(()=>{});
+  await pool.query(`INSERT INTO authority_audit(employee_number,action,responsibility_role,scope_section,scope_area,performed_by,details)
+   VALUES($1,'REMOVE_REGISTRATION',$2,$3,$4,$5,$6::jsonb)`,
+   [employeeNumber,u.operational_role||'NORMAL_USER',u.section_department||NA,u.area_of_working||NA,performedBy,
+    JSON.stringify({reregister_allowed:true,preserved_maintenance_history:true})]);
+  await pool.query('COMMIT'); return u;
+ }catch(e){await pool.query('ROLLBACK');throw e;}
+}
 async function reactivateUserByEmployee(employeeNumber, performedBy='SUPER_ADMIN', reason='Access reactivated') {
   const u=await byEmp(employeeNumber); if(!u) return null;
   await pool.query('BEGIN');
@@ -1266,9 +1285,9 @@ function roleCodeFromText(v=''){
   if(!x || x==='NOT ASSIGNED') return null;
   if(/\b(SUPER ADMIN|OWNER)\b/.test(x)) return 'SUPER_ADMIN';
   if(/\b(HOD|HEAD OF DEPARTMENT)\b/.test(x)) return 'HOD';
-  if(/\bSECTION\s+IN\s*CHARGE\b|\bSECTION\s+INCHARGE\b/.test(x)) return 'SECTION_INCHARGE';
-  if(/\bAREA\s+IN\s*CHARGE\b|\bAREA\s+INCHARGE\b/.test(x)) return 'AREA_INCHARGE';
-  if(/\bSHIFT\s+IN\s*CHARGE\b|\bSHIFT\s+INCHARGE\b/.test(x)) return 'SHIFT_INCHARGE';
+  if(/\bSECTION\s+IN\s*CHARGE\b|\bSECTION\s+INCHARGE\b|\bSECTION\s+I\/C\b/.test(x)) return 'SECTION_INCHARGE';
+  if(/\bAREA\s+IN\s*CHARGE\b|\bAREA\s+INCHARGE\b|\bAREA\s+I\/C\b/.test(x)) return 'AREA_INCHARGE';
+  if(/\bSHIFT\s+IN\s*CHARGE\b|\bSHIFT\s+INCHARGE\b|\bSHIFT\s+I\/C\b/.test(x)) return 'SHIFT_INCHARGE';
   return null;
 }
 function roleLabelFromCode(code=''){
@@ -2195,9 +2214,22 @@ async function equipmentCandidates(term,ctx){
      // assets that only mention the equipment in their description/name.
      if(!/\b(mcc|pcc|plc|control|panel|drive)\b/i.test(String(term||'')) &&
         /^\s*(?:\(?PLC\)?|MCC[- ]?\d|PCC[- ]?\d)/i.test(n)) return false;
+     if(/\bcooling\s*beds?\b/i.test(String(term||'')) && !/\btrough\b/i.test(String(term||'')) &&
+        /\bRUN[- ]?IN[- ]?TROUGH\b/i.test(n)) return false;
      return true;
    });
-   return (assetLike.length?assetLike:direct).slice(0,12);
+   let ranked=(assetLike.length?assetLike:direct);
+   if(contextArea){
+     const ca=searchNorm(contextArea);
+     const scoped=ranked.filter(x=>searchNorm(x.area||'')===ca || searchNorm(x.name||'').includes(ca));
+     if(scoped.length) ranked=scoped;
+   }
+   const seen=new Set();
+   ranked=ranked.filter(x=>{
+     const k=searchNorm(String(x.name||'').replace(/\s+[—-]\s+(?:BDM|BAR|FUR|AUX|HYD|COMMON\/SUPPORT)\s*$/i,''));
+     if(!k||seen.has(k))return false;seen.add(k);return true;
+   });
+   return ranked.slice(0,12);
  }
  // Typo-tolerant fallback is candidate discovery only. It NEVER changes canonical stored names/IDs.
  // Conservative threshold prevents a misspelling from silently becoming an unrelated asset.
@@ -3607,8 +3639,8 @@ async function ownerCommand(from, text) {
       await sendText(from, 'Not found.');
       return true;
     }
-    await sendButtons(from, `Disable access for ${m[1]}? Historical records will be preserved.`, [
-      { id: `CONFIRM_REMOVE:${m[1]}`, title: 'Disable' },
+    await sendButtons(from, `Remove registration for ${m[1]}? Historical maintenance records will be preserved.`, [
+      { id: `CONFIRM_REMOVE:${m[1]}`, title: 'Remove' },
       { id: `CANCEL_REMOVE:${m[1]}`, title: 'Cancel' }
     ]);
     return true;
@@ -3619,13 +3651,13 @@ async function ownerCommand(from, text) {
 
   m = text.match(/^confirm\s+remove\s+(\d+)$/i);
   if (m) {
-    const removed = await deactivateUserByEmployee(m[1],from,'Super Admin remove/disable request');
+    const removed = await removeUserRegistrationForReregister(m[1],from);
     if (!removed) {
       await sendText(from, 'Not found.');
       return true;
     }
-    await sendText(removed.whatsapp_number, 'Your LMMM AI Maintenance access has been disabled. Your maintenance history is preserved.');
-    await sendText(from, `${m[1]} disabled safely. Registration and historical records preserved.`);
+    await sendText(removed.whatsapp_number, 'Your LMMM AI Maintenance registration has been removed. Send Hi to register again.');
+    await sendText(from, `${m[1]} registration removed. Historical maintenance records preserved.`);
     return true;
   }
 
@@ -3773,7 +3805,7 @@ async function processMessage(from, text, rawMessage = null) {
     const self=await byWA(from);
     if(!self){ await sendText(from,T('notfound',te)); return; }
     await sendButtons(from,
-      'Deactivate your LMMM AI Maintenance access? Your registration and maintenance history will be preserved.',
+      'Remove your LMMM AI Maintenance registration? Maintenance history will be preserved and you can register again.',
       [{id:'CONFIRM_SELF_DEACTIVATE',title:'Deactivate'},{id:'CANCEL_SELF_DEACTIVATE',title:'Cancel'}]);
     return;
   }
@@ -3784,8 +3816,8 @@ async function processMessage(from, text, rawMessage = null) {
   if (/^confirm deactivate my account$/i.test(clean)) {
     const self=await byWA(from);
     if(!self){ await sendText(from,T('notfound',te)); return; }
-    await deactivateUserByEmployee(self.employee_number,self.employee_number,'User self-deactivation');
-    await sendText(from,'Your LMMM AI Maintenance access is deactivated. Registration and maintenance history are preserved. Contact Super Admin to reactivate.');
+    await removeUserRegistrationForReregister(self.employee_number,self.employee_number);
+    await sendText(from,'Your LMMM AI Maintenance registration has been removed. Maintenance history is preserved. Send Hi to register again.');
     return;
   }
 
@@ -3825,11 +3857,19 @@ async function processMessage(from, text, rawMessage = null) {
 
   // V7.7.59: a deactivated user is blocked at the gate. Never auto-delete/re-register
   // and never fall through to the normal "How can I help you?" path.
+  if (u.approval_status === 'removed') {
+    const d=parseReg(clean);
+    if(!d){await sendText(from,T('register',te));return;}
+    await deleteRegistrationByWA(from);
+    const saved=await saveFreshRegistration(from,d);
+    if(!saved.ok){await sendText(from,'Employee Number already active.');return;}
+    await sendText(from,T('pending',te)); await notifyAdmins(d); return;
+  }
   if (u.is_active === false) {
     await sendText(from,'Your LMMM AI Maintenance access is inactive. Contact Super Admin for reactivation.');
     return;
   }
-  if (u.approval_status === 'rejected' || u.approval_status === 'removed') {
+  if (u.approval_status === 'rejected') {
     await sendText(from,'Your registration is not active. Contact Super Admin.');
     return;
   }
