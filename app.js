@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.9.5
+// LMMM AI Maintenance V8.9.6
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -1069,36 +1069,52 @@ Caption: ${caption||'(none)'}`;
 
 async function extractPlainTechnicalV891(bytes,mime,filename,caption){
   if(!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY missing');
-  const prompt=`Read this uploaded source carefully for the RINL/VSP LMMM maintenance knowledge system.
-If it is only a school/competitive/trade exam question paper or unrelated general/personal content, start exactly with UNRELATED.
-Otherwise start exactly with TECHNICAL_REFERENCE.
-Then provide concise English source-faithful extraction. For drawing/parts/BOQ tables list every legible row you can read as:
-ROW | page | item | exact identifier | exact designation/description | quantity | unit | remarks
-Preserve identifiers exactly. Never invent equipment, dates, drawing numbers, quantities or maintenance events.
-For multi-page PDF inspect the uploaded PDF pages, not only the preview. No JSON. No markdown table.`;
-  const body={contents:[{parts:[{text:prompt},{inline_data:{mime_type:mime,data:bytes.toString('base64')}}]}],generationConfig:{maxOutputTokens:4096}};
-  const gx=await geminiGenerateWithFallbackV892(body,45000),r=gx.response;
-  console.log('[GEMINI_USED]',gx.model,'plain');
+  const prompt=`You are a document transcription engine, not a conversational assistant.
+Read the ENTIRE uploaded industrial document, including every available PDF page.
+Return ONLY data lines. Never explain your work, never repeat these instructions, never say "and so on", "wait", or "let's".
+If clearly unrelated to industrial plant/maintenance knowledge, output only: UNRELATED
+Otherwise output:
+DOC|<document type>|<short factual title>
+For EVERY legible drawing/part/BOQ/list row output exactly:
+ROW|<page>|<item number if printed>|<exact drawing/part/identifier>|<exact designation/description>|<quantity if printed>|<unit if printed>|<remarks if printed>
+If a field is absent leave it empty between separators.
+Preserve identifiers character-for-character. Do not invent values. Continue until all available pages are processed.`;
+  const body={contents:[{parts:[{text:prompt},{inline_data:{mime_type:mime,data:bytes.toString('base64')}}]}],
+    generationConfig:{maxOutputTokens:8192}};
+  const gx=await geminiGenerateWithFallbackV892(body,60000),r=gx.response;
+  console.log('[GEMINI_USED]',gx.model,'delimited-full-document');
   const j=await r.json(),txt=(j.candidates?.[0]?.content?.parts||[]).map(x=>x.text||'').join('').trim();
-  if(!txt) throw new Error('Plain extraction returned empty output');
-  if(/^UNRELATED\b/i.test(txt)) return {document_type:'UNRELATED',detected_languages:[],document_summary:'Unrelated to LMMM plant / maintenance knowledge.',full_text:txt,review_text_english:txt,extracted_items:[],records:[]};
-  const rows=[];
-  for(const line of txt.split(/\r?\n/)){
-    if(!/^ROW\s*\|/i.test(line)) continue;
-    const p=line.split('|').map(x=>x.trim());
-    rows.push({page:p[1]||null,item_no:p[2]||null,identifier:p[3]||null,description:p[4]||null,quantity:p[5]||null,unit:p[6]||null,remarks:p[7]||null});
+  if(!txt) throw new Error('Delimited extraction returned empty output');
+  if(/^UNRELATED\b/i.test(txt)) return {document_type:'UNRELATED',detected_languages:[],document_summary:'Unrelated to LMMM plant / maintenance knowledge.',full_text:'',review_text_english:'',extracted_items:[],records:[]};
+  const rows=[]; let docType='TECHNICAL_REFERENCE',title='Technical reference document';
+  for(const raw of txt.split(/\r?\n/)){
+    const line=raw.trim();
+    if(/^DOC\|/i.test(line)){const p=line.split('|');docType=(p[1]||docType).trim().toUpperCase().replace(/\s+/g,'_');title=(p.slice(2).join('|')||title).trim();continue;}
+    if(!/^ROW\|/i.test(line)) continue;
+    const p=line.split('|');
+    rows.push({page:(p[1]||'').trim()||null,item_no:(p[2]||'').trim()||null,identifier:(p[3]||'').trim()||null,description:(p[4]||'').trim()||null,quantity:(p[5]||'').trim()||null,unit:(p[6]||'').trim()||null,remarks:(p.slice(7).join('|')||'').trim()||null});
   }
-  const clean=txt.replace(/^TECHNICAL_REFERENCE\s*/i,'').trim();
-  return {document_type:'TECHNICAL_REFERENCE',detected_languages:['English'],document_summary:'Technical reference extracted from source.',full_text:clean,review_text_english:clean,extracted_items:rows,records:[{module:'KNOWLEDGE',area:null,equipment:null,sub_equipment:null,event_date:null,description:'Technical reference document; equipment mapping requires source-backed confirmation.',confidence:'NEEDS_REVIEW'}],_extraction_mode:'PLAIN_TEXT_FALLBACK'};
+  if(!rows.length) throw new Error('No structured rows were returned from technical reference');
+  const cleanRows=rows.filter((x,i,a)=>{
+    const k=[x.page,x.item_no,x.identifier,x.description,x.quantity,x.unit].join('|').toLowerCase();
+    return a.findIndex(y=>[y.page,y.item_no,y.identifier,y.description,y.quantity,y.unit].join('|').toLowerCase()===k)===i;
+  });
+  const preview=cleanRows.map(x=>[x.page&&`P${x.page}`,x.item_no,x.identifier,x.description,x.quantity,x.unit,x.remarks].filter(Boolean).join(' | ')).join('\n');
+  return {document_type:docType,detected_languages:['English'],document_summary:title,full_text:preview,review_text_english:preview,extracted_items:cleanRows,records:[],_extraction_mode:'DELIMITED_FULL_DOCUMENT'};
 }
+
 async function extractMaintenanceV874(bytes,mime,filename,caption){
+  if(/pdf|tiff|image/i.test(String(mime||''))){
+    try{return await extractPlainTechnicalV891(bytes,mime,filename,caption);}
+    catch(docErr){
+      console.error('[FULL_DOCUMENT_EXTRACT]',docErr);
+      try{return await extractMaintenanceCoreV887(bytes,mime,filename,caption,false);}
+      catch(structErr){console.error('[STRUCTURED_FALLBACK]',structErr);throw structErr;}
+    }
+  }
   try{return await extractMaintenanceCoreV887(bytes,mime,filename,caption,false);}
   catch(firstErr){
     console.error('[EXTRACT_PRIMARY]',firstErr);
-    if(/pdf|tiff|image/i.test(String(mime||''))){
-      try{return await extractPlainTechnicalV891(bytes,mime,filename,caption);}
-      catch(plainErr){console.error('[PLAIN_EXTRACTION_FALLBACK]',plainErr);throw plainErr;}
-    }
     try{return await extractMaintenanceCoreV887(bytes,mime,filename,caption,true);}
     catch(retryErr){console.error('[EXTRACT_RETRY]',retryErr);throw retryErr;}
   }
@@ -1730,4 +1746,4 @@ app.post('/webhook',(req,res)=>{
 });
 
 await initDB();
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.9.5 durable-ingest queue listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.9.6 complete-reference extraction listening on ${PORT}`));
