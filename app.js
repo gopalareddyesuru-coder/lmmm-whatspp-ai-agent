@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.0.2
+// LMMM AI Maintenance V8.0.3
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -127,6 +127,16 @@ async function sendText(to, body){
   });
   if(!r.ok) throw new Error(`WhatsApp send failed ${r.status}: ${await r.text()}`);
 }
+
+async function sendButtons(to, body, buttons){
+  if(!PHONE_NUMBER_ID || !ACCESS_TOKEN) throw new Error('Meta WhatsApp credentials missing');
+  const btns=(buttons||[]).slice(0,3).map(b=>({type:'reply',reply:{id:String(b.id).slice(0,256),title:String(b.title).slice(0,20)}}));
+  const r=await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${PHONE_NUMBER_ID}/messages`,{
+    method:'POST',headers:{Authorization:`Bearer ${ACCESS_TOKEN}`,'Content-Type':'application/json'},
+    body:JSON.stringify({messaging_product:'whatsapp',to,type:'interactive',interactive:{type:'button',body:{text:String(body).slice(0,1024)},action:{buttons:btns}}})
+  });
+  if(!r.ok) throw new Error(`WhatsApp button send failed ${r.status}: ${await r.text()}`);
+}
 async function initDB(){
   if(!pool) throw new Error('DATABASE_URL missing');
   await pool.query(`
@@ -214,22 +224,33 @@ async function removeRegistration(u,by){
 }
 async function notifyAdmins(u){
   for(const a of SUPER_ADMINS){
-    try{await sendText(a,`New registration pending\nName: ${u.name}\nEmployee No: ${u.employee_number}\nDesignation: ${u.designation||'-'}\nArea: ${u.area_of_working||'-'}\nSection: ${u.section_department||'-'}\nShift: ${u.shift||'-'}\n\nApprove: APPROVE ${u.employee_number}\nReject: REJECT ${u.employee_number}`);}catch(e){console.error('[ADMIN NOTIFY]',e.message);}
+    try{await sendButtons(a,
+`New registration pending
+
+Name: ${u.name}
+Employee No: ${u.employee_number}
+Designation: ${u.designation||'-'}
+Area: ${u.area_of_working||'-'}
+Section: ${u.section_department||'-'}
+Shift: ${u.shift||'-'}`,
+      [{id:`APPROVE:${u.employee_number}`,title:'Approve'},{id:`REJECT:${u.employee_number}`,title:'Reject'}]);
+    }catch(e){console.error('[ADMIN NOTIFY]',e.message);}
   }
 }
 async function adminCommand(from,text){
   if(!SUPER_ADMINS.has(normWA(from))) return false;
-  let m=text.match(/^approve\s+(\d+)$/i);
+  let m=text.match(/^APPROVE:(\d+)$/i) || text.match(/^approve\s+(\d+)$/i);
   if(m){
     const u=await byEmp(m[1]); if(!u){await sendText(from,'Employee not found.');return true;}
     const role=roleFromDesignation(u.designation);
     await pool.query(`UPDATE users SET approval_status='approved',is_active=true,operational_role=$2,updated_at=now() WHERE employee_number=$1`,[m[1],role]);
     await audit(u,'APPROVED',normWA(from),{role,area:u.area_of_working,designation:u.designation});
-    await sendText(u.whatsapp_number,'Welcome to LMMM Maintenance.');
+    await sendButtons(u.whatsapp_number,'Welcome to LMMM Maintenance.',[
+      {id:'MENU_SEARCH',title:'Search'},{id:'MENU_ADD',title:'Add Entry'},{id:'MENU_ACCOUNT',title:'My Account'}]);
     if(normWA(from)!==u.whatsapp_number) await sendText(from,`${u.name} / ${u.employee_number} approved.`);
     return true;
   }
-  m=text.match(/^reject\s+(\d+)$/i);
+  m=text.match(/^REJECT:(\d+)$/i) || text.match(/^reject\s+(\d+)$/i);
   if(m){
     const u=await byEmp(m[1]); if(!u){await sendText(from,'Employee not found.');return true;}
     await audit(u,'REJECTED',normWA(from),{});
@@ -238,7 +259,7 @@ async function adminCommand(from,text){
     if(normWA(from)!==u.whatsapp_number) await sendText(from,`${m[1]} rejected.`);
     return true;
   }
-  m=text.match(/^remove\s+(\d+)$/i);
+  m=text.match(/^REMOVE:(\d+)$/i) || text.match(/^remove\s+(\d+)$/i);
   if(m){
     const u=await byEmp(m[1]); if(!u){await sendText(from,'Employee not found.');return true;}
     await removeRegistration(u,normWA(from));
@@ -246,11 +267,11 @@ async function adminCommand(from,text){
     if(normWA(from)!==u.whatsapp_number) await sendText(from,`${m[1]} registration removed. Maintenance history preserved.`);
     return true;
   }
-  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.0.2 CLEAN REGISTRATION FOUNDATION');return true;}
+  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.0.3 REGISTRATION ACCEPTANCE');return true;}
   return false;
 }
-async function processMessage(from,text){
-  const clean=String(text||'').trim();
+async function processMessage(from,text,payload=''){
+  const clean=String(payload||text||'').trim();
   if(!clean) return;
   if(await adminCommand(from,clean)) return;
 
@@ -258,6 +279,29 @@ async function processMessage(from,text){
   const selfRemove=/^(remove|remov|delete)\s+me[.! ]*$/i.test(clean) || /^(exit|quit|deactivate)[.! ]*$/i.test(clean);
   let u=await byWA(from);
 
+  if(clean==='MENU_ACCOUNT'){
+    if(!u){await sendText(from,'You are not registered. Send Hi to register.');return;}
+    await sendButtons(from,`My Account
+Name: ${u.name}
+Employee No: ${u.employee_number}
+Designation: ${u.designation||'-'}
+Area: ${u.area_of_working||'-'}
+Section: ${u.section_department||'-'}
+Shift: ${u.shift||'-'}`,[{id:'REMOVE_ME_CONFIRM',title:'Remove Me'},{id:'ACCOUNT_BACK',title:'Back'}]); return;
+  }
+  if(clean==='ACCOUNT_BACK'){
+    await sendButtons(from,'How can I help you?',[{id:'MENU_SEARCH',title:'Search'},{id:'MENU_ADD',title:'Add Entry'},{id:'MENU_ACCOUNT',title:'My Account'}]);return;
+  }
+  if(clean==='REMOVE_ME_CONFIRM'){
+    if(!u){await sendText(from,'You are not registered. Send Hi to register.');return;}
+    await sendButtons(from,'Remove your LMMM Maintenance registration? Maintenance history will be preserved.',
+      [{id:'REMOVE_ME_YES',title:'Yes, Remove'},{id:'ACCOUNT_BACK',title:'Cancel'}]);return;
+  }
+  if(clean==='REMOVE_ME_YES'){
+    if(!u){await sendText(from,'You are not registered. Send Hi to register.');return;}
+    await removeRegistration(u,normWA(from));
+    await sendText(from,'Your registration has been removed. Maintenance history is preserved. Send Hi to re-register.');return;
+  }
   if(selfRemove){
     if(!u){await sendText(from,'You are not registered. Send Hi to register.');return;}
     await removeRegistration(u,normWA(from));
@@ -267,7 +311,8 @@ async function processMessage(from,text){
   if(greeting){
     if(!u){await sendText(from,registrationTemplate('Welcome to LMMM Maintenance. Please register:'));return;}
     if(u.approval_status==='pending'){await sendText(from,'Your registration is pending approval.');return;}
-    if(u.approval_status==='approved' && u.is_active){await sendText(from,'How can I help you?');return;}
+    if(u.approval_status==='approved' && u.is_active){
+      await sendButtons(from,'How can I help you?',[{id:'MENU_SEARCH',title:'Search'},{id:'MENU_ADD',title:'Add Entry'},{id:'MENU_ACCOUNT',title:'My Account'}]);return;}
     await sendText(from,registrationTemplate('Re-register for LMMM Maintenance:'));return;
   }
   if(!u){
@@ -288,8 +333,8 @@ async function processMessage(from,text){
 }
 
 app.get('/health', async (_req,res)=>{
-  try{await pool.query('SELECT 1');res.json({ok:true,version:'8.0.2',phase:'registration',db:true});}
-  catch(e){res.status(500).json({ok:false,version:'8.0.2',error:e.message});}
+  try{await pool.query('SELECT 1');res.json({ok:true,version:'8.0.3',phase:'registration',db:true});}
+  catch(e){res.status(500).json({ok:false,version:'8.0.3',error:e.message});}
 });
 app.get('/webhook',(req,res)=>{
   const mode=req.query['hub.mode'], token=req.query['hub.verify_token'], challenge=req.query['hub.challenge'];
@@ -300,10 +345,14 @@ app.post('/webhook',(req,res)=>{
   res.sendStatus(200);
   const entries=req.body?.entry||[];
   for(const e of entries) for(const c of e.changes||[]) for(const m of c.value?.messages||[]){
-    if(m.type!=='text') continue;
-    processMessage(normWA(m.from),m.text?.body||'').catch(err=>console.error('[MESSAGE]',err));
+    let text='', payload='';
+    if(m.type==='text') text=m.text?.body||'';
+    else if(m.type==='interactive' && m.interactive?.type==='button_reply'){
+      text=m.interactive.button_reply?.title||''; payload=m.interactive.button_reply?.id||'';
+    } else continue;
+    processMessage(normWA(m.from),text,payload).catch(err=>console.error('[MESSAGE]',err));
   }
 });
 
 await initDB();
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.0.2 registration foundation listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.0.3 registration foundation listening on ${PORT}`));

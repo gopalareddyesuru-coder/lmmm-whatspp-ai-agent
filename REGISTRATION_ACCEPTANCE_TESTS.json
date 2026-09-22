@@ -1,0 +1,15 @@
+{
+  "version": "8.0.3",
+  "static_code_path_tests": {
+    "positional_input": true,
+    "canonicalization": true,
+    "approval_buttons": true,
+    "approved_hi_menu": true,
+    "remove_confirmation": true,
+    "button_webhook": true,
+    "superadmin_preserved": true,
+    "history_preserved": true
+  },
+  "result": "PASS",
+  "live_e2e": "PENDING DEPLOYMENT"
+}
