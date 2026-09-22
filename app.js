@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.8.0
+// LMMM AI Maintenance V8.8.1
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -990,27 +990,47 @@ async function clearPendingIngestV877(from,id,status='DISCARDED'){
 async function showIngestOptionsV877(from,p){
   const pack=ingestPackV878(p);
   await sendText(from,ingestPreviewV877(pack,p.source_filename));
-  await sendFullExtractionV878(from,p);
-  await sendList(from,'What do you want to do with this file?','Choose',[
-    {id:'INGEST_STORE_VERIFIED',title:'Store Data',description:'Store only verified, complete maintenance data'},
+  await sendAdaptiveExtractionPreviewV881(from,p);
+  await sendList(from,'Check the extracted data, then choose','Choose',[
+    {id:'INGEST_STORE_VERIFIED',title:'Store Data',description:'Store only verified maintenance data'},
     {id:'INGEST_CONVERT',title:'Convert / Export',description:'PDF, Excel, TXT, CSV or JSON'}
   ],'File Action');
 }
-async function sendFullExtractionV878(from,p){
-  const pack=ingestPackV878(p);
+function adaptivePreviewStatsV881(pack){
   const text=String(pack.full_text||'').trim();
   const items=Array.isArray(pack.extracted_items)?pack.extracted_items:[];
-  if(!text && !items.length){await sendText(from,'Detailed extraction unavailable. Nothing has been stored.');return;}
-  const body=`FULL EXTRACTION — NOT STORED\n\n${text}`;
-  if(body.length<=7600){
-    for(let i=0;i<body.length;i+=3800) await sendText(from,body.slice(i,i+3800));
-  }else{
-    await sendText(from,`Full extraction completed (${text.length} characters${items.length?`, ${items.length} structured items`:''}). I am sending the complete extraction as a TXT file to keep WhatsApp clean.`);
-    const base=String(p.source_filename||'extraction').replace(/\.[^.]+$/,'').replace(/[^a-zA-Z0-9._-]+/g,'_').slice(0,80)||'extraction';
-    await sendGeneratedDocumentV878(from,Buffer.from(text,'utf8'),`${base}_full_extraction.txt`,'text/plain');
-  }
-  if(items.length) await sendText(from,`Structured items extracted: ${items.length}. Nothing is stored until you choose Store Data.`);
+  const records=Array.isArray(pack.records)?pack.records:[];
+  // One clean WhatsApp message for small/medium data; large/tabular data becomes a private review PDF.
+  const tableHeavy=items.length>12 || records.length>10;
+  const large=text.length>3200 || tableHeavy;
+  return {text,items,records,large};
 }
+async function sendAdaptiveExtractionPreviewV881(from,p){
+  const pack=ingestPackV878(p),st=adaptivePreviewStatsV881(pack);
+  if(!st.text && !st.items.length && !st.records.length){
+    await sendText(from,'Detailed extraction unavailable. Nothing has been stored.');
+    return;
+  }
+  if(!st.large){
+    let body=`EXTRACTED DATA — NOT STORED\n\n${st.text}`;
+    if(st.items.length){
+      const rows=st.items.slice(0,8).map((x,i)=>`${i+1}. ${x.identifier||x.item_no||''} ${x.description||''}${x.quantity?` | Qty: ${x.quantity}${x.unit?` ${x.unit}`:''}`:''}`.trim()).join('\n');
+      if(rows && !st.text.includes(rows)) body+=`\n\n${rows}`;
+    }
+    await sendText(from,body.slice(0,3800));
+    return;
+  }
+  const pdf=tablePdfV880(pack,p.source_filename);
+  const base=String(p.source_filename||'extraction').replace(/\.[^.]+$/,'').replace(/[^a-zA-Z0-9._-]+/g,'_').slice(0,70)||'extraction';
+  await sendText(from,`Extraction complete. This file contains ${st.items.length||st.records.length||'large'} detailed item(s), so I prepared a clean review PDF instead of sending long WhatsApp messages.\n\nNothing is stored until you choose Store Data.`);
+  // This PDF is a private preview of the uploader's own submitted file, not a repository/report export.
+  await sendGeneratedDocumentV878(from,pdf,`${base}_review.pdf`,'application/pdf');
+}
+// Project-wide rule:
+// - A user may always receive an automatic review PDF generated solely from the file that SAME user just uploaded,
+//   even without PDF_REPORT authority, because it is only a private pre-storage verification aid.
+// - Any PDF/report generated from stored/retrieved data for any user remains governed by that user's normal authorities/scope.
+async function sendFullExtractionV878(from,p){ return sendAdaptiveExtractionPreviewV881(from,p); }
 function escPdfV879(v){return String(v??'').replace(/\\/g,'\\\\').replace(/\(/g,'\\(').replace(/\)/g,'\\)').replace(/[^\x20-\x7E]/g,'?');}
 function reportRowsV880(pack){
   const items=Array.isArray(pack.extracted_items)&&pack.extracted_items.length?pack.extracted_items:(pack.records||[]);
