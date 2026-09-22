@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.9.0
+// LMMM AI Maintenance V8.9.1
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -981,7 +981,7 @@ Caption: ${caption||'(none)'}
 Filename: ${filename||'(unknown)'}
 Source format: ${ext||sendMime}.`;
   const body={contents:[{parts:[{text:prompt},{inline_data:{mime_type:sendMime,data:bytes.toString('base64')}}]}],
-    generationConfig:{temperature:0.02,responseMimeType:'application/json',maxOutputTokens:6144}};
+    generationConfig:{temperature:0.02,responseMimeType:'application/json',maxOutputTokens:4096}};
   const r=await geminiFetchV890(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)},45000);
   if(!r.ok) throw new Error(`Gemini extraction failed ${r.status}: ${(await r.text()).slice(0,500)}`);
   const j=await r.json(),txt=(j.candidates?.[0]?.content?.parts||[]).map(x=>x.text||'').join('');
@@ -1020,7 +1020,7 @@ Do not duplicate table rows in records.
 Filename: ${filename||'(unknown)'}
 Caption: ${caption||'(none)'}`;
   const body={contents:[{parts:[{text:prompt},{inline_data:{mime_type:mime,data:bytes.toString('base64')}}]}],
-    generationConfig:{temperature:0,responseMimeType:'application/json',maxOutputTokens:6144}};
+    generationConfig:{temperature:0,responseMimeType:'application/json',maxOutputTokens:4096}};
   const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`,{
     method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)
   });
@@ -1034,22 +1034,39 @@ Caption: ${caption||'(none)'}`;
   return out;
 }
 
+
+async function extractPlainTechnicalV891(bytes,mime,filename,caption){
+  if(!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY missing');
+  const prompt=`Read this uploaded source carefully for the RINL/VSP LMMM maintenance knowledge system.
+If it is only a school/competitive/trade exam question paper or unrelated general/personal content, start exactly with UNRELATED.
+Otherwise start exactly with TECHNICAL_REFERENCE.
+Then provide concise English source-faithful extraction. For drawing/parts/BOQ tables list every legible row you can read as:
+ROW | page | item | exact identifier | exact designation/description | quantity | unit | remarks
+Preserve identifiers exactly. Never invent equipment, dates, drawing numbers, quantities or maintenance events.
+For multi-page PDF inspect the uploaded PDF pages, not only the preview. No JSON. No markdown table.`;
+  const body={contents:[{parts:[{text:prompt},{inline_data:{mime_type:mime,data:bytes.toString('base64')}}]}],generationConfig:{temperature:0,maxOutputTokens:4096}};
+  const r=await geminiFetchV890(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)},45000);
+  if(!r.ok) throw new Error(`Plain extraction failed ${r.status}: ${(await r.text()).slice(0,500)}`);
+  const j=await r.json(),txt=(j.candidates?.[0]?.content?.parts||[]).map(x=>x.text||'').join('').trim();
+  if(!txt) throw new Error('Plain extraction returned empty output');
+  if(/^UNRELATED\b/i.test(txt)) return {document_type:'UNRELATED',detected_languages:[],document_summary:'Unrelated to LMMM plant / maintenance knowledge.',full_text:txt,review_text_english:txt,extracted_items:[],records:[]};
+  const rows=[];
+  for(const line of txt.split(/\r?\n/)){
+    if(!/^ROW\s*\|/i.test(line)) continue;
+    const p=line.split('|').map(x=>x.trim());
+    rows.push({page:p[1]||null,item_no:p[2]||null,identifier:p[3]||null,description:p[4]||null,quantity:p[5]||null,unit:p[6]||null,remarks:p[7]||null});
+  }
+  const clean=txt.replace(/^TECHNICAL_REFERENCE\s*/i,'').trim();
+  return {document_type:'TECHNICAL_REFERENCE',detected_languages:['English'],document_summary:'Technical reference extracted from source.',full_text:clean,review_text_english:clean,extracted_items:rows,records:[{module:'KNOWLEDGE',area:null,equipment:null,sub_equipment:null,event_date:null,description:'Technical reference document; equipment mapping requires source-backed confirmation.',confidence:'NEEDS_REVIEW'}],_extraction_mode:'PLAIN_TEXT_FALLBACK'};
+}
 async function extractMaintenanceV874(bytes,mime,filename,caption){
-  try{
-    return await extractMaintenanceCoreV887(bytes,mime,filename,caption,false);
-  }catch(firstErr){
+  try{return await extractMaintenanceCoreV887(bytes,mime,filename,caption,false);}
+  catch(firstErr){
     console.error('[EXTRACT_PRIMARY]',firstErr);
     if(/pdf|tiff|image/i.test(String(mime||''))){
-      try{
-        const fb=await extractReferenceFallbackV889(bytes,mime,filename,caption);
-        fb._extraction_mode='REFERENCE_FALLBACK';
-        return fb;
-      }catch(fallbackErr){
-        console.error('[REFERENCE_FALLBACK]',fallbackErr);
-        throw fallbackErr;
-      }
+      try{return await extractPlainTechnicalV891(bytes,mime,filename,caption);}
+      catch(plainErr){console.error('[PLAIN_EXTRACTION_FALLBACK]',plainErr);throw plainErr;}
     }
-    // voice/audio/small non-reference input gets one compact retry.
     try{return await extractMaintenanceCoreV887(bytes,mime,filename,caption,true);}
     catch(retryErr){console.error('[EXTRACT_RETRY]',retryErr);throw retryErr;}
   }
@@ -1350,7 +1367,7 @@ async function processMediaMessageV874(from,m){
     const msg=String(e.message||e);
     if(msg.startsWith('UNSUPPORTED:')) await sendText(from,'Unsupported file type. Supported test formats: PDF, TIFF/images, TXT/CSV, Word, Excel, Access MDB/ACCDB and WhatsApp voice/audio. Nothing was stored.');
     else if(/audio|ogg|opus|voice/i.test(msg)) await sendText(from,'Voice extraction failed for this audio format. Nothing was stored. Please resend the voice note; the bot will retry with the supported audio path.');
-    else await sendText(from,'Extraction failed for this source. Nothing was stored.');
+    else await sendText(from,'Extraction could not be read from this source. Nothing was stored.');
   }
 }
 
@@ -1629,4 +1646,4 @@ app.post('/webhook',(req,res)=>{
 });
 
 await initDB();
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.9.0 fast-extraction-path listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.9.1 plain-text-rescue-extraction listening on ${PORT}`));
