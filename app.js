@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.9.4
+// LMMM AI Maintenance V8.9.5
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -393,6 +393,11 @@ async function initDB(){
     );
     CREATE INDEX IF NOT EXISTS idx_pending_ingest_user ON pending_file_ingests(submitted_by_whatsapp,status,created_at);
   `);
+  await pool.query(`ALTER TABLE pending_file_ingests ADD COLUMN IF NOT EXISTS source_bytes BYTEA`);
+  await pool.query(`ALTER TABLE pending_file_ingests ADD COLUMN IF NOT EXISTS retry_count INTEGER NOT NULL DEFAULT 0`);
+  await pool.query(`ALTER TABLE pending_file_ingests ADD COLUMN IF NOT EXISTS last_error TEXT`);
+  await pool.query(`ALTER TABLE pending_file_ingests ADD COLUMN IF NOT EXISTS next_retry_at TIMESTAMPTZ`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_pending_ingest_retry ON pending_file_ingests(status,next_retry_at,created_at)`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS employment_category TEXT`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS employee_type TEXT`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS reporting_to_employee_number TEXT`);
@@ -931,12 +936,8 @@ Caption: ${caption||'(none)'}`;
 
 
 function geminiModelCandidatesV892(){
-  const raw=[
-    'gemini-3.8-flash','gemini-3.7-flash','gemini-3.6-flash',
-    'gemini-3.5-flash','gemini-3.5-flash-lite','gemini-3.1-flash-lite',
-    process.env.GEMINI_FALLBACK_MODEL,GEMINI_MODEL,
-    'gemini-2.5-flash-lite','gemini-2.5-flash'
-  ].filter(Boolean).map(x=>String(x).trim()).filter(Boolean);
+  const raw=['gemini-3.8-flash','gemini-3.7-flash','gemini-3.6-flash','gemini-3.5-flash-lite','gemini-3.5-flash',process.env.GEMINI_FALLBACK_MODEL,GEMINI_MODEL]
+    .filter(Boolean).map(x=>String(x).trim()).filter(Boolean);
   return [...new Set(raw)];
 }
 async function geminiGenerateWithFallbackV892(body,timeoutMs=45000){
@@ -1370,6 +1371,48 @@ async function handlePendingIngestCommandV877(from,cmd){
   }
   return false;
 }
+async function extractQueuedIngestV895(from,row){
+  try{
+    await pool.query(`UPDATE pending_file_ingests SET status='EXTRACTING',retry_count=retry_count+1,last_error=NULL,updated_at=now() WHERE id=$1`,[row.id]);
+    const bytes=Buffer.from(row.source_bytes||[]);
+    if(!bytes.length) throw new Error('Queued source bytes unavailable');
+    const pack=await extractMaintenanceV874(bytes,row.source_mime_type||'application/octet-stream',row.source_filename||'upload',row.source_caption||'');
+    if(String(pack.document_type||'').toUpperCase()==='UNRELATED'){
+      await pool.query(`UPDATE pending_file_ingests SET status='UNRELATED',extracted_rows=$2::jsonb,updated_at=now() WHERE id=$1`,[row.id,JSON.stringify(packForDBV878(pack))]);
+      await sendText(from,'This upload is not relevant to LMMM plant / maintenance knowledge. Nothing was stored.');
+      return true;
+    }
+    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack))]);
+    await setPendingIngestSessionV877(from,row.id);
+    await setIngestModeV874(from,false);
+    await showIngestOptionsV877(from,q.rows[0]);
+    return true;
+  }catch(e){
+    const msg=String(e?.message||e).slice(0,1500);
+    console.error('[QUEUED_EXTRACT]',row.id,e);
+    await pool.query(`UPDATE pending_file_ingests SET status='RETRY_PENDING',last_error=$2,next_retry_at=now()+interval '2 minutes',updated_at=now() WHERE id=$1`,[row.id,msg]).catch(()=>{});
+    await setPendingIngestSessionV877(from,row.id).catch(()=>{});
+    await sendButtons(from,'Source is safely queued. AI is temporarily unavailable; no re-upload needed.',[
+      {id:'RETRY_LAST_UPLOAD',title:'Retry Extraction'},
+      {id:'INGEST_STATUS',title:'Check Status'}
+    ]);
+    return false;
+  }
+}
+async function retryLastQueuedV895(from){
+  const q=await pool.query(`SELECT * FROM pending_file_ingests WHERE submitted_by_whatsapp=$1 AND status IN ('RETRY_PENDING','RECEIVED','EXTRACTING') ORDER BY created_at DESC LIMIT 1`,[normWA(from)]);
+  if(!q.rows.length){await sendText(from,'No queued upload is waiting for extraction.');return true;}
+  await sendText(from,'Retrying the saved source now…');
+  await extractQueuedIngestV895(from,q.rows[0]);
+  return true;
+}
+async function queuedStatusV895(from){
+  const q=await pool.query(`SELECT id,source_filename,status,retry_count,last_error,created_at,updated_at FROM pending_file_ingests WHERE submitted_by_whatsapp=$1 ORDER BY created_at DESC LIMIT 1`,[normWA(from)]);
+  if(!q.rows.length){await sendText(from,'No recent upload queue found.');return true;}
+  const r=q.rows[0];
+  await sendText(from,`Upload: ${r.source_filename||'source'}\nStatus: ${r.status}\nAttempts: ${r.retry_count}\nOriginal source: safely queued`);
+  return true;
+}
 async function processMediaMessageV874(from,m){
   try{
     const u=await byWA(from);
@@ -1377,33 +1420,43 @@ async function processMediaMessageV874(from,m){
     const obj=m[m.type]||{},caption=String(obj.caption||'').trim();
     const mediaId=obj.id;if(!mediaId){await sendText(from,'File media ID not available. Please resend.');return;}
     const isAudio=['audio','voice'].includes(m.type);
-    await sendText(from,isAudio?'Voice received. Detecting language & extracting…':'Received. Checking & extracting…');
+    await sendText(from,isAudio?'Voice received. Securing source & extracting…':'Received. Source secured; extracting…');
     const d=await downloadWhatsAppMediaV874(mediaId),mime=String(obj.mime_type||d.mime||'application/octet-stream').toLowerCase();
-    const guessedExt=(m.type==='audio'||m.type==='voice')?(String(obj.mime_type||'').includes('mpeg')?'.mp3':String(obj.mime_type||'').includes('mp4')?'.m4a':'.ogg'):'';
+    const guessedExt=isAudio?(String(obj.mime_type||'').includes('mpeg')?'.mp3':String(obj.mime_type||'').includes('mp4')?'.m4a':'.ogg'):'';
     const filename=obj.filename||`${m.type}_${mediaId}${guessedExt}`;
-    const ext=String(filename).toLowerCase().match(/\.([a-z0-9]+)$/)?.[1]||'';
-    const gateMime=mime.startsWith('audio/ogg')?'audio/ogg':mime.startsWith('audio/mp4')?'audio/mp4':mime.startsWith('audio/mpeg')?'audio/mpeg':mime;
-    // FAST PATH V8.9.0: do not make a separate AI relevance call before extraction.
-    // The extractor itself classifies unrelated content; this removes one network round-trip.
-    const crypto=await import('node:crypto');const sha=crypto.createHash('sha256').update(d.bytes).digest('hex');
-    const pack=await extractMaintenanceV874(d.bytes,mime,filename,caption);
-    if(String(pack.document_type||'').toUpperCase()==='UNRELATED'){
-      await sendText(from,'This upload is not relevant to LMMM plant / maintenance knowledge. Nothing was stored.');
-      return;
+    const crypto=await import('node:crypto'),sha=crypto.createHash('sha256').update(d.bytes).digest('hex');
+
+    // Idempotent queue: same user + same source hash is not duplicated.
+    let q=await pool.query(`SELECT * FROM pending_file_ingests WHERE submitted_by_whatsapp=$1 AND source_sha256=$2 ORDER BY created_at DESC LIMIT 1`,[normWA(from),sha]);
+    let row=q.rows[0];
+    if(!row){
+      q=await pool.query(`INSERT INTO pending_file_ingests
+        (submitted_by_whatsapp,submitted_by_employee_number,source_media_id,source_filename,source_mime_type,source_caption,source_sha256,source_bytes,extracted_rows,status)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,'RECEIVED') RETURNING *`,
+        [normWA(from),u.employee_number,mediaId,filename,mime,caption,sha,d.bytes,JSON.stringify({})]);
+      row=q.rows[0];
+    }else if(!row.source_bytes){
+      q=await pool.query(`UPDATE pending_file_ingests SET source_bytes=$2,source_media_id=$3,status=CASE WHEN status='UNRELATED' THEN status ELSE 'RECEIVED' END,updated_at=now() WHERE id=$1 RETURNING *`,[row.id,d.bytes,mediaId]);
+      row=q.rows[0];
     }
-    const q=await pool.query(`INSERT INTO pending_file_ingests(submitted_by_whatsapp,submitted_by_employee_number,source_media_id,source_filename,source_mime_type,source_caption,source_sha256,extracted_rows) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb) RETURNING *`,[normWA(from),u.employee_number,mediaId,filename,mime,caption,sha,JSON.stringify(packForDBV878(pack))]);
-    await setPendingIngestSessionV877(from,q.rows[0].id);await setIngestModeV874(from,false);await showIngestOptionsV877(from,q.rows[0]);
-   }catch(e){
+    await setPendingIngestSessionV877(from,row.id);
+    if(row.status==='PENDING_CONFIRMATION' && row.extracted_rows){
+      await showIngestOptionsV877(from,row); return;
+    }
+    if(row.status==='UNRELATED'){
+      await sendText(from,'This upload is not relevant to LMMM plant / maintenance knowledge. Nothing was stored.'); return;
+    }
+    await extractQueuedIngestV895(from,row);
+  }catch(e){
     console.error('[MEDIA_INGEST]',e);
-    const msg=String(e.message||e);
-    if(msg.startsWith('UNSUPPORTED:')) await sendText(from,'Unsupported file type. Supported test formats: PDF, TIFF/images, TXT/CSV, Word, Excel, Access MDB/ACCDB and WhatsApp voice/audio. Nothing was stored.');
-    else if(/audio|ogg|opus|voice/i.test(msg)) await sendText(from,'Voice extraction failed for this audio format. Nothing was stored. Please resend the voice note; the bot will retry with the supported audio path.');
-    else await sendText(from,'AI extraction service is temporarily unavailable across the configured models. Nothing was stored. Please retry shortly.');
+    await sendText(from,'Upload intake failed before secure queueing. Please resend this source once.');
   }
 }
 
 async function processMessage(from,text,payload=''){
   const cmd=String(payload||text||'').trim();
+  if(cmd==='RETRY_LAST_UPLOAD' || /^retry( extraction| upload)?$/i.test(cmd)){await retryLastQueuedV895(from);return;}
+  if(cmd==='INGEST_STATUS' || /^(upload |extraction )?status$/i.test(cmd)){await queuedStatusV895(from);return;}
   try{await pool.query(`CREATE TABLE IF NOT EXISTS ui_sessions(whatsapp_number TEXT NOT NULL,session_key TEXT NOT NULL,session_value JSONB,updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),PRIMARY KEY(whatsapp_number,session_key))`);}catch(e){console.error('[SESSION_SCHEMA]',e.message);}
   if(isOwner(from) && /^PURGE_TESTERS$/i.test(cmd)){await sendButtons(from,'Delete all TESTER registrations/profile/contact/roster data? MAIN users and Super Admin are preserved.',[{id:'PURGE_TESTERS_CONFIRM',title:'Confirm Delete'},{id:'BACK',title:'Cancel'}]);return;}
   if(isOwner(from) && cmd==='PURGE_TESTERS_CONFIRM'){const n=await purgeTesterUsersV854(normWA(from));await sendText(from,`✅ Tester cleanup completed.\nTester users removed: ${n}\nMAIN users preserved.`);return;}
@@ -1677,4 +1730,4 @@ app.post('/webhook',(req,res)=>{
 });
 
 await initDB();
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.9.4 Gemini3-compatible failover listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.9.5 durable-ingest queue listening on ${PORT}`));
