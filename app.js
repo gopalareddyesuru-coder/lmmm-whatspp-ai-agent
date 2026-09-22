@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.10.0 FAIL-SAFE CORE
+// LMMM AI Maintenance V8.11.0 MULTI-AI FAILOVER
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -15,6 +15,9 @@ const PHONE_NUMBER_ID = process.env.META_PHONE_NUMBER_ID || process.env.PHONE_NU
 const ACCESS_TOKEN = process.env.META_ACCESS_TOKEN || '';
 const DATABASE_URL = process.env.DATABASE_URL || '';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '';
+const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
+
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 const SUPER_ADMINS = new Set(
   String(process.env.SUPER_ADMIN_NUMBERS || process.env.SUPER_ADMIN_NUMBER || process.env.OWNER_NUMBERS || process.env.OWNER_NUMBER || '')
@@ -959,7 +962,51 @@ function geminiModelCandidatesV892(){
     .filter(Boolean).map(x=>String(x).trim()).filter(Boolean);
   return [...new Set(raw)];
 }
-async function geminiGenerateWithFallbackV892(body,timeoutMs=45000){
+function geminiBodyToOpenAIContentV8110(body){
+  const parts=body?.contents?.flatMap(x=>x.parts||[])||[], out=[];
+  for(const p of parts){
+    if(p.text) out.push({type:'text',text:String(p.text)});
+    const d=p.inline_data||p.inlineData;
+    if(d?.data){
+      const mime=String(d.mime_type||d.mimeType||'application/octet-stream');
+      const url=`data:${mime};base64,${d.data}`;
+      if(/^image\//i.test(mime)) out.push({type:'image_url',image_url:{url}});
+      else if(/pdf/i.test(mime)) out.push({type:'file',file:{filename:'document.pdf',file_data:url}});
+      else if(/^audio\//i.test(mime)) out.push({type:'input_audio',input_audio:{data:d.data,format:mime.includes('wav')?'wav':mime.includes('mpeg')?'mp3':'ogg'}});
+    }
+  }
+  return out;
+}
+function openAITextAsGeminiResponseV8110(text){
+  return {ok:true,status:200,json:async()=>({candidates:[{content:{parts:[{text:String(text||'')}]}}]})};
+}
+async function openRouterGenerateV8110(body,timeoutMs=60000){
+  if(!OPENROUTER_API_KEY) throw new Error('OPENROUTER_API_KEY missing');
+  const content=geminiBodyToOpenAIContentV8110(body);
+  const r=await geminiFetchV890('https://openrouter.ai/api/v1/chat/completions',{
+    method:'POST',headers:{Authorization:`Bearer ${OPENROUTER_API_KEY}`,'Content-Type':'application/json','X-Title':'LMMM AI Maintenance'},
+    body:JSON.stringify({model:process.env.OPENROUTER_MODEL||'openrouter/free',messages:[{role:'user',content}],max_tokens:body?.generationConfig?.maxOutputTokens||4096})
+  },timeoutMs);
+  if(!r.ok) throw new Error(`OpenRouter ${r.status}: ${(await r.text()).slice(0,500)}`);
+  const j=await r.json(),text=j?.choices?.[0]?.message?.content;
+  if(!text) throw new Error('OpenRouter empty response');
+  return {model:j.model||process.env.OPENROUTER_MODEL||'openrouter/free',response:openAITextAsGeminiResponseV8110(text),provider:'OPENROUTER'};
+}
+async function groqGenerateV8110(body,timeoutMs=60000){
+  if(!GROQ_API_KEY) throw new Error('GROQ_API_KEY missing');
+  const content=geminiBodyToOpenAIContentV8110(body);
+  // Groq vision accepts images; skip PDF/file/audio here so the durable queue can use another capable provider.
+  if(content.some(x=>x.type==='file'||x.type==='input_audio')) throw new Error('Groq modality unsupported for this fallback');
+  const r=await geminiFetchV890('https://api.groq.com/openai/v1/chat/completions',{
+    method:'POST',headers:{Authorization:`Bearer ${GROQ_API_KEY}`,'Content-Type':'application/json'},
+    body:JSON.stringify({model:process.env.GROQ_MODEL||'qwen/qwen3.8-27b',messages:[{role:'user',content}],max_completion_tokens:body?.generationConfig?.maxOutputTokens||4096})
+  },timeoutMs);
+  if(!r.ok) throw new Error(`Groq ${r.status}: ${(await r.text()).slice(0,500)}`);
+  const j=await r.json(),text=j?.choices?.[0]?.message?.content;
+  if(!text) throw new Error('Groq empty response');
+  return {model:j.model||process.env.GROQ_MODEL||'qwen/qwen3.8-27b',response:openAITextAsGeminiResponseV8110(text),provider:'GROQ'};
+}
+async function geminiOnlyGenerateWithFallbackV8110(body,timeoutMs=45000){
   let lastErr=null;
   for(const model of geminiModelCandidatesV892()){
     const url=`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`;
@@ -980,6 +1027,23 @@ async function geminiGenerateWithFallbackV892(body,timeoutMs=45000){
   }
   throw lastErr||new Error('All Gemini model attempts failed');
 }
+async function geminiGenerateWithFallbackV892(body,timeoutMs=45000){
+  const failures=[];
+  try{
+    const x=await geminiOnlyGenerateWithFallbackV8110(body,timeoutMs);
+    console.log('[AI_PROVIDER_OK] GEMINI',x.model); return {...x,provider:'GEMINI'};
+  }catch(e){failures.push(`GEMINI:${e.message}`);console.error('[AI_PROVIDER_FAIL] GEMINI',e.message);}
+  try{
+    const x=await groqGenerateV8110(body,timeoutMs);
+    console.log('[AI_PROVIDER_OK] GROQ',x.model); return x;
+  }catch(e){failures.push(`GROQ:${e.message}`);console.error('[AI_PROVIDER_FAIL] GROQ',e.message);}
+  try{
+    const x=await openRouterGenerateV8110(body,timeoutMs);
+    console.log('[AI_PROVIDER_OK] OPENROUTER',x.model); return x;
+  }catch(e){failures.push(`OPENROUTER:${e.message}`);console.error('[AI_PROVIDER_FAIL] OPENROUTER',e.message);}
+  throw new Error(`All AI providers failed | ${failures.join(' | ')}`);
+}
+
 async function geminiFetchV890(url,options,timeoutMs=45000){
   const c=new AbortController(),t=setTimeout(()=>c.abort(),timeoutMs);
   try{return await fetch(url,{...options,signal:c.signal});}
@@ -1034,7 +1098,7 @@ Source format: ${ext||sendMime}.`;
   const body={contents:[{parts:[{text:prompt},{inline_data:{mime_type:sendMime,data:bytes.toString('base64')}}]}],
     generationConfig:{responseMimeType:'application/json',maxOutputTokens:4096}};
   const gx=await geminiGenerateWithFallbackV892(body,45000),r=gx.response;
-  console.log('[GEMINI_USED]',gx.model,'structured');
+  console.log('[AI_USED]',gx.provider||'GEMINI',gx.model,'structured');
   const j=await r.json(),txt=(j.candidates?.[0]?.content?.parts||[]).map(x=>x.text||'').join('');
   const out=safeJsonV874(txt);
   if(Array.isArray(out)) return {document_type:'OTHER',detected_languages:[],document_summary:'',full_text:'',extracted_items:[],records:out.slice(0,250)};
@@ -1097,7 +1161,7 @@ For EVERY legible list/table row: ROW|page|item|exact identifier|exact designati
 Preserve identifiers exactly; leave absent fields empty; never invent. If no rows: NO_ROWS`;
     const body={contents:[{parts:[{text:prompt},{inline_data:{mime_type:mime,data:bytes.toString('base64')}}]}],generationConfig:{maxOutputTokens:4096}};
     const gx=await geminiGenerateWithFallbackV892(body,60000),r=gx.response;
-    console.log('[PDF_BATCH]',filename,start,end,gx.model);
+    console.log('[PDF_BATCH]',filename,start,end,gx.provider||'GEMINI',gx.model);
     const j=await r.json(),txt=(j.candidates?.[0]?.content?.parts||[]).map(x=>x.text||'').join('').trim();
     let added=0;
     for(const raw of txt.split(/\r?\n/)){
@@ -1128,7 +1192,7 @@ Preserve identifiers character-for-character. Do not invent values. Continue unt
   const body={contents:[{parts:[{text:prompt},{inline_data:{mime_type:mime,data:bytes.toString('base64')}}]}],
     generationConfig:{maxOutputTokens:8192}};
   const gx=await geminiGenerateWithFallbackV892(body,60000),r=gx.response;
-  console.log('[GEMINI_USED]',gx.model,'delimited-full-document');
+  console.log('[AI_USED]',gx.provider||'GEMINI',gx.model,'delimited-full-document');
   const j=await r.json(),txt=(j.candidates?.[0]?.content?.parts||[]).map(x=>x.text||'').join('').trim();
   if(!txt) throw new Error('Delimited extraction returned empty output');
   if(/^UNRELATED\b/i.test(txt)) return {document_type:'UNRELATED',detected_languages:[],document_summary:'Unrelated to LMMM plant / maintenance knowledge.',full_text:'',review_text_english:'',extracted_items:[],records:[]};
@@ -1826,4 +1890,4 @@ await initDB();
 recoverPendingWorkV8100().then(()=>failSafeWorkerV8100()).catch(e=>console.error('[FAILSAFE_STARTUP]',e));
 setInterval(()=>failSafeWorkerV8100().catch(e=>console.error('[FAILSAFE_INTERVAL]',e)),60000).unref();
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.10.0 FAIL-SAFE CORE listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.11.0 MULTI-AI FAILOVER listening on ${PORT}`));
