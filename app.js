@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.11.0 MULTI-AI FAILOVER
+// LMMM AI Maintenance V8.12.0 PDF FAILOVER + TEMP CLEANUP
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -407,6 +407,9 @@ async function initDB(){
   await pool.query(`ALTER TABLE pending_file_ingests ADD COLUMN IF NOT EXISTS delivery_pending BOOLEAN NOT NULL DEFAULT FALSE`);
   await pool.query(`ALTER TABLE pending_file_ingests ADD COLUMN IF NOT EXISTS archive_sync_status TEXT NOT NULL DEFAULT 'PENDING'`);
   await pool.query(`ALTER TABLE pending_file_ingests ADD COLUMN IF NOT EXISTS archive_file_id TEXT`);
+
+  await pool.query(`ALTER TABLE pending_file_ingests ADD COLUMN IF NOT EXISTS confirmation_expires_at TIMESTAMPTZ`);
+  await pool.query(`ALTER TABLE pending_file_ingests ADD COLUMN IF NOT EXISTS source_purged_at TIMESTAMPTZ`);
   await pool.query(`CREATE TABLE IF NOT EXISTS reliability_events(
     id BIGSERIAL PRIMARY KEY,
     ingest_id BIGINT,
@@ -985,7 +988,12 @@ async function openRouterGenerateV8110(body,timeoutMs=60000){
   const content=geminiBodyToOpenAIContentV8110(body);
   const r=await geminiFetchV890('https://openrouter.ai/api/v1/chat/completions',{
     method:'POST',headers:{Authorization:`Bearer ${OPENROUTER_API_KEY}`,'Content-Type':'application/json','X-Title':'LMMM AI Maintenance'},
-    body:JSON.stringify({model:process.env.OPENROUTER_MODEL||'openrouter/free',messages:[{role:'user',content}],max_tokens:body?.generationConfig?.maxOutputTokens||4096})
+    body:JSON.stringify({
+      model:process.env.OPENROUTER_MODEL||'openrouter/free',
+      messages:[{role:'user',content}],
+      max_tokens:body?.generationConfig?.maxOutputTokens||4096,
+      ...(content.some(x=>x.type==='file') ? {plugins:[{id:'file-parser',pdf:{engine:'pdf-text'}}]} : {})
+    })
   },timeoutMs);
   if(!r.ok) throw new Error(`OpenRouter ${r.status}: ${(await r.text()).slice(0,500)}`);
   const j=await r.json(),text=j?.choices?.[0]?.message?.content;
@@ -1520,7 +1528,8 @@ async function extractQueuedIngestV895(from,row){
       await sendText(from,'This upload is not relevant to LMMM plant / maintenance knowledge. Nothing was stored.');
       return true;
     }
-    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.10.0',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack))]);
+    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.12.0',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack))]);
+    await armTemporarySourceExpiryV8120(ingestId);
     await reliabilityEventV8100(row,'AI_EXTRACTION','SUCCEEDED',pack?._provider||null);
     await pool.query(`UPDATE pending_file_ingests SET workflow_state='SOURCE_SECURED',updated_at=now() WHERE id=$1`,[row.id]).catch(()=>{});
     await reliabilityEventV8100(row,'INTAKE','SOURCE_SECURED');
@@ -1540,7 +1549,97 @@ async function extractQueuedIngestV895(from,row){
     return false;
   }
 }
+
+const TEMP_CONFIRMATION_MINUTES_V8120 = Math.max(1, Number(process.env.UPLOAD_CONFIRMATION_MINUTES || 10));
+
+async function armTemporarySourceExpiryV8120(ingestId){
+  if(!ingestId) return;
+  await pool.query(`
+    UPDATE pending_file_ingests
+       SET confirmation_expires_at = NOW() + ($2::text || ' minutes')::interval
+     WHERE id=$1
+       AND workflow_state='CONFIRMATION_PENDING'
+       AND source_bytes IS NOT NULL
+  `,[ingestId,TEMP_CONFIRMATION_MINUTES_V8120]);
+}
+
+
+async function purgeConfirmedSourceBytesV8120(ingestId){
+  if(!ingestId) return;
+  await pool.query(`
+    UPDATE pending_file_ingests
+       SET source_bytes=NULL,
+           source_purged_at=NOW(),
+           confirmation_expires_at=NULL
+     WHERE id=$1
+  `,[ingestId]);
+  await reliabilityEventV8100(ingestId,'CLEANUP','CONFIRMED_SOURCE_PURGED',null,'Structured data retained; temporary upload bytes purged');
+}
+
+async function purgeExpiredTemporarySourcesV8120(){
+  const r=await pool.query(`
+    UPDATE pending_file_ingests
+       SET source_bytes=NULL,
+           extracted_rows=NULL,
+           source_purged_at=NOW(),
+           workflow_state='EXPIRED',
+           status='EXPIRED',
+           last_error=COALESCE(last_error,'Confirmation window expired; temporary source purged')
+     WHERE source_bytes IS NOT NULL
+       AND confirmation_expires_at IS NOT NULL
+       AND confirmation_expires_at <= NOW()
+       AND workflow_state='CONFIRMATION_PENDING'
+     RETURNING id
+  `);
+  for(const row of r.rows){
+    await reliabilityEventV8100(row.id,'CLEANUP','SOURCE_PURGED',null,'10-minute confirmation window expired');
+  }
+  return r.rowCount||0;
+}
+
+async function purgeRejectedTemporarySourcesV8120(){
+  const r=await pool.query(`
+    UPDATE pending_file_ingests
+       SET source_bytes=NULL,
+           extracted_rows=NULL,
+           source_purged_at=NOW()
+     WHERE source_bytes IS NOT NULL
+       AND (
+         status IN ('REJECTED','UNRELATED','CANCELLED')
+         OR workflow_state IN ('REJECTED','UNRELATED','CANCELLED')
+       )
+     RETURNING id
+  `);
+  return r.rowCount||0;
+}
+
+async function oneTimeLegacySourceCleanupV8120(){
+  // Clears old upload binaries only. Confirmed maintenance/history records live in their own tables and are untouched.
+  const r=await pool.query(`
+    UPDATE pending_file_ingests
+       SET source_bytes=NULL,
+           source_purged_at=COALESCE(source_purged_at,NOW())
+     WHERE source_bytes IS NOT NULL
+       AND created_at < NOW() - INTERVAL '10 minutes'
+       AND workflow_state NOT IN ('AI_PROCESSING','EXTRACTING','RETRY_PENDING','SOURCE_SECURED','RECEIVED')
+       AND status NOT IN ('RETRY_PENDING','RECEIVED','PROCESSING')
+     RETURNING id
+  `);
+  return r.rowCount||0;
+}
 async function failSafeWorkerV8100(){
+  try{
+    await pool.query(`
+      UPDATE pending_file_ingests
+         SET confirmation_expires_at = NOW() + ($1::text || ' minutes')::interval
+       WHERE workflow_state='CONFIRMATION_PENDING'
+         AND source_bytes IS NOT NULL
+         AND confirmation_expires_at IS NULL
+    `,[TEMP_CONFIRMATION_MINUTES_V8120]);
+    await purgeExpiredTemporarySourcesV8120();
+    await purgeRejectedTemporarySourcesV8120();
+  }catch(e){ console.error('[TEMP_CLEANUP_FAIL]',e.message); }
+
   let lock=false;
   try{
     const lk=await pool.query(`SELECT pg_try_advisory_lock(3518100) AS ok`); lock=!!lk.rows?.[0]?.ok;
@@ -1890,4 +1989,12 @@ await initDB();
 recoverPendingWorkV8100().then(()=>failSafeWorkerV8100()).catch(e=>console.error('[FAILSAFE_STARTUP]',e));
 setInterval(()=>failSafeWorkerV8100().catch(e=>console.error('[FAILSAFE_INTERVAL]',e)),60000).unref();
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.11.0 MULTI-AI FAILOVER listening on ${PORT}`));
+
+setTimeout(async()=>{
+  try{
+    const n=await oneTimeLegacySourceCleanupV8120();
+    console.log('[V8120_LEGACY_SOURCE_CLEANUP]',n);
+  }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
+},30000);
+
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.12.0 PDF FAILOVER + TEMP CLEANUP listening on ${PORT}`));
