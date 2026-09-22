@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.7.4
+// LMMM AI Maintenance V8.7.8
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -278,6 +278,24 @@ async function sendList(to, body, buttonText, rows, sectionTitle='Options'){
     method:'POST',headers:{Authorization:`Bearer ${ACCESS_TOKEN}`,'Content-Type':'application/json'},body:JSON.stringify(payload)
   });
   if(!r.ok) throw new Error(`WhatsApp list send failed ${r.status}: ${await r.text()}`);
+}
+
+
+async function sendGeneratedDocumentV878(to, bytes, filename, mime='text/plain'){
+  if(!PHONE_NUMBER_ID || !ACCESS_TOKEN) throw new Error('Meta WhatsApp credentials missing');
+  const fd=new FormData();
+  fd.append('messaging_product','whatsapp');
+  fd.append('file',new Blob([bytes],{type:mime}),filename);
+  const up=await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${PHONE_NUMBER_ID}/media`,{
+    method:'POST',headers:{Authorization:`Bearer ${ACCESS_TOKEN}`},body:fd
+  });
+  if(!up.ok) throw new Error(`WhatsApp media upload failed ${up.status}: ${await up.text()}`);
+  const uj=await up.json(); if(!uj.id) throw new Error('WhatsApp media upload returned no id');
+  const r=await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${PHONE_NUMBER_ID}/messages`,{
+    method:'POST',headers:{Authorization:`Bearer ${ACCESS_TOKEN}`,'Content-Type':'application/json'},
+    body:JSON.stringify({messaging_product:'whatsapp',to,type:'document',document:{id:uj.id,filename}})
+  });
+  if(!r.ok) throw new Error(`WhatsApp document send failed ${r.status}: ${await r.text()}`);
 }
 
 async function initDB(){
@@ -897,17 +915,65 @@ async function extractMaintenanceV874(bytes,mime,filename,caption){
   const supportedExt=new Set(Object.keys(extMime));
   if(!supportedExt.has(ext) && !['application/pdf','image/jpeg','image/png','image/webp','image/tiff','text/plain','text/csv'].some(x=>mime0.startsWith(x))) throw new Error(`UNSUPPORTED:${mime0}`);
   const sendMime=(mime0==='application/octet-stream'||mime0==='binary/octet-stream')?(extMime[ext]||mime0):mime0;
-  const prompt=`You are the cautious ingestion extractor for RINL/VSP LMMM Dept-35. FIRST classify the WHOLE document before extracting rows. The source may be English, Telugu, Hindi, Tenglish, handwriting, tables or mixed language. Never treat arbitrary text lines, exam/question-paper content, headers, BOQ lines, drawing-list rows, or general reference material as maintenance events merely because text was extracted.\n\nReturn ONLY a JSON array. For genuine event/transaction data, split only real independent events by explicit date/equipment. For reference documents such as BOQ, drawing lists, manuals or technical reference, return a small number of document-level records, not one record per text line; use module DRAWING_DOCS or MANUAL_REFERENCE as appropriate. For content unrelated to LMMM maintenance, return one NEEDS_REVIEW record with description explaining that the source is not confidently maintenance data.\n\nNormalize maintenance meaning into concise technical English, but preserve exact original Equipment/SAP/Sub-equipment/Drawing/Part numbers, numeric readings and source meaning. Never invent identifiers, equipment, dates, readings, actions, status or relationships. Ambiguous equipment/date/module => null and confidence NEEDS_REVIEW. Allowed module values: LOG_BOOK, BREAKDOWN_DELAY, DEFECT, JOB, PM, INSPECTION, CBM_VIBRATION, HISTORY, SPARES, DRAWING_DOCS, MANUAL_REFERENCE, SHUTDOWN, ATTENDANCE, MANPOWER, NEEDS_REVIEW. Fields: module, area, equipment, sub_equipment, event_date (YYYY-MM-DD or null), event_time (HH:MM:SS or null), shift, description, action_taken, status, remarks, confidence (HIGH/MEDIUM/NEEDS_REVIEW). Caption: ${caption||'(none)'}. Filename: ${filename||'(unknown)'}. Source format: ${ext||sendMime}.`;
-  const body={contents:[{parts:[{text:prompt},{inline_data:{mime_type:sendMime,data:bytes.toString('base64')}}]}],generationConfig:{temperature:0.05,responseMimeType:'application/json'}};
+  const prompt=`You are the source-faithful file extraction and maintenance classification engine for RINL/VSP LMMM Dept-35.
+
+The source may contain English, Telugu, Hindi, Tenglish, handwriting, scans, tables, BOQ, drawings lists, manuals, spreadsheets or maintenance records.
+
+CRITICAL RULES:
+1. Read the WHOLE source, not only a summary. Transcribe all legible meaningful text and table rows in source order into full_text. Do not intentionally omit BOQ items, drawing numbers, part numbers, quantities, dates, headings or maintenance lines. If something is unreadable, write [UNREADABLE] instead of guessing.
+2. Separately classify the whole document. A BOQ/drawing list/manual/reference document is NOT a set of maintenance events.
+3. Never invent or expand Equipment/SAP/Sub-equipment/Drawing/Part identifiers. A generic phrase such as "mill equipment", "repair of mill equipment", a contractor name or document title is NOT an equipment identity. If an exact equipment mapping is not supported by the source, equipment=null and confidence=NEEDS_REVIEW.
+4. For genuine transaction/event content, split only real independent events by explicit equipment/date. For reference documents, use one document-level record and preserve detailed rows in extracted_items.
+5. Normalize the maintenance meaning into concise technical English in records, while full_text preserves source language/content. Preserve exact identifiers/numbers/readings.
+6. Unrelated content (for example an exam/question paper) must be document_type=UNRELATED and the record must be NEEDS_REVIEW; it must never become maintenance history.
+7. Missing or ambiguous date/equipment/module => null where appropriate and NEEDS_REVIEW. Never use today's date for historical source data.
+
+Return ONLY one JSON object:
+{
+ "document_type":"MAINTENANCE_EVENT|LOGBOOK|BOQ|DRAWING_LIST|MANUAL|REFERENCE|SPREADSHEET|UNRELATED|OTHER",
+ "detected_languages":["..."],
+ "document_summary":"short source-faithful summary",
+ "full_text":"complete legible transcription in source order",
+ "extracted_items":[{"item_no":"","identifier":"","description":"","quantity":"","unit":"","remarks":""}],
+ "records":[
+  {"module":"LOG_BOOK|BREAKDOWN_DELAY|DEFECT|JOB|PM|INSPECTION|CBM_VIBRATION|HISTORY|SPARES|DRAWING_DOCS|MANUAL_REFERENCE|SHUTDOWN|ATTENDANCE|MANPOWER|NEEDS_REVIEW",
+   "area":null,"equipment":null,"sub_equipment":null,"event_date":null,"event_time":null,"shift":null,
+   "description":"","action_taken":null,"status":null,"remarks":null,"confidence":"HIGH|MEDIUM|NEEDS_REVIEW"}
+ ]
+}
+Caption: ${caption||'(none)'}
+Filename: ${filename||'(unknown)'}
+Source format: ${ext||sendMime}.`;
+  const body={contents:[{parts:[{text:prompt},{inline_data:{mime_type:sendMime,data:bytes.toString('base64')}}]}],
+    generationConfig:{temperature:0.02,responseMimeType:'application/json',maxOutputTokens:16384}};
   const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   if(!r.ok) throw new Error(`Gemini extraction failed ${r.status}: ${(await r.text()).slice(0,500)}`);
   const j=await r.json(),txt=(j.candidates?.[0]?.content?.parts||[]).map(x=>x.text||'').join('');
-  const out=safeJsonV874(txt); if(!Array.isArray(out)) throw new Error('Extraction JSON invalid'); return out.slice(0,250);
+  const out=safeJsonV874(txt);
+  if(Array.isArray(out)) return {document_type:'OTHER',detected_languages:[],document_summary:'',full_text:'',extracted_items:[],records:out.slice(0,250)};
+  if(!out || !Array.isArray(out.records)) throw new Error('Extraction JSON invalid');
+  return {
+    document_type:String(out.document_type||'OTHER').toUpperCase(),
+    detected_languages:Array.isArray(out.detected_languages)?out.detected_languages.slice(0,10):[],
+    document_summary:String(out.document_summary||'').slice(0,4000),
+    full_text:String(out.full_text||'').slice(0,120000),
+    extracted_items:Array.isArray(out.extracted_items)?out.extracted_items.slice(0,1000):[],
+    records:out.records.slice(0,250)
+  };
 }
-function ingestPreviewV877(rows,filename){
-  const review=rows.filter(x=>String(x.confidence||'').toUpperCase()==='NEEDS_REVIEW').length;
-  const lines=rows.slice(0,6).map((x,i)=>`${i+1}. ${String(x.module||'NEEDS_REVIEW').toUpperCase()} | ${x.equipment||'Equipment: not confirmed'} | ${x.event_date||'Date: not confirmed'}\n${String(x.description||'-').slice(0,180)}`);
-  return `File extracted — NOT STORED yet\nSource: ${filename}\nRecords found: ${rows.length}\nNeeds Review: ${review}\n\n${lines.join('\n\n')}${rows.length>6?`\n\n+${rows.length-6} more record(s)`:''}\n\nPlease choose what to do with this extraction.`;
+function ingestPackV878(p){
+  const raw=Array.isArray(p?.extracted_rows)?p.extracted_rows:[];
+  if(raw.length===1 && raw[0] && raw[0].__v878_pack) return raw[0].__v878_pack;
+  return {document_type:'OTHER',detected_languages:[],document_summary:'',full_text:'',extracted_items:[],records:raw};
+}
+function packForDBV878(pack){return [{__v878_pack:pack}];}
+function ingestPreviewV877(packOrRows,filename){
+  const pack=Array.isArray(packOrRows)?{document_type:'OTHER',detected_languages:[],document_summary:'',full_text:'',extracted_items:[],records:packOrRows}:packOrRows;
+  const rows=Array.isArray(pack.records)?pack.records:[];
+  const review=rows.filter(x=>String(x.confidence||'').toUpperCase()==='NEEDS_REVIEW'||(!x.equipment && !['DRAWING_DOCS','MANUAL_REFERENCE'].includes(String(x.module||'').toUpperCase()))).length;
+  const lines=rows.slice(0,5).map((x,i)=>`${i+1}. ${String(x.module||'NEEDS_REVIEW').toUpperCase()} | ${x.equipment||'Equipment: not confirmed'} | ${x.event_date||'Date: not confirmed'}\n${String(x.description||'-').slice(0,220)}`);
+  const items=Array.isArray(pack.extracted_items)?pack.extracted_items.length:0;
+  return `File extracted — NOT STORED yet\nSource: ${filename}\nType: ${pack.document_type||'OTHER'}\nLanguage: ${(pack.detected_languages||[]).join(', ')||'Not confirmed'}\nRecords: ${rows.length} | Detailed items: ${items}\nNeeds Review: ${review}\n\n${String(pack.document_summary||'').slice(0,700)}${lines.length?`\n\n${lines.join('\n\n')}`:''}\n\nUse View Full Extraction to verify source text before storage.`;
 }
 async function setPendingIngestSessionV877(from,id){
   await pool.query(`INSERT INTO ui_sessions(whatsapp_number,session_key,session_value,updated_at) VALUES($1,'PENDING_FILE_INGEST',$2::jsonb,now()) ON CONFLICT(whatsapp_number,session_key) DO UPDATE SET session_value=EXCLUDED.session_value,updated_at=now()`,[normWA(from),JSON.stringify({id})]);
@@ -922,40 +988,94 @@ async function clearPendingIngestV877(from,id,status='DISCARDED'){
   await pool.query(`DELETE FROM ui_sessions WHERE whatsapp_number=$1 AND session_key='PENDING_FILE_INGEST'`,[normWA(from)]);
 }
 async function showIngestOptionsV877(from,p){
-  const rows=Array.isArray(p.extracted_rows)?p.extracted_rows:[];
-  await sendText(from,ingestPreviewV877(rows,p.source_filename));
-  await sendList(from,'Select action for this file','Choose',[{id:'INGEST_STORE_VERIFIED',title:'Store Verified',description:'Store confirmed rows only; review rows stay out'},{id:'INGEST_REVIEW',title:'Review / Edit',description:'Show uncertain/missing fields before storage'},{id:'INGEST_READ_ONLY',title:'Read Only',description:'Use extraction only; do not store'},{id:'INGEST_DISCARD',title:'Discard',description:'Discard this pending extraction'}],'File Action');
+  const pack=ingestPackV878(p);
+  await sendText(from,ingestPreviewV877(pack,p.source_filename));
+  await sendList(from,'Verify the extraction before deciding what to store','Choose',[
+    {id:'INGEST_VIEW_FULL',title:'View Full Extraction',description:'Show complete extracted text/details; nothing stored'},
+    {id:'INGEST_REVIEW',title:'Review / Edit',description:'Review every record and correct source-backed fields'},
+    {id:'INGEST_STORE_VERIFIED',title:'Store Verified',description:'Store only after your confirmation'},
+    {id:'INGEST_CONVERT',title:'Convert / Export',description:'Export extracted data as TXT, CSV or JSON'},
+    {id:'INGEST_READ_ONLY',title:'Read Only',description:'Use extraction only; do not store'},
+    {id:'INGEST_DISCARD',title:'Discard',description:'Discard this pending extraction'}
+  ],'File Action');
+}
+async function sendFullExtractionV878(from,p){
+  const pack=ingestPackV878(p);
+  const text=String(pack.full_text||'').trim();
+  const items=Array.isArray(pack.extracted_items)?pack.extracted_items:[];
+  if(!text && !items.length){await sendText(from,'No detailed text was extracted. Use Review / Edit or resend a clearer source.');return;}
+  const chunks=[];
+  const body=`FULL EXTRACTION — NOT STORED\nSource: ${p.source_filename}\nType: ${pack.document_type}\n\n${text}`;
+  for(let i=0;i<body.length;i+=3800)chunks.push(body.slice(i,i+3800));
+  for(const c of chunks.slice(0,8))await sendText(from,c);
+  if(chunks.length>8)await sendText(from,`Full text is long (${text.length} characters). Use Convert / Export → TXT to receive the complete extraction as a file.`);
+  if(items.length)await sendText(from,`Structured detailed items extracted: ${items.length}. Use Convert / Export → CSV/JSON to inspect all items.`);
+}
+function csvCellV878(v){const z=String(v??'');return /[",\n]/.test(z)?`"${z.replace(/"/g,'""')}"`:z;}
+async function exportPendingV878(from,p,kind){
+  const pack=ingestPackV878(p),base=String(p.source_filename||'extraction').replace(/\.[^.]+$/,'').replace(/[^a-zA-Z0-9._-]+/g,'_').slice(0,80)||'extraction';
+  if(kind==='TXT'){
+    const txt=`Source: ${p.source_filename}\nType: ${pack.document_type}\nLanguages: ${(pack.detected_languages||[]).join(', ')}\nSummary: ${pack.document_summary||''}\n\nFULL EXTRACTION\n${pack.full_text||''}\n\nSTRUCTURED ITEMS\n${JSON.stringify(pack.extracted_items||[],null,2)}\n\nRECORDS\n${JSON.stringify(pack.records||[],null,2)}`;
+    await sendGeneratedDocumentV878(from,Buffer.from(txt,'utf8'),`${base}_extracted.txt`,'text/plain');return;
+  }
+  if(kind==='JSON'){
+    await sendGeneratedDocumentV878(from,Buffer.from(JSON.stringify(pack,null,2),'utf8'),`${base}_extracted.json`,'application/json');return;
+  }
+  if(kind==='CSV'){
+    const items=Array.isArray(pack.extracted_items)?pack.extracted_items:[];
+    const rows=items.length?items:(pack.records||[]);
+    const keys=[...new Set(rows.flatMap(x=>Object.keys(x||{})))];
+    const csv=[keys.map(csvCellV878).join(','),...rows.map(x=>keys.map(k=>csvCellV878(x?.[k])).join(','))].join('\n');
+    await sendGeneratedDocumentV878(from,Buffer.from(csv,'utf8'),`${base}_extracted.csv`,'text/csv');return;
+  }
 }
 async function storePendingVerifiedV877(from,p){
   const u=await byWA(from); if(!u||!(await hasAuthorityV874(u,'ENTRY'))){await sendText(from,'Permission denied. ENTRY authority is required to store data.');return;}
-  const rows=Array.isArray(p.extracted_rows)?p.extracted_rows:[];let saved=0,review=0,dupe=0;
+  const pack=ingestPackV878(p),rows=Array.isArray(pack.records)?pack.records:[];let saved=0,review=0,dupe=0;
   for(const x of rows){
     const confidence=['HIGH','MEDIUM'].includes(String(x.confidence||'').toUpperCase())?String(x.confidence).toUpperCase():'NEEDS_REVIEW';
-    if(confidence==='NEEDS_REVIEW'){review++;continue;}
-    try{const q=await pool.query(`INSERT INTO maintenance_ingest_records(data_class,source_type,source_media_id,source_filename,source_mime_type,source_caption,source_sha256,submitted_by_employee_number,submitted_by_whatsapp,module,area,equipment,sub_equipment,event_date,event_time,shift,description,action_taken,status,remarks,confidence,raw_extraction) VALUES('TEST','WHATSAPP_FILE',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::date,$13::time,$14,$15,$16,$17,$18,$19,$20::jsonb) ON CONFLICT DO NOTHING RETURNING id`,[p.source_media_id,p.source_filename,p.source_mime_type,p.source_caption,p.source_sha256,u.employee_number,normWA(from),String(x.module||'NEEDS_REVIEW').toUpperCase(),x.area||null,x.equipment||null,x.sub_equipment||null,x.event_date||null,x.event_time||null,x.shift||null,x.description||null,x.action_taken||null,x.status||null,x.remarks||null,confidence,JSON.stringify(x)]);if(q.rowCount)saved++;else dupe++;}catch(e){console.error('[INGEST_STORE]',e.message);review++;}
+    const module=String(x.module||'NEEDS_REVIEW').toUpperCase();
+    const referenceDoc=['DRAWING_DOCS','MANUAL_REFERENCE'].includes(module);
+    if(confidence==='NEEDS_REVIEW'||(!referenceDoc && !x.equipment)){review++;continue;}
+    try{const raw={...x,document_type:pack.document_type,document_summary:pack.document_summary,extracted_items:pack.extracted_items};
+      const q=await pool.query(`INSERT INTO maintenance_ingest_records(data_class,source_type,source_media_id,source_filename,source_mime_type,source_caption,source_sha256,submitted_by_employee_number,submitted_by_whatsapp,module,area,equipment,sub_equipment,event_date,event_time,shift,description,action_taken,status,remarks,confidence,raw_extraction) VALUES('TEST','WHATSAPP_FILE',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::date,$13::time,$14,$15,$16,$17,$18,$19,$20::jsonb) ON CONFLICT DO NOTHING RETURNING id`,[p.source_media_id,p.source_filename,p.source_mime_type,p.source_caption,p.source_sha256,u.employee_number,normWA(from),module,x.area||null,x.equipment||null,x.sub_equipment||null,x.event_date||null,x.event_time||null,x.shift||null,x.description||pack.document_summary||null,x.action_taken||null,x.status||null,x.remarks||null,confidence,JSON.stringify(raw)]);if(q.rowCount)saved++;else dupe++;}catch(e){console.error('[INGEST_STORE]',e.message);review++;}
   }
-  await clearPendingIngestV877(from,p.id,review?'PARTIAL_REVIEW':'STORED');
-  await sendText(from,`✅ Confirmed TEST data stored\nStored: ${saved}\nHeld back for review: ${review}\nDuplicates skipped: ${dupe}\nSource: ${p.source_filename}\n\nUncertain records were not stored.`);
+  if(review){await sendText(from,`Storage not finalized.\nStored confirmed: ${saved}\nStill needs review: ${review}\nDuplicates skipped: ${dupe}\n\nReview items remain pending so you can correct them.`);return;}
+  await clearPendingIngestV877(from,p.id,'STORED');
+  await sendText(from,`✅ Confirmed TEST data stored\nStored: ${saved}\nDuplicates skipped: ${dupe}\nSource: ${p.source_filename}`);
 }
 async function handlePendingIngestCommandV877(from,cmd){
   if(!/^INGEST_/.test(cmd) && !/^EDIT\s+\d+\s*\|/i.test(cmd))return false;
   const p=await getPendingIngestV877(from);if(!p){await sendText(from,'No pending file extraction. Please send the file again.');return true;}
+  const pack=ingestPackV878(p),rows=Array.isArray(pack.records)?pack.records:[];
+  if(cmd==='INGEST_VIEW_FULL'){await sendFullExtractionV878(from,p);await showIngestOptionsV877(from,p);return true;}
   if(cmd==='INGEST_STORE_VERIFIED'){await storePendingVerifiedV877(from,p);return true;}
   if(cmd==='INGEST_READ_ONLY'){await clearPendingIngestV877(from,p.id,'READ_ONLY');await sendText(from,'Read-only selected. Nothing from this file was stored.');return true;}
   if(cmd==='INGEST_DISCARD'){await clearPendingIngestV877(from,p.id,'DISCARDED');await sendText(from,'Pending extraction discarded. Nothing was stored.');return true;}
+  if(cmd==='INGEST_CONVERT'){
+    await sendList(from,'Choose extraction export format','Export',[
+      {id:'INGEST_EXPORT_TXT',title:'Extracted TXT',description:'Complete extracted text + structured data'},
+      {id:'INGEST_EXPORT_CSV',title:'Extracted CSV',description:'Detailed items/records in spreadsheet-friendly CSV'},
+      {id:'INGEST_EXPORT_JSON',title:'Extracted JSON',description:'Complete structured extraction'}
+    ],'Export Format');return true;
+  }
+  if(cmd==='INGEST_EXPORT_TXT'||cmd==='INGEST_EXPORT_CSV'||cmd==='INGEST_EXPORT_JSON'){
+    const kind=cmd.replace('INGEST_EXPORT_','');await exportPendingV878(from,p,kind);await showIngestOptionsV877(from,p);return true;
+  }
   if(cmd==='INGEST_REVIEW'){
-    const rows=Array.isArray(p.extracted_rows)?p.extracted_rows:[];const bad=rows.map((x,i)=>({x,i})).filter(o=>String(o.x.confidence||'').toUpperCase()==='NEEDS_REVIEW'||!o.x.equipment||!o.x.event_date);
-    if(!bad.length){await sendText(from,'No uncertain/missing records detected. Choose Store Verified if the preview is correct.');return true;}
-    const msg=bad.slice(0,8).map(o=>`${o.i+1}. ${o.x.module||'NEEDS_REVIEW'} | Equipment: ${o.x.equipment||'MISSING'} | Date: ${o.x.event_date||'MISSING'}\n${String(o.x.description||'-').slice(0,160)}`).join('\n\n');
-    await sendText(from,`Review required — nothing uncertain is stored.\n\n${msg}\n\nTo correct a record send, for example:\nEDIT 1 | Equipment=WBF-2 | Date=2026-09-22 | Module=DEFECT\n\nOnly provide values supported by the source.`);return true;
+    if(!rows.length){await sendText(from,'No structured records were extracted. Use View Full Extraction to inspect source text.');return true;}
+    const msg=rows.slice(0,12).map((x,i)=>`${i+1}. ${x.module||'NEEDS_REVIEW'}\nArea: ${x.area||'MISSING'}\nEquipment: ${x.equipment||'MISSING'}\nSub-equipment: ${x.sub_equipment||'-'}\nDate: ${x.event_date||'MISSING'} ${x.event_time||''}\nShift: ${x.shift||'-'}\nConfidence: ${x.confidence||'NEEDS_REVIEW'}\nDescription: ${String(x.description||'-').slice(0,500)}`).join('\n\n');
+    await sendText(from,`REVIEW ALL — NOT STORED\n\n${msg.slice(0,3900)}`);
+    await sendText(from,'To correct a source-backed field send:\nEDIT 1 | Equipment=WBF-2 | Date=2026-09-22 | Module=DEFECT\n\nAllowed: Equipment, Date, Module, Area, Sub-equipment, Shift.\nAfter editing, Review / Edit again and then Store Verified.');return true;
   }
   const m=cmd.match(/^EDIT\s+(\d+)\s*\|\s*(.+)$/i);if(m){
-    const rows=Array.isArray(p.extracted_rows)?p.extracted_rows:[];const idx=Number(m[1])-1;if(idx<0||idx>=rows.length){await sendText(from,'Invalid record number.');return true;}
+    const idx=Number(m[1])-1;if(idx<0||idx>=rows.length){await sendText(from,'Invalid record number.');return true;}
     const allowed={equipment:'equipment',date:'event_date',module:'module',area:'area','sub-equipment':'sub_equipment',subequipment:'sub_equipment',shift:'shift'};
     for(const part of m[2].split('|')){const z=part.split('=');if(z.length<2)continue;const k=allowed[z[0].trim().toLowerCase()];if(k)rows[idx][k]=z.slice(1).join('=').trim()||null;}
-    rows[idx].confidence=(rows[idx].equipment && rows[idx].module && rows[idx].module!=='NEEDS_REVIEW')?'MEDIUM':'NEEDS_REVIEW';
-    await pool.query(`UPDATE pending_file_ingests SET extracted_rows=$2::jsonb,updated_at=now() WHERE id=$1`,[p.id,JSON.stringify(rows)]);
-    const fresh={...p,extracted_rows:rows};await showIngestOptionsV877(from,fresh);return true;
+    rows[idx].confidence=(rows[idx].module && rows[idx].module!=='NEEDS_REVIEW' && (rows[idx].equipment || ['DRAWING_DOCS','MANUAL_REFERENCE'].includes(String(rows[idx].module).toUpperCase())))?'MEDIUM':'NEEDS_REVIEW';
+    pack.records=rows;
+    await pool.query(`UPDATE pending_file_ingests SET extracted_rows=$2::jsonb,updated_at=now() WHERE id=$1`,[p.id,JSON.stringify(packForDBV878(pack))]);
+    const fresh={...p,extracted_rows:packForDBV878(pack)};await showIngestOptionsV877(from,fresh);return true;
   }
   return false;
 }
@@ -968,8 +1088,8 @@ async function processMediaMessageV874(from,m){
     await sendText(from,'File received. Extracting for preview… Nothing will be stored until you confirm.');
     const d=await downloadWhatsAppMediaV874(mediaId),mime=String(obj.mime_type||d.mime||'application/octet-stream').toLowerCase();
     const filename=obj.filename||`${m.type}_${mediaId}`;const crypto=await import('node:crypto');const sha=crypto.createHash('sha256').update(d.bytes).digest('hex');
-    const rows=await extractMaintenanceV874(d.bytes,mime,filename,caption);
-    const q=await pool.query(`INSERT INTO pending_file_ingests(submitted_by_whatsapp,submitted_by_employee_number,source_media_id,source_filename,source_mime_type,source_caption,source_sha256,extracted_rows) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb) RETURNING *`,[normWA(from),u.employee_number,mediaId,filename,mime,caption,sha,JSON.stringify(rows)]);
+    const pack=await extractMaintenanceV874(d.bytes,mime,filename,caption);
+    const q=await pool.query(`INSERT INTO pending_file_ingests(submitted_by_whatsapp,submitted_by_employee_number,source_media_id,source_filename,source_mime_type,source_caption,source_sha256,extracted_rows) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb) RETURNING *`,[normWA(from),u.employee_number,mediaId,filename,mime,caption,sha,JSON.stringify(packForDBV878(pack))]);
     await setPendingIngestSessionV877(from,q.rows[0].id);await setIngestModeV874(from,false);await showIngestOptionsV877(from,q.rows[0]);
   }catch(e){console.error('[MEDIA_INGEST]',e);const msg=String(e.message||e);if(msg.startsWith('UNSUPPORTED:'))await sendText(from,'Unsupported file type. Enabled test formats: PDF, TIFF/images, TXT/CSV, Word, Excel and Access MDB/ACCDB. Nothing was stored.');else await sendText(from,'File extraction failed. Nothing was stored. Please retry or send a supported file.');}
 }
