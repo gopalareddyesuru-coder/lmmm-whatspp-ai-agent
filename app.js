@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.5.4
+// LMMM AI Maintenance V8.5.5
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -449,6 +449,10 @@ async function purgeTesterUsersV854(by){
   await pool.query('DELETE FROM users WHERE employee_number=$1',[u.employee_number]);removed++;
  } return removed;
 }
+async function safeSessionV855(wa,key){
+ try{return (await pool.query('SELECT session_value FROM ui_sessions WHERE whatsapp_number=$1 AND session_key=$2',[normWA(wa),key])).rows[0]||null;}
+ catch(e){console.error('[SESSION_READ]',e.message);return null;}
+}
 async function adminOverrideV850(emp){return (await pool.query('SELECT * FROM user_admin_override WHERE employee_number=$1',[emp])).rows[0]||null;}
 async function saveAdminOverrideV850(emp,patch,by){
  const old=await adminOverrideV850(emp), n={...(old||{}),...patch};
@@ -686,16 +690,32 @@ if((a=text.match(/^SETSH:(\d+):(General|ROTATING_ABC|A|B|C)$/))){const emp=a[1],
     if(normWA(from)!==u.whatsapp_number) await sendText(from,`${m[1]} registration removed. Maintenance history preserved.`);
     return true;
   }
-  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.5.4 AUTO ASSIGN');return true;}
+  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.5.5 AUTO ASSIGN');return true;}
   return false;
 }
 async function processMessage(from,text,payload=''){
   const cmd=String(payload||text||'').trim();
+  try{await pool.query(`CREATE TABLE IF NOT EXISTS ui_sessions(whatsapp_number TEXT NOT NULL,session_key TEXT NOT NULL,session_value JSONB,updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),PRIMARY KEY(whatsapp_number,session_key))`);}catch(e){console.error('[SESSION_SCHEMA]',e.message);}
   if(isOwner(from) && /^PURGE_TESTERS$/i.test(cmd)){await sendButtons(from,'Delete all TESTER registrations/profile/contact/roster data? MAIN users and Super Admin are preserved.',[{id:'PURGE_TESTERS_CONFIRM',title:'Confirm Delete'},{id:'BACK',title:'Cancel'}]);return;}
   if(isOwner(from) && cmd==='PURGE_TESTERS_CONFIRM'){const n=await purgeTesterUsersV854(normWA(from));await sendText(from,`✅ Tester cleanup completed.\nTester users removed: ${n}\nMAIN users preserved.`);return;}
-  // V8.5.4 Super Admin contact-directory free-text edit continuation.
+  // V8.5.5 Super Admin contact-directory free-text edit continuation.
 
-  // V8.5.4 user contact self-service and natural contact-detail capture.
+  // V8.5.5 user contact self-service and natural contact-detail capture.
+  // V8.5.5 resilient Super Admin employee lookup.
+  if(isOwner(from)){
+    const q855=String(text||'').trim(), emp855=/^\d{3,}$/.test(q855);
+    const name855=/^[A-Za-z][A-Za-z .'-]{2,50}$/.test(q855)&&!['hi','hello','hey','start','back','search','version'].includes(q855.toLowerCase());
+    if(emp855||name855){
+      const rr=emp855?(await pool.query('SELECT * FROM users WHERE employee_number=$1 LIMIT 1',[q855])).rows:(await pool.query('SELECT * FROM users WHERE lower(name)=lower($1) ORDER BY employee_number LIMIT 10',[q855])).rows;
+      if(rr.length===1){
+        const u=rr[0];await ensureProfile(u,normWA(from));const pr=(await pool.query('SELECT * FROM user_access_profile WHERE employee_number=$1',[u.employee_number])).rows[0];
+        await sendText(from,`Employee Details\n\nName: ${u.name}\nEmployee No: ${u.employee_number}\nDesignation: ${u.designation||'-'}\nArea: ${u.area_of_working||'-'}\nSection: ${u.section_department||'-'}\nShift: ${u.shift||'-'}\nCategory/Role: ${pr?.assigned_role||'-'}\nAccess: ${pr?.access_level||'-'}\nResponsibility: ${pr?.responsibility||'-'}\nAuthorities: ${(pr?.authorities||[]).join(', ')||'-'}\nSource: ${pr?.assignment_source||'AUTO'}\nData Class: ${u.data_class||'MAIN'}`);
+        await sendButtons(from,'Employee Actions',[{id:`ADM_ASSIGN:${u.employee_number}`,title:'Assign / Change'},{id:`ADM_CONTACT:${u.employee_number}`,title:'Contact Details'},{id:`ADM_MORE:${u.employee_number}`,title:'More Options'}]);return;
+      }
+      if(rr.length>1){await sendList(from,'Employees found','Select',rr.map(u=>({id:`ADM_EMP:${u.employee_number}`,title:u.name,description:`Employee No: ${u.employee_number}`})),'Employee Administration');return;}
+      await sendText(from,'Employee not found.');return;
+    }
+  }
   const selfUser=await byWA(from);
   if(selfUser && selfUser.approval_status==='approved' && selfUser.is_active!==false){
     const t852=String(text||'').trim(), c852=cmd, l852=t852.toLowerCase();
@@ -711,7 +731,7 @@ async function processMessage(from,text,payload=''){
       const pr={ALT:'Send alternate phone number',CMAIL:'Send company email ID',PMAIL:'Send personal email ID',MAX:'Send MAX number',EXT:'Send office extension',EMER:'Send emergency contact as: Name, Phone'}[f];
       await sendText(from,pr);return;
     }
-    const ps=(await pool.query(`SELECT session_value FROM ui_sessions WHERE whatsapp_number=$1 AND session_key='V852_SELF_CONTACT'`,[normWA(from)])).rows[0];
+    const ps=await safeSessionV855(from,'V852_SELF_CONTACT');
     if(ps){
       let st=ps.session_value;if(typeof st==='string'){try{st=JSON.parse(st)}catch{}}
       let patch={};
@@ -732,8 +752,8 @@ async function processMessage(from,text,payload=''){
       if(Object.keys(patch).length){await saveOwnContactPatchV852(selfUser,patch);await sendText(from,'✅ Contact details understood and updated.');await sendMyContactV852(from,selfUser);return;}
     }
   }
-  // V8.5.4 approved-user employee directory: basic public internal fields only.
-  if(selfUser && selfUser.approval_status==='approved' && selfUser.is_active!==false){
+  // V8.5.5 approved-user employee directory: basic public internal fields only.
+  if(!isOwner(from) && selfUser && selfUser.approval_status==='approved' && selfUser.is_active!==false){
     const q853=String(text||'').trim();
     const empQuery=/^\d{3,}$/.test(q853);
     const nameQuery=/^[A-Za-z][A-Za-z .'-]{2,50}$/.test(q853) &&
@@ -786,7 +806,7 @@ Office Extension: ${r.office_extension||'-'}`);
     }
   }
   if(isOwner(from)){
-    const cs=(await pool.query(`SELECT session_value FROM ui_sessions WHERE whatsapp_number=$1 AND session_key='V851_CONTACT_EDIT'`,[normWA(from)])).rows[0];
+    const cs=await safeSessionV855(from,'V851_CONTACT_EDIT');
     if(cs){
       let st=cs.session_value; if(typeof st==='string'){try{st=JSON.parse(st)}catch{}}
       if(st?.employee_number&&st?.field){
@@ -893,4 +913,4 @@ app.post('/webhook',(req,res)=>{
 });
 
 await initDB();
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.5.4 registration foundation listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.5.5 registration foundation listening on ${PORT}`));
