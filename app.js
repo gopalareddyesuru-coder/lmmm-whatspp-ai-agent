@@ -123,10 +123,10 @@ app.use((req, _res, next) => {
 const isTe = t => /[\u0C00-\u0C7F]/.test(t || '');
 const T = (k, te = false) => ({
   register: te
-    ? 'దయచేసి నమోదు చేయండి:\nName / Employee Number / Designation / Section / Area'
-    : 'Please register:\nName / Employee Number / Designation / Section / Area',
+    ? 'దయచేసి నమోదు చేయండి:\nName:\nEmployee No:\nDesignation:\nArea:\nSection:\nShift:'
+    : 'Please register (Name and Employee Number are compulsory):\nName:\nEmployee No:\nDesignation:\nArea:\nSection:\nShift:',
   pending: te ? 'ఆమోదం కోసం పంపబడింది.' : 'Sent for approval.',
-  welcome: te ? 'LMMM AI Maintenance కి స్వాగతం.' : 'Welcome to LMMM AI Maintenance.',
+  welcome: te ? 'LMMM AI Maintenance కి స్వాగతం.' : 'Welcome to LMMM Maintenance.',
   help: te ? 'నేను మీకు ఎలా సహాయం చేయగలను?' : 'How can I help you?',
   notfound: te ? 'కనుగొనబడలేదు.' : 'Not found.',
   exit: te ? 'నిష్క్రమించారు.' : 'Exited.',
@@ -159,6 +159,7 @@ async function initDB() {
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS responsibility TEXT DEFAULT 'NOT ASSIGNED'`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS employee_category TEXT DEFAULT 'NOT ASSIGNED'`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS shift TEXT DEFAULT 'NOT ASSIGNED'`);
 
   // V7.7.24: durable staged multi-select state shared by governance and search UX.
   // A selection is only committed when the user taps Apply/Continue.
@@ -898,28 +899,66 @@ async function sendList(to, body, buttonText, rows, sectionTitle='Select') {
   return d;
 }
 
-function parseReg(text) {
-  const raw = String(text || '').trim();
-  const p = (raw.includes('/') ? raw.split('/') : raw.split(/\r?\n/))
-    .map(x => x.trim())
-    .filter(Boolean);
-
-  if (p.length < 5) return null;
-
-  const [name, employee_number, designation, section, area] = p;
-
-  if (!name || !/^\d+$/.test(employee_number || '') || !designation || !section || !area) {
-    return null;
-  }
-
-  return {
-    name,
-    employee_number,
-    designation,
-    section,
-    area,
-    responsibility: NA
+function canonicalDesignationName(v='') {
+  const raw=String(v||'').trim().replace(/\s+/g,' '); if(!raw) return NA;
+  const k=raw.toLowerCase().replace(/[._-]+/g,' ').replace(/\s+/g,' ').trim();
+  const map={
+    'mt':'Management Trainee','management trainee':'Management Trainee',
+    'jr mgr':'Junior Manager','junior mgr':'Junior Manager','junior manager':'Junior Manager',
+    'asst mgr':'Assistant Manager','ast mgr':'Assistant Manager','assistant mgr':'Assistant Manager','assistant manager':'Assistant Manager',
+    'dy mgr':'Deputy Manager','deputy mgr':'Deputy Manager','deputy manager':'Deputy Manager',
+    'mgr':'Manager','manager':'Manager',
+    'sr mgr':'Senior Manager','senior mgr':'Senior Manager','senior manager':'Senior Manager',
+    'agm':'Assistant General Manager','asst gm':'Assistant General Manager','assistant general manager':'Assistant General Manager','asst general manager':'Assistant General Manager',
+    'dgm':'Deputy General Manager','dy gm':'Deputy General Manager','deputy general manager':'Deputy General Manager',
+    'gm':'General Manager','general manager':'General Manager','cgm':'Chief General Manager','chief general manager':'Chief General Manager',
+    'ed':'Executive Director','executive director':'Executive Director','cmd':'Chairman Cum Managing Director','chairman cum managing director':'Chairman Cum Managing Director',
+    'tech':'Technician','technician':'Technician','chgman':'Chargeman','chargeman':'Chargeman','fm':'Foreman','foreman':'Foreman',
+    'acting fm':'Acting Foreman','acting foreman':'Acting Foreman','gf':'General Foreman','general foreman':'General Foreman','kalasi':'Kalasi'
   };
+  return map[k]||raw.replace(/\b\w/g,c=>c.toUpperCase());
+}
+function canonicalSectionName(v='') {
+  const raw=String(v||'').trim().replace(/\s+/g,' '); if(!raw) return NA;
+  const k=raw.toLowerCase().replace(/[._-]+/g,' ').replace(/\s+/g,' ').trim();
+  const map={'mech':'Mechanical','mechanical':'Mechanical','mechanical maintenance':'Mechanical','mm':'Mechanical','ops':'Operations','operation':'Operations','operations':'Operations','production':'Operations','elec':'Electrical','elect':'Electrical','electrical':'Electrical','inst':'Instrumentation','instrumentation':'Instrumentation','etl':'ETL','telecom':'Telecommunications','telecommunications':'Telecommunications','water':'Water Management','water management':'Water Management','dnw':'DNW','enmd':'EnMD','red':'RED'};
+  return map[k]||raw.replace(/\b\w/g,c=>c.toUpperCase());
+}
+function canonicalShiftName(v='') {
+  const k=String(v||'').trim().toLowerCase().replace(/[-_ ]+/g,'');
+  if(!k) return NA;
+  if(['a','ashift','1','first'].includes(k)) return 'A';
+  if(['b','bshift','2','second'].includes(k)) return 'B';
+  if(['c','cshift','3','third','night'].includes(k)) return 'C';
+  if(['g','gen','general','generalshift','gs'].includes(k)) return 'General';
+  return String(v).trim();
+}
+function parseReg(text) {
+  const raw=String(text||'').trim(); if(!raw) return null;
+  // Accept labelled line-by-line registration, slash-separated legacy input, or plain lines.
+  const lines=raw.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
+  const labelled={};
+  for(const line of lines){
+    const m=line.match(/^\s*(name|employee\s*(?:no|number|num)?|emp\s*(?:no|number|num)?|designation|desgn|desig|area|section|dept|department|shift)\s*[:=-]\s*(.*?)\s*$/i);
+    if(!m) continue;
+    const key=m[1].toLowerCase().replace(/\s+/g,' '), val=m[2].trim();
+    if(/^name$/.test(key)) labelled.name=val;
+    else if(/^(employee|emp)/.test(key)) labelled.employee_number=val;
+    else if(/^(designation|desgn|desig)/.test(key)) labelled.designation=val;
+    else if(/^area/.test(key)) labelled.area=val;
+    else if(/^(section|dept|department)/.test(key)) labelled.section=val;
+    else if(/^shift/.test(key)) labelled.shift=val;
+  }
+  let d;
+  if(labelled.name || labelled.employee_number){ d=labelled; }
+  else {
+    const p=(raw.includes('/')?raw.split('/'):lines).map(x=>x.trim());
+    if(p.length<2) return null;
+    // New order: Name, Employee No, Designation, Area, Section, Shift. Only first two compulsory.
+    d={name:p[0],employee_number:p[1],designation:p[2]||NA,area:p[3]||NA,section:p[4]||NA,shift:p[5]||NA};
+  }
+  if(!d.name || !/^\d+$/.test(String(d.employee_number||'').trim())) return null;
+  return {name:d.name.trim(),employee_number:String(d.employee_number).trim(),designation:canonicalDesignationName(d.designation),area:canonicalAreaName(d.area),section:canonicalSectionName(d.section),shift:canonicalShiftName(d.shift),responsibility:NA};
 }
 
 async function byWA(wa) {
@@ -1059,6 +1098,7 @@ function normalizedDesignation(v='') {
 
 function employeeCategory(designation='') {
   const d = normalizedDesignation(designation);
+  if(!d || d==='not assigned' || d==='na' || d==='n/a') return 'UNKNOWN';
   if (['kalasi','technician','chargeman','foreman','acting foreman','general foreman'].includes(d)) {
     return 'NON_EXECUTIVE';
   }
@@ -1100,7 +1140,10 @@ function inheritedPermissionCodes({designation='',operationalRole='NORMAL_USER',
   // Scope (department/section/area/job) and capability (view/edit/report/PDF/analysis/RCM/admin) are separate.
   // Contractors/non-executives: View + Edit/Entry only in their authorised scope.
   // Executives MT through AGM: View + Edit/Entry only by default; no PDF/print/analysis/report privilege is implied by designation.
-  ['VIEW','ENTRY','EDIT'].forEach(x=>out.add(x));
+  if(category==='NON_EXECUTIVE' || category==='CONTRACT') { out.add('ENTRY'); }
+  else if(band==='EXECUTIVE_UPTO_AGM') { ['VIEW','ENTRY','EDIT'].forEach(x=>out.add(x)); }
+  else if(band==='DGM' || band==='SENIOR_MANAGEMENT' || band==='TOP_MANAGEMENT') { out.add('FULL_ACCESS'); }
+  // Missing/unknown designation gets no inferred maintenance capability until admin approval/access assignment.
 
   // Responsibility adds only the minimum capabilities required for that responsibility.
   // Shift/Area/Section In-charge expands operational scope through assignments; it does not silently create Full Access.
@@ -1389,9 +1432,9 @@ function canonicalAreaName(v=''){
   const x=String(v||'').trim().replace(/\s+/g,' ');
   if(!x) return NA;
   const n=x.toUpperCase().replace(/[-_]+/g,' ');
-  if(n==='BDM') return 'BDM';
-  if(n==='BAR MILL'||n==='BARMILL') return 'Bar Mill';
-  if(n==='FINISHING'||n==='FINISHING MILL') return 'Finishing';
+  if(['BDM','BREAK DOWN MILL','BREAKDOWN MILL','BILLET MILL','BLOOMING AND BILLET MILL','BLOOMING MILL'].includes(n)) return 'BDM';
+  if(['BAR MILL','BARMILL','BAR'].includes(n)) return 'Bar Mill';
+  if(['FINISHING','FINISHING MILL','FINISHING AREA'].includes(n)) return 'Finishing';
   return x;
 }
 async function upsertResponsibilityRow(employeeNumber, role, section, area, assignedBy='SYSTEM'){
@@ -3498,7 +3541,7 @@ async function ownerCommand(from, text) {
     .replace(/^CANCEL_RESET$/i, 'cancel reset registrations');
 
   let rx;
-  if(/^version$/i.test(text.trim())){await sendText(from,'LMMM AI Maintenance V7.7.65 • runtime-data compatibility + role/remove/area-history fix');return true;}
+  if(/^version$/i.test(text.trim())){await sendText(from,'LMMM AI Maintenance V7.7.66 • registration baseline fix');return true;}
   if ((rx=text.match(/^(?:ACCESS|ACCESS CONTROL|USER|USER CONTROL)\s+(.+)$/i))) {
     const rows=await findAdminEmployees(rx[1]);
     if(!rows.length){await sendText(from,'Employee not found.');return true;}
@@ -3565,19 +3608,20 @@ async function ownerCommand(from, text) {
 
     await pool.query(
       `INSERT INTO user_assignments(
-         employee_number,area,section,responsibility,assigned_by
-       ) VALUES($1,$2,$3,$4,$5)`,
+         employee_number,area,section,responsibility,shift,assigned_by
+       ) VALUES($1,$2,$3,$4,$5,$6)`,
       [
         m[1],
         u.area_of_working || NA,
         u.section_department || NA,
         u.responsibility || NA,
+        u.shift || NA,
         from
       ]
     );
 
     await syncHierarchyAndAccess(m[1],from,'Registration approved: authoritative hierarchy + designation + section + area baseline');
-    await sendText(u.whatsapp_number, 'Welcome to LMMM AI Maintenance.');
+    await sendText(u.whatsapp_number, 'Welcome to LMMM Maintenance.');
     if (from.replace(/\D/g, '') !== u.whatsapp_number.replace(/\D/g, '')) {
       await sendButtons(
         from,
@@ -3700,15 +3744,12 @@ async function ownerCommand(from, text) {
   m = text.match(/^remove\s+(\d+)$/i);
   if (m) {
     const exists = await byEmp(m[1]);
-    if (!exists) {
-      await sendText(from, 'Not found.');
-      return true;
+    if (!exists) { await sendText(from, 'Not found.'); return true; }
+    const removed=await removeUserRegistrationForReregister(m[1],from);
+    if(removed){
+      await sendText(removed.whatsapp_number,'Your LMMM Maintenance registration has been removed. Send Hi to re-register.');
+      if(from.replace(/\D/g,'')!==removed.whatsapp_number.replace(/\D/g,'')) await sendText(from,`${m[1]} registration removed. Historical maintenance records preserved.`);
     }
-    await selectionReset(from,'PENDING_ADMIN_REMOVE','',[m[1]],{created_at:new Date().toISOString()});
-    await sendButtons(from, `Remove registration for ${m[1]}? Historical maintenance records will be preserved.`, [
-      { id: `CONFIRM_REMOVE:${m[1]}`, title: 'Remove' },
-      { id: `CANCEL_REMOVE:${m[1]}`, title: 'Cancel' }
-    ]);
     return true;
   }
 
@@ -3805,10 +3846,10 @@ async function saveFreshRegistration(from, d) {
     await pool.query(
       `INSERT INTO users(
          whatsapp_number,name,employee_number,designation,
-         area_of_working,section_department,responsibility,
+         area_of_working,section_department,responsibility,shift,
          approval_status,is_active,updated_at
        )
-       VALUES($1,$2,$3,$4,$5,$6,$7,'pending',true,now())
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,'pending',true,now())
        ON CONFLICT(whatsapp_number)
        DO UPDATE SET
          name=EXCLUDED.name,
@@ -3817,6 +3858,7 @@ async function saveFreshRegistration(from, d) {
          area_of_working=EXCLUDED.area_of_working,
          section_department=EXCLUDED.section_department,
          responsibility=EXCLUDED.responsibility,
+         shift=EXCLUDED.shift,
          approval_status='pending',
          is_active=true,
          updated_at=now()`,
@@ -3827,7 +3869,8 @@ async function saveFreshRegistration(from, d) {
         d.designation,
         d.area,
         d.section,
-        d.responsibility
+        d.responsibility,
+        d.shift || NA
       ]
     );
 
@@ -3870,10 +3913,9 @@ async function processMessage(from, text, rawMessage = null) {
 
   if (/^(exit|deactivate my account|remove me|delete me|remove my registration)$/i.test(clean)) {
     const self=await byWA(from);
-    if(!self){ await sendText(from,T('notfound',te)); return; }
-    await sendButtons(from,
-      'Remove your LMMM AI Maintenance registration? Maintenance history will be preserved and you can register again.',
-      [{id:'CONFIRM_SELF_DEACTIVATE',title:'Deactivate'},{id:'CANCEL_SELF_DEACTIVATE',title:'Cancel'}]);
+    if(!self){ await sendText(from,'You are not currently registered. Send Hi to register.'); return; }
+    await removeUserRegistrationForReregister(self.employee_number,self.employee_number);
+    await sendText(from,'Your LMMM Maintenance registration has been removed. Maintenance history is preserved. Send Hi to re-register.');
     return;
   }
   if (/^cancel deactivate my account$/i.test(clean)) {
@@ -3927,8 +3969,8 @@ async function processMessage(from, text, rawMessage = null) {
   if (u.approval_status === 'removed') {
     const d=parseReg(clean);
     if(!d){await sendText(from, te
-      ? 'మీ పాత registration inactive అయింది. మళ్లీ register చేయండి:\nName / Employee Number / Designation / Section / Area'
-      : 'Your previous registration is inactive. Please re-register:\nName / Employee Number / Designation / Section / Area');return;}
+      ? 'మీ పాత registration inactive అయింది. మళ్లీ register చేయండి:\nName:\nEmployee No:\nDesignation:\nArea:\nSection:\nShift:'
+      : 'Your previous registration is inactive. Please re-register:\nName:\nEmployee No:\nDesignation:\nArea:\nSection:\nShift:');return;}
     await deleteRegistrationByWA(from);
     const saved=await saveFreshRegistration(from,d);
     if(!saved.ok){await sendText(from,'Employee Number already active.');return;}
