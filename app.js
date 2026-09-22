@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.0.1
+// LMMM AI Maintenance V8.0.2
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -78,9 +78,11 @@ function registrationTemplate(prefix='Please register'){
 function parseRegistration(text=''){
   const lines=String(text).split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
   const d={};
+  let labelled=0;
   for(const line of lines){
     const m=line.match(/^(name|employee\s*(?:no|number)?|emp\s*(?:no|number)?|designation|desgn|desig|area|section|dept|department|shift)\s*[:=-]\s*(.*)$/i);
     if(!m) continue;
+    labelled++;
     const key=m[1].toLowerCase(), val=m[2].trim();
     if(key==='name') d.name=val;
     else if(key.startsWith('employee')||key.startsWith('emp')) d.employee_number=val;
@@ -89,11 +91,31 @@ function parseRegistration(text=''){
     else if(['section','dept','department'].includes(key)) d.section=val;
     else if(key==='shift') d.shift=val;
   }
+
+  // WhatsApp-friendly positional form:
+  // Name
+  // Employee No
+  // Designation
+  // Area
+  // Section
+  // Shift
+  // This is the exact order shown by the registration prompt.
+  if(labelled===0 && lines.length>=2){
+    d.name=lines[0];
+    d.employee_number=lines[1];
+    d.designation=lines[2] || '';
+    d.area=lines[3] || '';
+    d.section=lines[4] || '';
+    d.shift=lines[5] || '';
+  }
+
   if(!d.name || !/^\d+$/.test(String(d.employee_number||''))) return null;
   return {
-    name:d.name, employee_number:String(d.employee_number),
+    name:d.name.trim(),
+    employee_number:String(d.employee_number).trim(),
     designation:canonicalDesignation(d.designation),
-    area:canonicalArea(d.area), section:canonicalSection(d.section),
+    area:canonicalArea(d.area),
+    section:canonicalSection(d.section),
     shift:canonicalShift(d.shift)
   };
 }
@@ -224,7 +246,7 @@ async function adminCommand(from,text){
     if(normWA(from)!==u.whatsapp_number) await sendText(from,`${m[1]} registration removed. Maintenance history preserved.`);
     return true;
   }
-  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.0.1 CLEAN REGISTRATION FOUNDATION');return true;}
+  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.0.2 CLEAN REGISTRATION FOUNDATION');return true;}
   return false;
 }
 async function processMessage(from,text){
@@ -266,8 +288,8 @@ async function processMessage(from,text){
 }
 
 app.get('/health', async (_req,res)=>{
-  try{await pool.query('SELECT 1');res.json({ok:true,version:'8.0.1',phase:'registration',db:true});}
-  catch(e){res.status(500).json({ok:false,version:'8.0.1',error:e.message});}
+  try{await pool.query('SELECT 1');res.json({ok:true,version:'8.0.2',phase:'registration',db:true});}
+  catch(e){res.status(500).json({ok:false,version:'8.0.2',error:e.message});}
 });
 app.get('/webhook',(req,res)=>{
   const mode=req.query['hub.mode'], token=req.query['hub.verify_token'], challenge=req.query['hub.challenge'];
@@ -284,4 +306,4 @@ app.post('/webhook',(req,res)=>{
 });
 
 await initDB();
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.0.1 registration foundation listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.0.2 registration foundation listening on ${PORT}`));
