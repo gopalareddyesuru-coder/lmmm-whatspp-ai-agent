@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.12.1 RUNTIME HOTFIX
+// LMMM AI Maintenance V8.12.2 FAST PROVIDER FAILOVER
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -1026,7 +1026,8 @@ async function geminiOnlyGenerateWithFallbackV8110(body,timeoutMs=45000){
         const retryable=[429,500,502,503,504].includes(r.status);
         lastErr=new Error(`Gemini ${model} failed ${r.status}: ${raw.slice(0,500)}`);
         console.error('[GEMINI_MODEL_FAIL]',JSON.stringify({model,attempt,status:r.status,error:raw.slice(0,500)}));
-        if(!retryable) break;
+        if(r.status===429 || /RESOURCE_EXHAUSTED|quota exceeded|rate.?limit/i.test(err)){ const qe=new Error(`Gemini quota/rate limit ${r.status}: ${String(err).slice(0,500)}`); qe.code='GEMINI_QUOTA'; qe.status=r.status; throw qe; }
+if(!retryable) break;
       }catch(e){
         lastErr=e; console.error('[GEMINI_MODEL_ERROR]',model,attempt,String(e));
       }
@@ -1038,14 +1039,17 @@ async function geminiOnlyGenerateWithFallbackV8110(body,timeoutMs=45000){
 async function geminiGenerateWithFallbackV892(body,timeoutMs=45000){
   const failures=[];
   try{
+    console.log('[AI_PROVIDER_TRY] GEMINI');
     const x=await geminiOnlyGenerateWithFallbackV8110(body,timeoutMs);
     console.log('[AI_PROVIDER_OK] GEMINI',x.model); return {...x,provider:'GEMINI'};
   }catch(e){failures.push(`GEMINI:${e.message}`);console.error('[AI_PROVIDER_FAIL] GEMINI',e.message);}
   try{
+    console.log('[AI_PROVIDER_TRY] GROQ');
     const x=await groqGenerateV8110(body,timeoutMs);
     console.log('[AI_PROVIDER_OK] GROQ',x.model); return x;
   }catch(e){failures.push(`GROQ:${e.message}`);console.error('[AI_PROVIDER_FAIL] GROQ',e.message);}
   try{
+    console.log('[AI_PROVIDER_TRY] OPENROUTER');
     const x=await openRouterGenerateV8110(body,timeoutMs);
     console.log('[AI_PROVIDER_OK] OPENROUTER',x.model); return x;
   }catch(e){failures.push(`OPENROUTER:${e.message}`);console.error('[AI_PROVIDER_FAIL] OPENROUTER',e.message);}
@@ -1528,7 +1532,7 @@ async function extractQueuedIngestV895(from,row){
       await sendText(from,'This upload is not relevant to LMMM plant / maintenance knowledge. Nothing was stored.');
       return true;
     }
-    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.12.1',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack))]);
+    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.12.2',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack))]);
     await armTemporarySourceExpiryV8120(row.id);
     await reliabilityEventV8100(row,'AI_EXTRACTION','SUCCEEDED',pack?._provider||null);
     await pool.query(`UPDATE pending_file_ingests SET workflow_state='SOURCE_SECURED',updated_at=now() WHERE id=$1`,[row.id]).catch(()=>{});
@@ -1995,4 +1999,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.12.1 RUNTIME HOTFIX listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.12.2 FAST PROVIDER FAILOVER listening on ${PORT}`));
