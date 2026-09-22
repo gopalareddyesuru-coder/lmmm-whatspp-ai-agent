@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.7.9
+// LMMM AI Maintenance V8.8.0
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -1012,23 +1012,68 @@ async function sendFullExtractionV878(from,p){
   if(items.length) await sendText(from,`Structured items extracted: ${items.length}. Nothing is stored until you choose Store Data.`);
 }
 function escPdfV879(v){return String(v??'').replace(/\\/g,'\\\\').replace(/\(/g,'\\(').replace(/\)/g,'\\)').replace(/[^\x20-\x7E]/g,'?');}
-function simplePdfV879(text){
-  const lines=String(text||'').replace(/\r/g,'').split('\n').flatMap(x=>{
-    const a=[]; for(let i=0;i<x.length;i+=92)a.push(x.slice(i,i+92)); return a.length?a:[''];
+function reportRowsV880(pack){
+  const items=Array.isArray(pack.extracted_items)&&pack.extracted_items.length?pack.extracted_items:(pack.records||[]);
+  return items.map(x=>x||{});
+}
+function reportColumnsV880(rows){
+  const keys=[...new Set(rows.flatMap(x=>Object.keys(x||{})))];
+  const preferred=['item_no','identifier','module','area','equipment','sub_equipment','event_date','event_time','shift','description','quantity','unit','action_taken','status','remarks','confidence'];
+  return [...preferred.filter(k=>keys.includes(k)),...keys.filter(k=>!preferred.includes(k))].slice(0,18);
+}
+function wrapCellV880(v,n){
+  const t=String(v??'').replace(/\s+/g,' ').trim(); if(!t)return [''];
+  const out=[]; for(let i=0;i<t.length;i+=n)out.push(t.slice(i,i+n)); return out.slice(0,4);
+}
+function tablePdfV880(pack,source){
+  const rows=reportRowsV880(pack),cols=reportColumnsV880(rows);
+  const landscape=cols.length>7;
+  const W=landscape?792:612,H=landscape?612:792;
+  const margin=28, usable=W-margin*2, fontSize=landscape?6.5:7.5, lineH=fontSize+3;
+  const widths=cols.map(k=>{
+    const k0=String(k).toLowerCase();
+    if(/description|remarks|action/.test(k0))return 2.3;
+    if(/equipment|identifier|sub_equipment/.test(k0))return 1.5;
+    return 1;
   });
-  const pages=[]; for(let i=0;i<lines.length;i+=48)pages.push(lines.slice(i,i+48));
-  if(!pages.length)pages.push(['']);
-  const objs=[null]; const add=x=>{objs.push(x);return objs.length-1;};
-  const catalog=add(''); const pagesId=add(''); const font=add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
-  const pageIds=[];
-  for(const pg of pages){
-    let y=760,stream='BT /F1 9 Tf ';
-    for(const ln of pg){stream+=`1 0 0 1 40 ${y} Tm (${escPdfV879(ln)}) Tj `;y-=15;}
-    stream+='ET';
-    const content=add(`<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream`);
-    const pid=add(`<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 ${font} 0 R >> >> /Contents ${content} 0 R >>`);
-    pageIds.push(pid);
+  const total=widths.reduce((a,b)=>a+b,0), cw=widths.map(x=>usable*x/total);
+  const charCaps=cw.map(w=>Math.max(7,Math.floor(w/(fontSize*0.55))));
+  const pages=[]; let current=[];
+  const headerH=lineH*2.2, titleH=52, footerH=24;
+  let used=titleH+headerH;
+  for(const row of rows.length?rows:[{description:pack.document_summary||pack.full_text||'No structured rows'}]){
+    const wrapped=cols.map((c,i)=>wrapCellV880(row[c],charCaps[i]));
+    const rh=Math.max(lineH*1.5,Math.max(...wrapped.map(x=>x.length))*lineH+5);
+    if(used+rh+footerH>H-margin){pages.push(current);current=[];used=titleH+headerH;}
+    current.push({row,wrapped,rh});used+=rh;
   }
+  if(current.length||!pages.length)pages.push(current);
+  const objs=[null],add=x=>(objs.push(x),objs.length-1),catalog=add(''),pagesId=add(''),font=add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
+  const pageIds=[];
+  pages.forEach((pg,pi)=>{
+    let stream=`BT /F1 11 Tf 1 0 0 1 ${margin} ${H-28} Tm (${escPdfV879('LMMM AI Maintenance - Extracted Data')}) Tj /F1 7 Tf 1 0 0 1 ${margin} ${H-42} Tm (${escPdfV879(`Source: ${source} | Type: ${pack.document_type||'OTHER'} | Page ${pi+1}/${pages.length}`)}) Tj ET `;
+    let y=H-titleH;
+    // header
+    let x=margin;
+    cols.forEach((c,i)=>{
+      stream+=`${x} ${y-headerH} ${cw[i]} ${headerH} re S BT /F1 ${fontSize} Tf 1 0 0 1 ${x+2} ${y-lineH} Tm (${escPdfV879(String(c).replace(/_/g,' ').toUpperCase())}) Tj ET `;
+      x+=cw[i];
+    });
+    y-=headerH;
+    pg.forEach(({wrapped,rh})=>{
+      x=margin;
+      cols.forEach((c,i)=>{
+        stream+=`${x} ${y-rh} ${cw[i]} ${rh} re S `;
+        wrapped[i].forEach((ln,j)=>{stream+=`BT /F1 ${fontSize} Tf 1 0 0 1 ${x+2} ${y-lineH*(j+1)} Tm (${escPdfV879(ln)}) Tj ET `;});
+        x+=cw[i];
+      });
+      y-=rh;
+    });
+    stream+=`BT /F1 7 Tf 1 0 0 1 ${margin} 14 Tm (${escPdfV879(landscape?'Landscape - print ready':'Portrait - print ready')}) Tj ET`;
+    const content=add(`<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream`);
+    const pid=add(`<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 ${W} ${H}] /Resources << /Font << /F1 ${font} 0 R >> >> /Contents ${content} 0 R >>`);
+    pageIds.push(pid);
+  });
   objs[catalog]=`<< /Type /Catalog /Pages ${pagesId} 0 R >>`;
   objs[pagesId]=`<< /Type /Pages /Kids [${pageIds.map(x=>`${x} 0 R`).join(' ')}] /Count ${pageIds.length} >>`;
   let out='%PDF-1.4\n',offs=[0];
@@ -1038,18 +1083,22 @@ function simplePdfV879(text){
   out+=`trailer\n<< /Size ${objs.length} /Root ${catalog} 0 R >>\nstartxref\n${xref}\n%%EOF`;
   return Buffer.from(out,'binary');
 }
-function excelHtmlV879(pack){
-  const items=Array.isArray(pack.extracted_items)&&pack.extracted_items.length?pack.extracted_items:(pack.records||[]);
-  const keys=[...new Set(items.flatMap(x=>Object.keys(x||{})))];
+function excelHtmlV879(pack,source){
+  const rows=reportRowsV880(pack),keys=reportColumnsV880(rows),landscape=keys.length>7;
   const esc=v=>String(v??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-  return `<!doctype html><html><head><meta charset="utf-8"></head><body><table border="1"><tr>${keys.map(k=>`<th>${esc(k)}</th>`).join('')}</tr>${items.map(r=>`<tr>${keys.map(k=>`<td>${esc(r?.[k])}</td>`).join('')}</tr>`).join('')}</table></body></html>`;
+  const bodyRows=(rows.length?rows:[{description:pack.document_summary||pack.full_text||''}]);
+  return `<!doctype html><html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8"><style>
+  @page { size:${landscape?'landscape':'portrait'}; margin:0.35in; mso-header-data:"&CLMMM AI Maintenance"; mso-footer-data:"&CPage &P of &N"; }
+  table{border-collapse:collapse;font-family:Arial,sans-serif;font-size:9pt;width:100%} th,td{border:1px solid #555;padding:4px;vertical-align:top;white-space:normal} th{font-weight:bold;text-align:center} .title{font-size:14pt;font-weight:bold;border:0}.meta{font-size:9pt;border:0}
+  </style><!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet><x:Name>Extracted Data</x:Name><x:WorksheetOptions><x:Print><x:ValidPrinterInfo/><x:PaperSizeIndex>9</x:PaperSizeIndex><x:HorizontalResolution>600</x:HorizontalResolution><x:VerticalResolution>600</x:VerticalResolution></x:Print><x:Selected/><x:FreezePanes/><x:FrozenNoSplit/><x:SplitHorizontal>3</x:SplitHorizontal><x:TopRowBottomPane>3</x:TopRowBottomPane><x:FitToPage/><x:Print><x:FitWidth>1</x:FitWidth><x:FitHeight>0</x:FitHeight></x:Print></x:WorksheetOptions></x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]--></head><body>
+  <table><tr><td class="title" colspan="${Math.max(keys.length,1)}">LMMM AI Maintenance - Extracted Data</td></tr><tr><td class="meta" colspan="${Math.max(keys.length,1)}">Source: ${esc(source)} | Type: ${esc(pack.document_type||'OTHER')} | Orientation: ${landscape?'Landscape':'Portrait'}</td></tr>
+  <thead><tr>${keys.map(k=>`<th>${esc(k.replace(/_/g,' ').toUpperCase())}</th>`).join('')}</tr></thead><tbody>${bodyRows.map(r=>`<tr>${keys.map(k=>`<td>${esc(r?.[k])}</td>`).join('')}</tr>`).join('')}</tbody></table></body></html>`;
 }
-function csvCellV878(v){const z=String(v??'');return /[",\n]/.test(z)?`"${z.replace(/"/g,'""')}"`:z;}
 async function exportPendingV878(from,p,kind){
   const pack=ingestPackV878(p),base=String(p.source_filename||'extraction').replace(/\.[^.]+$/,'').replace(/[^a-zA-Z0-9._-]+/g,'_').slice(0,80)||'extraction';
   const full=`Source: ${p.source_filename}\nType: ${pack.document_type}\nLanguages: ${(pack.detected_languages||[]).join(', ')}\nSummary: ${pack.document_summary||''}\n\nFULL EXTRACTION\n${pack.full_text||''}\n\nSTRUCTURED ITEMS\n${JSON.stringify(pack.extracted_items||[],null,2)}\n\nRECORDS\n${JSON.stringify(pack.records||[],null,2)}`;
-  if(kind==='PDF'){await sendGeneratedDocumentV878(from,simplePdfV879(full),`${base}_extracted.pdf`,'application/pdf');return;}
-  if(kind==='EXCEL'){await sendGeneratedDocumentV878(from,Buffer.from(excelHtmlV879(pack),'utf8'),`${base}_extracted.xls`,'application/vnd.ms-excel');return;}
+  if(kind==='PDF'){await sendGeneratedDocumentV878(from,tablePdfV880(pack,p.source_filename),`${base}_extracted.pdf`,'application/pdf');return;}
+  if(kind==='EXCEL'){await sendGeneratedDocumentV878(from,Buffer.from(excelHtmlV879(pack,p.source_filename),'utf8'),`${base}_extracted.xls`,'application/vnd.ms-excel');return;}
   if(kind==='TXT'){await sendGeneratedDocumentV878(from,Buffer.from(full,'utf8'),`${base}_extracted.txt`,'text/plain');return;}
   if(kind==='JSON'){await sendGeneratedDocumentV878(from,Buffer.from(JSON.stringify(pack,null,2),'utf8'),`${base}_extracted.json`,'application/json');return;}
   if(kind==='CSV'){
