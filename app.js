@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.9.1
+// LMMM AI Maintenance V8.9.2
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -929,6 +929,33 @@ Caption: ${caption||'(none)'}`;
   return safeJsonV874(txt)||{relevance:'UNCERTAIN',reason:'Could not confidently classify',document_type:'OTHER'};
 }
 
+
+function geminiModelCandidatesV892(){
+  const raw=[GEMINI_MODEL,process.env.GEMINI_FALLBACK_MODEL,'gemini-2.5-flash','gemini-2.5-flash-lite']
+    .filter(Boolean).map(x=>String(x).trim()).filter(Boolean);
+  return [...new Set(raw)];
+}
+async function geminiGenerateWithFallbackV892(body,timeoutMs=45000){
+  let lastErr=null;
+  for(const model of geminiModelCandidatesV892()){
+    const url=`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`;
+    for(let attempt=1;attempt<=2;attempt++){
+      try{
+        const r=await geminiFetchV890(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)},timeoutMs);
+        if(r.ok) return {response:r,model};
+        const raw=await r.text();
+        const retryable=[429,500,502,503,504].includes(r.status);
+        lastErr=new Error(`Gemini ${model} failed ${r.status}: ${raw.slice(0,500)}`);
+        console.error('[GEMINI_MODEL_FAIL]',model,attempt,r.status,raw.slice(0,220));
+        if(!retryable) break;
+      }catch(e){
+        lastErr=e; console.error('[GEMINI_MODEL_ERROR]',model,attempt,String(e));
+      }
+      if(attempt===1) await new Promise(res=>setTimeout(res,900));
+    }
+  }
+  throw lastErr||new Error('All Gemini model attempts failed');
+}
 async function geminiFetchV890(url,options,timeoutMs=45000){
   const c=new AbortController(),t=setTimeout(()=>c.abort(),timeoutMs);
   try{return await fetch(url,{...options,signal:c.signal});}
@@ -1045,8 +1072,8 @@ ROW | page | item | exact identifier | exact designation/description | quantity 
 Preserve identifiers exactly. Never invent equipment, dates, drawing numbers, quantities or maintenance events.
 For multi-page PDF inspect the uploaded PDF pages, not only the preview. No JSON. No markdown table.`;
   const body={contents:[{parts:[{text:prompt},{inline_data:{mime_type:mime,data:bytes.toString('base64')}}]}],generationConfig:{temperature:0,maxOutputTokens:4096}};
-  const r=await geminiFetchV890(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)},45000);
-  if(!r.ok) throw new Error(`Plain extraction failed ${r.status}: ${(await r.text()).slice(0,500)}`);
+  const gx=await geminiGenerateWithFallbackV892(body,45000),r=gx.response;
+  console.log('[GEMINI_USED]',gx.model,'plain');
   const j=await r.json(),txt=(j.candidates?.[0]?.content?.parts||[]).map(x=>x.text||'').join('').trim();
   if(!txt) throw new Error('Plain extraction returned empty output');
   if(/^UNRELATED\b/i.test(txt)) return {document_type:'UNRELATED',detected_languages:[],document_summary:'Unrelated to LMMM plant / maintenance knowledge.',full_text:txt,review_text_english:txt,extracted_items:[],records:[]};
@@ -1367,7 +1394,7 @@ async function processMediaMessageV874(from,m){
     const msg=String(e.message||e);
     if(msg.startsWith('UNSUPPORTED:')) await sendText(from,'Unsupported file type. Supported test formats: PDF, TIFF/images, TXT/CSV, Word, Excel, Access MDB/ACCDB and WhatsApp voice/audio. Nothing was stored.');
     else if(/audio|ogg|opus|voice/i.test(msg)) await sendText(from,'Voice extraction failed for this audio format. Nothing was stored. Please resend the voice note; the bot will retry with the supported audio path.');
-    else await sendText(from,'Extraction could not be read from this source. Nothing was stored.');
+    else await sendText(from,'AI extraction service is temporarily busy. I tried the backup model too. Nothing was stored. Please retry shortly.');
   }
 }
 
@@ -1646,4 +1673,4 @@ app.post('/webhook',(req,res)=>{
 });
 
 await initDB();
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.9.1 plain-text-rescue-extraction listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.9.2 model-failover extraction listening on ${PORT}`));
