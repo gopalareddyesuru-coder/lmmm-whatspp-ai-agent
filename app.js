@@ -853,7 +853,7 @@ if((a=text.match(/^AUTH_ADV:(\d+)$/))){await sendList(from,'Advanced Authorities
     if(normWA(from)!==u.whatsapp_number) await sendText(from,`${m[1]} registration removed. Maintenance history preserved.`);
     return true;
   }
-  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.7.5 MULTIFORMAT MULTILINGUAL INGEST');return true;}
+  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.7.6 AUTO FILE INGEST');return true;}
   return false;
 }
 async function hasAuthorityV874(u, authority){
@@ -903,8 +903,14 @@ async function processMediaMessageV874(from,m){
     if(!u||u.approval_status!=='approved'||!u.is_active){await sendText(from,'Approved registration required before maintenance file ingestion.');return;}
     if(!(await hasAuthorityV874(u,'ENTRY'))){await sendText(from,'Permission denied. ENTRY authority is required to store maintenance data.');return;}
     const obj=m[m.type]||{},caption=String(obj.caption||'').trim();
-    const explicit=await ingestModeV874(from)||/\b(store|save|ingest|add entry|record)\b/i.test(caption);
-    if(!explicit){await sendText(from,'File received. To store extracted maintenance data, open Add Entry and send the file again.');return;}
+    // V8.7.6: maintenance files auto-ingest by default for approved users with ENTRY authority.
+    // Explicit read/extract/convert-only intent is the only no-store path.
+    const noStore=/\b(?:read|view|extract|analyse|analyze|convert)(?:\s+only)?\b|\b(?:do not|don't|dont)\s+(?:save|store|record)\b|\bno\s+(?:save|store)\b/i.test(caption);
+    if(noStore){
+      await sendText(from,'Read/extract-only request received. Permanent storage skipped. Send the file with Store/Save when you want it added to maintenance data.');
+      await setIngestModeV874(from,false);
+      return;
+    }
     const mediaId=obj.id;if(!mediaId){await sendText(from,'File media ID not available. Please resend.');return;}
     await sendText(from,'File received. Extracting maintenance data…');
     const d=await downloadWhatsAppMediaV874(mediaId), mime=String(obj.mime_type||d.mime||'application/octet-stream').toLowerCase();
@@ -1169,8 +1175,8 @@ Shift: ${u.shift||'-'}`,[{id:'REMOVE_ME_CONFIRM',title:'Remove Me'},{id:'ACCOUNT
 }
 
 app.get('/health', async (_req,res)=>{
-  try{await pool.query('SELECT 1');res.json({ok:true,version:'8.7.4',phase:'registration',db:true});}
-  catch(e){res.status(500).json({ok:false,version:'8.7.4',error:e.message});}
+  try{await pool.query('SELECT 1');res.json({ok:true,version:'8.7.6',phase:'registration',db:true});}
+  catch(e){res.status(500).json({ok:false,version:'8.7.6',error:e.message});}
 });
 app.get('/webhook',(req,res)=>{
   const mode=req.query['hub.mode'], token=req.query['hub.verify_token'], challenge=req.query['hub.challenge'];
@@ -1196,4 +1202,4 @@ app.post('/webhook',(req,res)=>{
 });
 
 await initDB();
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.7.5 multiformat multilingual ingest listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.7.6 auto file ingest listening on ${PORT}`));
