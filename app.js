@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.8.8
+// LMMM AI Maintenance V8.8.9
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -993,16 +993,63 @@ Source format: ${ext||sendMime}.`;
     records:out.records.slice(0,250)
   };
 }
+async function extractReferenceFallbackV889(bytes,mime,filename,caption){
+  if(!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY missing');
+  const prompt=`RINL/VSP LMMM technical reference extraction fallback.
+This source has already been accepted for technical inspection. Extract useful source-backed engineering reference data without guessing.
+For PDF/TIFF/image drawing lists, parts lists, BOQ, manuals or tables:
+- inspect all pages/frames available to you;
+- preserve exact drawing/part/item identifiers and designations;
+- return rows only when legible;
+- do not invent equipment mapping;
+- do not create fake defects/jobs/history;
+- unreadable = [UNREADABLE].
+Return ONLY compact JSON:
+{"document_type":"DRAWING_LIST|PARTS_LIST|BOQ|MANUAL_REFERENCE|TECHNICAL_REFERENCE|OTHER",
+"detected_languages":["English"],
+"document_summary":"short English summary",
+"review_text_english":"concise English review text",
+"extracted_items":[{"page":null,"item_no":null,"identifier":null,"description":null,"quantity":null,"unit":null,"remarks":null}],
+"records":[{"module":"KNOWLEDGE","area":null,"equipment":null,"sub_equipment":null,"event_date":null,"description":"document-level description","confidence":"NEEDS_REVIEW"}]}
+Do not duplicate table rows in records.
+Filename: ${filename||'(unknown)'}
+Caption: ${caption||'(none)'}`;
+  const body={contents:[{parts:[{text:prompt},{inline_data:{mime_type:mime,data:bytes.toString('base64')}}]}],
+    generationConfig:{temperature:0,responseMimeType:'application/json',maxOutputTokens:8192}};
+  const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`,{
+    method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)
+  });
+  if(!r.ok) throw new Error(`Reference fallback failed ${r.status}: ${(await r.text()).slice(0,500)}`);
+  const j=await r.json(),txt=(j.candidates?.[0]?.content?.parts||[]).map(x=>x.text||'').join('');
+  const out=safeJsonV874(txt); if(!out) throw new Error('Reference fallback JSON parse failed');
+  out.full_text=String(out.review_text_english||out.document_summary||'').slice(0,120000);
+  out.review_text_english=String(out.review_text_english||out.full_text||'').slice(0,120000);
+  out.extracted_items=Array.isArray(out.extracted_items)?out.extracted_items:[];
+  out.records=Array.isArray(out.records)?out.records:[];
+  return out;
+}
+
 async function extractMaintenanceV874(bytes,mime,filename,caption){
   try{
     return await extractMaintenanceCoreV887(bytes,mime,filename,caption,false);
   }catch(firstErr){
     console.error('[EXTRACT_FIRST_ATTEMPT]',firstErr);
-    // One automatic retry only. This prevents users from having to resend a valid technical source.
     try{
       return await extractMaintenanceCoreV887(bytes,mime,filename,caption,true);
     }catch(secondErr){
       console.error('[EXTRACT_RETRY]',secondErr);
+      // Reference/document fallback uses a much smaller schema. This prevents
+      // a valid multi-page drawing/parts PDF from failing only because the rich
+      // maintenance-event schema was too large/strict.
+      if(/pdf|tiff|image/i.test(String(mime||''))){
+        try{
+          const fb=await extractReferenceFallbackV889(bytes,mime,filename,caption);
+          fb._extraction_mode='REFERENCE_FALLBACK';
+          return fb;
+        }catch(fallbackErr){
+          console.error('[REFERENCE_FALLBACK]',fallbackErr);
+        }
+      }
       throw secondErr;
     }
   }
@@ -1304,7 +1351,7 @@ async function processMediaMessageV874(from,m){
     const msg=String(e.message||e);
     if(msg.startsWith('UNSUPPORTED:')) await sendText(from,'Unsupported file type. Supported test formats: PDF, TIFF/images, TXT/CSV, Word, Excel, Access MDB/ACCDB and WhatsApp voice/audio. Nothing was stored.');
     else if(/audio|ogg|opus|voice/i.test(msg)) await sendText(from,'Voice extraction failed for this audio format. Nothing was stored. Please resend the voice note; the bot will retry with the supported audio path.');
-    else await sendText(from,'Technical content was detected, but extraction could not be completed after an automatic retry. Nothing was stored. Please keep this source for review.');
+    else await sendText(from,'Technical content was detected, but all extraction paths failed. Nothing was stored. Please keep this source for review.');
   }
 }
 
@@ -1583,4 +1630,4 @@ app.post('/webhook',(req,res)=>{
 });
 
 await initDB();
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.8.8 lmmm-relevance-reference-extraction listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.8.9 staged-reference-fallback listening on ${PORT}`));
