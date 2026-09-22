@@ -993,7 +993,7 @@ async function removeUserRegistrationForReregister(employeeNumber, performedBy='
  const u=await byEmp(employeeNumber); if(!u)return null;
  await pool.query('BEGIN');
  try{
-  await pool.query(`UPDATE users SET is_active=false,approval_status='removed',updated_at=now() WHERE employee_number=$1`,[employeeNumber]);
+  await pool.query(`UPDATE users SET is_active=false,approval_status='removed',operational_role='NORMAL_USER',responsibility='NOT ASSIGNED',updated_at=now() WHERE employee_number=$1`,[employeeNumber]);
   await pool.query(`UPDATE user_assignments SET active=false WHERE employee_number=$1`,[employeeNumber]).catch(()=>{});
   await pool.query(`UPDATE user_responsibilities SET active=false WHERE employee_number=$1`,[employeeNumber]).catch(()=>{});
   await pool.query(`UPDATE user_default_permissions SET active=false,updated_at=now() WHERE employee_number=$1`,[employeeNumber]).catch(()=>{});
@@ -1491,7 +1491,8 @@ async function setResponsibility(from, employeeNumber, code) {
     await pool.query('COMMIT');
   }catch(e){ await pool.query('ROLLBACK'); throw e; }
 
-  await syncHierarchyAndAccess(employeeNumber,from,'Approved responsibility / hierarchy changed');
+  await syncAutomaticResponsibilities(employeeNumber,from);
+  await syncDefaultAccess(employeeNumber,from,'Approved responsibility / hierarchy changed');
   await sendButtons(
     from,
     `Responsibility set\n${u.name} / ${employeeNumber}\n${role}\nSection: ${section}\nArea: ${area}`,
@@ -1698,7 +1699,7 @@ function geminiInstruction(u,ctx){
  return `You are the document-intelligence ingestion engine for the LMMM steel-plant maintenance system.
 FIRST understand what the source actually is. Never convert instructions/reference material into events that happened.
 Return valid JSON only with this exact structure:
-{"language":"en|te|hi","uncertain":boolean,"needs_event_time":boolean,"document_class":"manual|sop|smp|drawing|spares|inspection_record|defect_record|job_record|maintenance_history|vibration_readings|motor_load_readings|breakdown_delay|production|logbook|attendance|other_reference","document_kind":"table|handwritten_note|photo|audio|document","table_has_date_column":boolean,"title":string|null,"summary":string,"equipment_refs":[string],"identifiers":[string],"page_count":number|null,"reference_items":[{"heading":string|null,"text":string,"page_number":number|null,"page_end":number|null}],"entries":[{"type":"production|delay|inspection|defect|job_action|logbook_note|vibration_reading|motor_load_reading","equipment":string|null,"text":string,"blooms_rolled":number|null,"delay_minutes":number|null,"delay_section":string|null,"reason":string|null,"reading_value":number|null,"reading_unit":string|null,"reading_point":string|null,"event_date":string|null,"event_shift":"A|B|C|GENERAL|null"}]}.
+{"language":"en|te|hi","uncertain":boolean,"needs_event_time":boolean,"document_class":"manual|sop|smp|drawing|spares|inspection_record|defect_record|job_record|maintenance_history|vibration_readings|motor_load_readings|breakdown_delay|production|logbook|attendance|other_reference","document_kind":"table|handwritten_note|photo|audio|document","table_has_date_column":boolean,"title":string|null,"summary":string,"equipment_refs":[string],"identifiers":[string],"page_count":number|null,"reference_items":[{"heading":string|null,"text":string,"page_number":number|null,"page_end":number|null}],"entries":[{"type":"production|delay|inspection|defect|job_action|logbook_note|vibration_reading|motor_load_reading|preventive_maintenance|shutdown|manpower|employee_attendance|contract_worker_attendance","equipment":string|null,"text":string,"blooms_rolled":number|null,"delay_minutes":number|null,"delay_section":string|null,"reason":string|null,"reading_value":number|null,"reading_unit":string|null,"reading_point":string|null,"event_date":string|null,"event_shift":"A|B|C|GENERAL|null"}]}.
 DOCUMENT CLASSIFICATION IS MANDATORY.
 Manual/SOP/SMP/drawing/spares/other_reference are REFERENCE documents. Put their useful content in reference_items and summary. Do NOT create inspection/job/defect/history entries merely because the manual says check, inspect, replace, maintain or lubricate. They have no event date unless the source explicitly records an action that actually happened. Set needs_event_time=false for pure reference documents.
 For actual inspection/defect/job/history/vibration/motor-load/breakdown/production/logbook records, extract EVERY readable record. For TABLES bind each row's own Date + Equipment + description/readings/remarks to THAT SAME ROW. Different rows may have different dates/equipment. Never use a common date for a historical table. If one row date is unreadable, only that row gets event_date=null.
@@ -2113,10 +2114,10 @@ async function searchPermissions(u){
  return out;
 }
 async function primarySearchButtons(u,hasMore=true){
- const perms=await searchPermissions(u);
- const b=[{id:'SEARCH_DATA_MENU',title:'Select Data'}];
+ const perms=await searchPermissions(u); const b=[{id:'SEARCH_DATA_MENU',title:'Select Data'}];
  if(hasMore && perms.more)b.push({id:'SEARCH_MORE',title:'More'});
- if(perms.analysis)b.push({id:'SEARCH_ANALYSIS',title:'Analysis'});
+ if(perms.pdf||perms.reports)b.push({id:'SEARCH_EXPORT',title:'Generate Report'});
+ else if(perms.analysis)b.push({id:'SEARCH_ANALYSIS',title:'Analysis'});
  else if(perms.date)b.push({id:'SEARCH_DATE',title:'Date Range'});
  return b.slice(0,3);
 }
@@ -2131,7 +2132,8 @@ function allowedAnalysisRows(perms){
  if(perms.cbm)rows.push({id:'AN_CBM',title:'Vibration / CBM'});
  if(perms.delay)rows.push({id:'AN_DELAY',title:'Delay Impact'});
  if(perms.rcm)rows.push({id:'AN_RCM',title:'RCM Analysis'});
- if(perms.pdf)rows.push({id:'AN_PDF',title:'PDF Report',description:'Printable A4 report for current results'});
+ if(perms.pdf)rows.push({id:'AN_PDF',title:'Generate PDF',description:'Generate only when requested'});
+ if(perms.pdf||perms.reports)rows.push({id:'AN_EXCEL',title:'Generate Excel',description:'Generate current filtered records'});
  return rows;
 }
 function actionFooter(){ return ''; }
@@ -2483,6 +2485,18 @@ function performanceSummary(rows){
  return {defects,hist,jobs,cbm,delays,pm,latest,first,repeats,top};
 }
 
+async function sendCurrentMaintenanceExcel(to,u){
+ const perms=await searchPermissions(u); if(!(perms.pdf||perms.reports)){await sendText(to,'Excel report access is not authorised.');return;}
+ const ctx=await getSearchContext(u); if(!ctx?.equipment_name&&!ctx?.area){await sendText(to,'Search/select equipment or area first.');return;}
+ const all=await allAnalysisRows(ctx,u,12000); const rows=all.filter(r=>!r.__excluded).slice(0,5000);
+ if(!rows.length){await sendText(to,'No validated matching records are available for Excel generation.');return;}
+ let XLSX; try{XLSX=await import('xlsx');}catch(e){await sendText(to,'Excel writer is unavailable on this server.');return;}
+ const data=rows.map(r=>({Date:r.event_date||'',Type:r.record_type||'',Equipment:r.equipment||'',Area:r.area||'',Record:r.record_text||'',Source:r.source_name||''}));
+ const wb=XLSX.utils.book_new(), ws=XLSX.utils.json_to_sheet(data); XLSX.utils.book_append_sheet(wb,ws,'Maintenance Records');
+ const buf=Buffer.from(XLSX.write(wb,{type:'buffer',bookType:'xlsx'})); const base=String(ctx.equipment_name||ctx.area||'LMMM').replace(/[^A-Za-z0-9_-]+/g,'_').slice(0,60);
+ await sendDocumentBuffer(to,buf,`${base}_Maintenance_Report.xlsx`,`Excel maintenance report • ${rows.length} validated matching record(s)`,'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+}
+
 function pdfSafeText(v=''){return String(v??'').replace(/[\u0000-\u001f\u007f]/g,' ').replace(/[^\x20-\x7E]/g,'?').replace(/\s+/g,' ').trim();}
 function officialEventEligible(r,code){
  const eventCodes=new Set(['DEFECTS','JOBS','HISTORY','PM','CBM','BREAKDOWN']);
@@ -2769,7 +2783,7 @@ async function universalSearch(q,u){
      return {text:`${equipment} — ${intent==='defect'?'Defects':intent==='history'?'History':'Jobs'}\nShowing latest ${rows.length}\n\n${formatBundledResults(rows)}`,
        buttons:await primarySearchButtons(u,rows.length===20),status:'OK'};
    }
-   return {text:`${equipment}\nNo source-backed ${intent==='defect'?'defect':intent==='history'?'history':'job'} records are available in the currently indexed ${intent==='defect'?'Defects':intent==='history'?'History':'Jobs'} data.`,buttons:[],status:'NO_MODULE_DATA'};
+   return {text:`${equipment}\nNo source-backed ${intent==='defect'?'defect':intent==='history'?'history':'job'} records are available in the currently indexed ${intent==='defect'?'Defects':intent==='history'?'History':'Jobs'} data.`,buttons:[{id:'BACK_EQUIPMENT_MENU',title:'Back'},{id:intent==='defect'?'ADD_DEFECT_HINT':'UPLOAD_RECORD_HINT',title:intent==='defect'?'Add Defect':'Upload Data'}],status:'NO_MODULE_DATA'};
  }
  ctx=await getSearchContext(u); const dr=range|| (ctx?.date_from?{from:String(ctx.date_from).slice(0,10),to:String(ctx.date_to||ctx.date_from).slice(0,10)}:null);
  if(intent==='condition' && equipment){
@@ -2881,7 +2895,7 @@ async function repairTableDates(buf,mime,u,ctx,obj){
 }
 function isCompleteMediaEntry(e){
  if(!e)return false;
- const supportedTypes=new Set(['production','delay','inspection','defect','job_action','logbook_note','vibration_reading','motor_load_reading']);
+ const supportedTypes=new Set(['production','delay','inspection','defect','job_action','logbook_note','vibration_reading','motor_load_reading','preventive_maintenance','shutdown','manpower','employee_attendance','contract_worker_attendance']);
  if(!supportedTypes.has(e.type) || !e.event_date)return false;
  if(e.type==='production')return Number.isInteger(e.blooms_rolled) && e.blooms_rolled>=0;
  if(e.type==='delay')return Number.isInteger(e.delay_minutes) && e.delay_minutes>=0 && !!String(e.delay_section||'').trim() && !!String(e.reason||e.text||'').trim();
@@ -3028,7 +3042,7 @@ async function commitMedia(u,from,p,status='confirmed',timingSource='media_confi
    VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,[d,sh||'Not found',u.area_of_working,e.blooms_rolled,u.name,`Media: ${e.text||''}`,from,mediaId]);
    productionByKey.set(`${d}|${sh||'Not found'}|${String(u.area_of_working).toLowerCase()}`,q.rows[0].id);
    saved.push({type:'production',id:q.rows[0].id,text:`${e.blooms_rolled} blooms`,equipment:e.equipment||null});
-  }else if(['inspection','defect','job_action','logbook_note','vibration_reading','motor_load_reading'].includes(e.type)){
+  }else if(['inspection','defect','job_action','logbook_note','vibration_reading','motor_load_reading','preventive_maintenance','shutdown','manpower','employee_attendance','contract_worker_attendance'].includes(e.type)){
    const id=await saveSectionEvent(u,from,e.type,e.text||'',d,sh,timingSource,e.equipment||null,mediaId);
    saved.push({type:e.type,id,text:e.text||'',equipment:e.equipment||null});
   }else if(e.type==='delay' && Number.isInteger(e.delay_minutes)){
@@ -3188,6 +3202,7 @@ function responsibilityDisplay(a,u){
  return out.join(', ')||'Not Assigned';
 }
 async function employeeGovernanceSummary(emp){
+ await resolveHierarchyRole(emp,'SYSTEM_ACCESS_VIEW').catch(()=>null);
  const u=await byEmp(emp),a=await effectiveAuthority(emp); if(!u||!a)return null;
  const sc=await effectiveSearchScope(u), snap=await runtimeAccessSnapshot(emp), p=await searchPermissions(u);
  const inherited=(a.default_permissions||[]).map(x=>accessLabel(x.permission)).join(', ')||'None';
@@ -3211,7 +3226,8 @@ async function sendAccessAdminMenu(to,emp){
  await sendList(to,summary,'Manage',[
   {id:`ACCESS_PERMS:${emp}`,title:'Access'}, {id:`ACCESS_ROLE:${emp}`,title:'Role'}, {id:`ACCESS_AUTH:${emp}`,title:'Authorities'},
   {id:`RESP_CHANGE:${emp}`,title:'Responsibilities'}, {id:`ACCESS_AREA:${emp}`,title:'Area / Equipment Scope'},
-  {id:`ACCESS_JOB:${emp}`,title:'Job Responsibility'}, {id:`ACCESS_VIEW:${emp}`,title:'Effective Access'}, {id:`ACCESS_AUDIT:${emp}`,title:'Audit History'}
+  {id:`ACCESS_JOB:${emp}`,title:'Job Responsibility'}, {id:`ACCESS_VIEW:${emp}`,title:'Effective Access'}, {id:`ACCESS_AUDIT:${emp}`,title:'Audit History'},
+  {id:`ACCESS_DISABLE:${emp}`,title:'Disable / Re-register'}
  ],'User Governance');
 }
 async function sendPermissionAdmin(to,emp,page=1){
@@ -3483,6 +3499,9 @@ async function ownerCommand(from, text) {
   if ((rx=text.match(/^ACCESS_AUTH_TOGGLE:([A-Z_]+):(\d+)$/i))) { await toggleAuthorityAdmin(from,rx[2],rx[1].toUpperCase()); return true; }
   if ((rx=text.match(/^ACCESS_AUTH_PAGE2:(\d+)$/i))) { await sendAuthorityAdmin(from,rx[1],2); return true; }
   if ((rx=text.match(/^ACCESS_AUDIT:(\d+)$/i))) { await sendAccessAudit(from,rx[1]); return true; }
+  if ((rx=text.match(/^ACCESS_DISABLE:(\d+)$/i))) { const du=await byEmp(rx[1]); if(!du){await sendText(from,'Not found.');return true;} await sendButtons(from,`Disable registration for ${rx[1]}? Historical maintenance records will be preserved and the user can register again.`,[{id:`ACCESS_DISABLE_CONFIRM:${rx[1]}`,title:'Disable'},{id:`ACCESS_DISABLE_CANCEL:${rx[1]}`,title:'Cancel'}]); return true; }
+  if ((rx=text.match(/^ACCESS_DISABLE_CONFIRM:(\d+)$/i))) { const du=await removeUserRegistrationForReregister(rx[1],from); if(!du){await sendText(from,'Not found.');return true;} await sendText(du.whatsapp_number,'Your LMMM AI Maintenance registration is inactive. Send Hi to register again.'); await sendText(from,`${rx[1]} disabled. Registration/access removed; maintenance history preserved.`); return true; }
+  if (/^ACCESS_DISABLE_CANCEL:\d+$/i.test(text)) { await sendText(from,'Cancelled.'); return true; }
   if ((rx=text.match(/^ACCESS_TOGGLE:([A-Z_]+):(\d+)$/i))) { await togglePermissionAdmin(from,rx[2],rx[1].toUpperCase()); return true; }
   if ((rx=text.match(/^ACCESS_AREA:(\d+)$/i))) { await sendAreaScopePicker(from,rx[1]); return true; }
   if ((rx=text.match(/^ACCESS_AREA_SET:([A-Z0-9_]+):(\d+)$/i))) { await sendAreaScopePicker(from,rx[2]); return true; }
@@ -3602,7 +3621,8 @@ async function ownerCommand(from, text) {
       ]
     );
 
-    await sendText(from, `Assignment updated for ${m[1]}.`);
+    await syncHierarchyAndAccess(m[1],from,'Assignment updated');
+    await sendText(from, `Assignment updated for ${m[1]}. Role, responsibility and access recalculated.`);
     return true;
   }
 
@@ -3891,7 +3911,7 @@ async function processMessage(from, text, rawMessage = null) {
 
   // V7.7.59: a deactivated user is blocked at the gate. Never auto-delete/re-register
   // and never fall through to the normal "How can I help you?" path.
-  if (u.approval_status === 'removed') {
+  if (u.approval_status === 'removed' || u.is_active === false) {
     const d=parseReg(clean);
     if(!d){await sendText(from, te
       ? 'మీ పాత registration inactive అయింది. మళ్లీ register చేయండి:\nName / Employee Number / Designation / Section / Area'
@@ -4244,6 +4264,13 @@ async function processMessage(from, text, rawMessage = null) {
     }
     if(/^DATA_APPLY$/i.test(clean)){await applyEquipmentDataSelection(from,u);return;}
 
+    if(/^SEARCH_EXPORT$/i.test(clean)){const pp=await searchPermissions(u);const rr=[];if(pp.pdf)rr.push({id:'AN_PDF',title:'Generate PDF',description:'Printable A4 current results'});if(pp.pdf||pp.reports)rr.push({id:'AN_EXCEL',title:'Generate Excel',description:'Current filtered records'});if(!rr.length){await sendText(from,'Report generation is not authorised for your access.');return;}await sendList(from,'Generate report only when you need it.','Select',rr,'Reports');return;}
+    if(/^AN_EXCEL$/i.test(clean)){await sendCurrentMaintenanceExcel(from,u);return;}
+    if(/^UPLOAD_MANUAL_HINT$/i.test(clean)){await sendText(from,'Upload the authorised PDF/Word/Excel/TIFF/image manual here. For files that show File actions, choose Store or Read + Store. The bot will classify the document, preserve the source reference, index equipment/manual knowledge, and keep it searchable. If equipment/date/classification is unclear, it will ask for clarification instead of guessing.');return;}
+    if(/^ADD_DEFECT_HINT$/i.test(clean)){await sendText(from,'Send the defect as text, voice, photo/logbook image, or document. Include equipment and event date/time when known. The bot will classify it as Defect and store it in the structured maintenance event data with submitter and server timestamp; if equipment/date is ambiguous it will ask before saving.');return;}
+    if(/^UPLOAD_RECORD_HINT$/i.test(clean)){await sendText(from,'Upload/send the authorised source here. The bot will classify it and store it in the matching module only when the content is clear; ambiguous equipment/date/module will be clarified first.');return;}
+    if(/^BACK_EQUIPMENT_MENU$/i.test(clean)){const cc=await getSearchContext(u);if(!cc?.equipment_name){await sendText(from,'Search an equipment first.');return;}const mm=equipmentMenuResult(cc.equipment_name);await sendSearchTextAndButtons(from,mm.text,mm.buttons);return;}
+
     // V7.7.5: analysis-menu selections act on the active search context before Universal Search.
     try{
       const aa=await analysisAction(clean,u);
@@ -4261,18 +4288,6 @@ async function processMessage(from, text, rawMessage = null) {
       if(us?.text){
         if(us.buttons?.length) await sendSearchTextAndButtons(from,us.text,us.buttons);
         else await sendLongText(from,us.text);
-        // V7.7.38: printable-access users get the on-screen result first, then an automatic
-        // A4 table PDF for the SAME current search context. Runtime permission is re-read from DB
-        // inside sendCurrentMaintenancePdf(), so a Super Admin downgrade takes effect immediately.
-        // Do not auto-generate again for pagination/menu/date/analysis control commands.
-        const autoPdfControl=/^(SEARCH_MORE|more|next|SEARCH_DATA_MENU|select data|SEARCH_ANALYSIS|analysis|SEARCH_DATE|date range|CUSTOM_DATE_RANGE)$/i.test(String(clean||'').trim());
-        if(us.status==='OK' && !autoPdfControl){
-          const freshPerms=await searchPermissions(u);
-          if(freshPerms.pdf){
-            try{ await sendCurrentMaintenancePdf(from,u); }
-            catch(pdfErr){ console.error('[AUTO PDF V7.7.38]',pdfErr); await sendText(from,'Records are available, but the printable PDF could not be generated. Please retry PDF Report.'); }
-          }
-        }
         return;
       }
       const kq=us?.knowledgeQuery||clean;
@@ -4286,7 +4301,7 @@ async function processMessage(from, text, rawMessage = null) {
         const answer=await geminiAnswerFromKnowledge(aq,knowledgeRows,u);
         if(answer){await sendText(from,answer);return;}
       }
-      if(us?.referenceIntent==='about' && us?.strictEquipment){await sendText(from,`${us.strictEquipment}\nManual/reference details are not available in the currently indexed authorised sources.`);return;}
+      if(us?.referenceIntent==='about' && us?.strictEquipment){await sendSearchTextAndButtons(from,`${us.strictEquipment}\nManual/reference details are not available in the currently indexed authorised sources.`,[{id:'UPLOAD_MANUAL_HINT',title:'Upload Manual'},{id:'BACK_EQUIPMENT_MENU',title:'Back'}]);return;}
       if(us?.status==='NO_STRUCTURED_DATA'){await sendText(from,'No authorised stored records were found for the current equipment/module/date filters. Try Date Range, change equipment, or clear the filter.');return;}
     }catch(e){console.error('[UNIVERSAL SEARCH]',e); await sendText(from,'Search could not be completed due to a system error. Please retry.'); return;}
     await sendText(from,ml(languageOf(clean),'No matching stored LMMM record or indexed reference knowledge was found. Try an equipment name, item number, maintenance term, or another date range.','సరిపోలే LMMM రికార్డు లేదా ఇండెక్స్ చేసిన రిఫరెన్స్ సమాచారం దొరకలేదు. Equipment పేరు, item number, maintenance term లేదా మరో date range తో ప్రయత్నించండి.','मिलता हुआ LMMM रिकॉर्ड या indexed reference knowledge नहीं मिला। Equipment name, item number, maintenance term या दूसरी date range से खोजें।'));return;
@@ -4362,7 +4377,7 @@ app.post('/webhook', (req, res) => {
 app.get('/api/status', (_q, r) =>
   r.status(200).json({
     status: 'ready',
-    registration: 'V7.7.47-authoritative-access-verified',
+    registration: 'V7.7.63-consolidated-governance-ingestion-export',
     webhook: '/webhook',
     super_admins_configured: SUPER_ADMIN_NUMBERS.size
   })
