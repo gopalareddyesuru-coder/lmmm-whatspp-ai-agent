@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.7.1
+// LMMM AI Maintenance V8.7.2
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -44,12 +44,13 @@ function canonicalDesignation(v=''){
 }
 const LMMM_ORG = {
   department_code:'35',
-  areas:['BDM','BAR MILL','FINISHING','ADDITIONAL AREAS','CRANES','HYDRAULICS','PLANNING'],
-  sections:['Operations','Mechanical','Electrical','Instrumentation','ETL','Telecommunications','Water Management','DNW','EnMD','RED']
+  areas:['LMMM','BDM','BAR MILL','FINISHING','ADDITIONAL AREAS','CRANES','HYDRAULICS','PLANNING'],
+  sections:['HOD','Operations','Mechanical','Electrical','Instrumentation','ETL','Telecommunications','Water Management','DNW','EnMD','RED']
 };
 function normKey(v=''){return String(v||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();}
 function canonicalArea(v=''){
   const k=normKey(v), m={
+    'lmmm':'LMMM','department':'LMMM','dept':'LMMM','department 35':'LMMM','dept 35':'LMMM',
     'bdm':'BDM','break down mill':'BDM','breakdown mill':'BDM','billet mill':'BDM','b d m':'BDM',
     'bar mill':'BAR MILL','barmill':'BAR MILL','bm':'BAR MILL',
     'finishing':'FINISHING','finishing mill':'FINISHING','finish':'FINISHING',
@@ -61,6 +62,7 @@ function canonicalArea(v=''){
 function canonicalSection(v=''){
   const k=normKey(v);
   const aliases={
+    'hod':'HOD','head of department':'HOD','department head':'HOD',
     'mech':'Mechanical','mechanical':'Mechanical','me':'Mechanical',
     'ops':'Operations','operation':'Operations','operations':'Operations','production':'Operations',
     'elec':'Electrical','elect':'Electrical','electrical':'Electrical',
@@ -151,6 +153,7 @@ function autoAuthorityV83(u){
 function workResponsibilityV83(u){
   const area=canonicalArea(u.area_of_working), sec=canonicalSection(u.section_department), sh=canonicalShift(u.shift);
   let duties=[];
+  if(sec==='HOD') return 'LMMM Department Head';
   if(sec==='Mechanical') duties=[`${area} equipment maintenance`,`${area} equipment availability`,'Support uninterrupted production'];
   else if(sec==='Operations') duties=[`${area} operation`,'Production continuity','Production/delay/log-book entries'];
   else if(sec==='Electrical') duties=[`${area} electrical equipment maintenance`,'Electrical equipment availability','Support uninterrupted production'];
@@ -585,7 +588,7 @@ function governanceScopeV870(u,p,o){
   const role=String(p?.assigned_role||o?.operational_role||'NORMAL_EMPLOYEE').toUpperCase();
   const area=canonicalArea(o?.area||u.area_of_working)||'-';
   const section=canonicalSection(o?.section||u.section_department)||'-';
-  if(role==='HOD') return {code:'LMMM_ALL',label:'LMMM',responsibility:'LMMM'};
+  if(role==='HOD'||section==='HOD') return {code:'LMMM_ALL',label:'LMMM',responsibility:'LMMM Department Head'};
   if(role==='SECTION_INCHARGE') return {code:'LMMM_SECTION',label:`LMMM / ${section}`,responsibility:'LMMM'};
   if(role==='AREA_INCHARGE') return {code:'AREA',label:area,responsibility:area};
   if(role==='SHIFT_INCHARGE') return {code:'SHIFT_AREA_SECTION',label:`${area} / ${section} / ${canonicalShift(o?.shift||u.shift)||'-'}`,responsibility:`${area} ${section} shift`};
@@ -713,7 +716,7 @@ Shift: ${u.shift||'-'}`,
 async function adminCommand(from,text){
   if(!SUPER_ADMINS.has(normWA(from))) return false;
   const admin=normWA(from); let a;
-  // V8.7.1: survive clients/webhooks that return only interactive title, not payload ID.
+  // V8.7.2: survive clients/webhooks that return only interactive title, not payload ID.
   if(!/^ADM_|^AUTH_|^AU:|^SET|^SA:|^SR:/.test(text)){const emp=await currentAdminEmployeeV870(from);if(emp){const map={'User / Designation':`ADM_IDENTITY:${emp}`,'Work Assignment':`ADM_WORK:${emp}`,'Permissions':`ADM_PERM:${emp}`,'Contact Details':`ADM_CONTACT:${emp}`,'More Options':`ADM_MORE:${emp}`,'Authorities':`ADM_AUTH:${emp}`,'Core Access':`AUTH_CORE:${emp}`,'Docs / Reports':`AUTH_DOC:${emp}`,'Advanced':`AUTH_ADV:${emp}`,'Admin Tools':`ADM_ADMINTOOLS:${emp}`};if(map[text])text=map[text];}}
   if(text==='ADM_USERS'||/^users?$/i.test(text)){await sendText(from,'User Management\nSearch by Employee No or Name.');return true;}
   if((a=text.match(/^ADM_VIEW:(\d+)$/))){const u=await byEmp(a[1]); if(u)await showUser(from,u);else await sendText(from,'Employee not found.');return true;}
@@ -758,7 +761,7 @@ if((a=text.match(/^SETDES:(\d+):([A-Z_]+)$/))){const emp=a[1],code=a[2];let titl
 if((a=text.match(/^ADM_AREA:(\d+)$/))){await sendList(from,'Select Area','Select',LMMM_ORG.areas.map(x=>({id:`SETAREA:${a[1]}:${x.replaceAll(' ','_')}`,title:x})),'Area');return true;}
 if((a=text.match(/^SETAREA:(\d+):([A-Z_]+)$/))){const emp=a[1],area=a[2].replaceAll('_',' '),o=await saveAdminOverrideV850(emp,{area,responsibility:null},normWA(from)),u=await byEmp(emp);if(u)await applyAdminOverrideV850(u,o,normWA(from));await sendText(from,`✅ Area changed: ${area}\nEmployee: ${emp}\nResponsibility refreshed.\nOnly Super Admin notified.`);return true;}
 if((a=text.match(/^ADM_SECTION:(\d+)$/))){await sendList(from,'Select Section','Select',LMMM_ORG.sections.map(x=>({id:`SETSEC:${a[1]}:${x.replaceAll(' ','_')}`,title:x})),'Section');return true;}
-if((a=text.match(/^SETSEC:(\d+):(.+)$/))){const emp=a[1],section=canonicalSection(a[2].replaceAll('_',' ')),o=await saveAdminOverrideV850(emp,{section,responsibility:null},normWA(from)),u=await byEmp(emp);if(u)await applyAdminOverrideV850(u,o,normWA(from));await sendText(from,`✅ Section changed: ${section}\nEmployee: ${emp}\nResponsibility refreshed.\nOnly Super Admin notified.`);return true;}
+if((a=text.match(/^SETSEC:(\d+):(.+)$/))){const emp=a[1],section=canonicalSection(a[2].replaceAll('_',' '));const patch=section==='HOD'?{section:'HOD',area:'LMMM',operational_role:'HOD',responsibility:'LMMM Department Head',scope:'LMMM_ALL'}:{section,responsibility:null};const o=await saveAdminOverrideV850(emp,patch,normWA(from)),u=await byEmp(emp);if(u)await applyAdminOverrideV850(u,o,normWA(from));await sendText(from,section==='HOD'?`✅ Section changed: HOD\nArea/Scope: LMMM\nRole: HOD\nEmployee: ${emp}\nOnly Super Admin notified.`:`✅ Section changed: ${section}\nEmployee: ${emp}\nResponsibility refreshed.\nOnly Super Admin notified.`);return true;}
 if((a=text.match(/^ADM_SHIFT:(\d+)$/))){await sendButtons(from,'Select Shift',[{id:`SETSH:${a[1]}:General`,title:'General'},{id:`SETSH:${a[1]}:ROTATING_ABC`,title:'A/B/C Rotating'},{id:`SETSH2:${a[1]}`,title:'Fixed A/B/C'}]);return true;}
 if((a=text.match(/^SETSH2:(\d+)$/))){await sendButtons(from,'Fixed Shift',[{id:`SETSH:${a[1]}:A`,title:'A Shift'},{id:`SETSH:${a[1]}:B`,title:'B Shift'},{id:`SETSH:${a[1]}:C`,title:'C Shift'}]);return true;}
 if((a=text.match(/^SETSH:(\d+):(General|ROTATING_ABC|A|B|C)$/))){const emp=a[1],shift=a[2],o=await saveAdminOverrideV850(emp,{shift,responsibility:null},normWA(from)),u=await byEmp(emp);if(u)await applyAdminOverrideV850(u,o,normWA(from));await sendText(from,`✅ Shift changed: ${shift}\nEmployee: ${emp}\nOnly Super Admin notified.`);return true;}
@@ -774,7 +777,7 @@ if((a=text.match(/^ADM_ADMINTOOLS:(\d+)$/))){await sendList(from,'Admin Tools','
   if((a=text.match(/^ADM_RESP:(\d+)$/))){await sendList(from,'Operational Responsibility','Select',OPERATIONAL_RESPONSIBILITIES_V850.map(([code,title])=>({id:`SETRESP:${a[1]}:${code}`,title})),'Responsibility');return true;}
   if((a=text.match(/^SR:(\d+):(.+)$/))){await setField(a[1],'role',a[2],admin);await showUser(from,await byEmp(a[1]));return true;}
   if((a=text.match(/^SA:(\d+):(ENTRY|VIEW_ONLY|ENTRY_VIEW|EDIT|FULL_ACCESS)$/))){await setAccessSyncedV858(a[1],a[2],admin);await sendText(from,`✅ Saved in real time\nAccess: ${a[2]}\nAuthorities replaced to match this access level.\nEmployee: ${a[1]}\nOnly Super Admin notified.`);await showUser(from,await byEmp(a[1]));return true;}
-  if((a=text.match(/^SETRESP:(\d+):([A-Z_]+)$/))){const emp=a[1],role=a[2],u=await byEmp(emp);if(!u){await sendText(from,'Employee not found.');return true;}let base=workResponsibilityV83(u),scope='REGISTERED_AREA_SECTION';if(role==='AREA_INCHARGE'){base=canonicalArea(u.area_of_working);scope='AREA';}else if(role==='SECTION_INCHARGE'){base='LMMM';scope='LMMM_SECTION';}else if(role==='HOD'){base='LMMM';scope='LMMM_ALL';}else if(role==='SHIFT_INCHARGE'){base=`${canonicalArea(u.area_of_working)} ${canonicalSection(u.section_department)} shift`;scope='SHIFT_AREA_SECTION';}else if(role==='DGM'){base='LMMM';scope='LMMM_ALL';}else if(role==='SUPER_ADMIN'){base='LMMM';scope='LMMM_ALL';}const o=await saveAdminOverrideV850(emp,{operational_role:role,responsibility:base,scope},normWA(from));await applyAdminOverrideV850(u,o,normWA(from));await sendText(from,`✅ Responsibility changed: ${role.replaceAll('_',' ')}\nEmployee: ${emp}\nOnly Super Admin notified.`);return true;}
+  if((a=text.match(/^SETRESP:(\d+):([A-Z_]+)$/))){const emp=a[1],role=a[2],u=await byEmp(emp);if(!u){await sendText(from,'Employee not found.');return true;}let base=workResponsibilityV83(u),scope='REGISTERED_AREA_SECTION';if(role==='AREA_INCHARGE'){base=canonicalArea(u.area_of_working);scope='AREA';}else if(role==='SECTION_INCHARGE'){base='LMMM';scope='LMMM_SECTION';}else if(role==='HOD'){base='LMMM Department Head';scope='LMMM_ALL';}else if(role==='SHIFT_INCHARGE'){base=`${canonicalArea(u.area_of_working)} ${canonicalSection(u.section_department)} shift`;scope='SHIFT_AREA_SECTION';}else if(role==='DGM'){base='LMMM';scope='LMMM_ALL';}else if(role==='SUPER_ADMIN'){base='LMMM';scope='LMMM_ALL';}const o=await saveAdminOverrideV850(emp,{operational_role:role,responsibility:base,scope},normWA(from));await applyAdminOverrideV850(u,o,normWA(from));await sendText(from,`✅ Responsibility changed: ${role.replaceAll('_',' ')}\nEmployee: ${emp}\nOnly Super Admin notified.`);return true;}
   if((a=text.match(/^SP:(\d+):(.+)$/))){await setField(a[1],'resp',a[2],admin);await showUser(from,await byEmp(a[1]));return true;}
   if((a=text.match(/^ADM_TEST:(\d+)$/))){const u=await byEmp(a[1]);if(!u){await sendText(from,'Employee not found.');return true;}await sendGovernanceTestV841(from,u);return true;}
   if((a=text.match(/^ADM_AUTH:(\d+)$/))){await sendButtons(from,'Authority Control',[
@@ -829,7 +832,7 @@ if((a=text.match(/^AUTH_ADV:(\d+)$/))){await sendList(from,'Advanced Authorities
     if(normWA(from)!==u.whatsapp_number) await sendText(from,`${m[1]} registration removed. Maintenance history preserved.`);
     return true;
   }
-  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.7.1 AUTO ASSIGN');return true;}
+  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.7.2 AUTO ASSIGN');return true;}
   return false;
 }
 async function processMessage(from,text,payload=''){
@@ -838,6 +841,22 @@ async function processMessage(from,text,payload=''){
   if(isOwner(from) && /^PURGE_TESTERS$/i.test(cmd)){await sendButtons(from,'Delete all TESTER registrations/profile/contact/roster data? MAIN users and Super Admin are preserved.',[{id:'PURGE_TESTERS_CONFIRM',title:'Confirm Delete'},{id:'BACK',title:'Cancel'}]);return;}
   if(isOwner(from) && cmd==='PURGE_TESTERS_CONFIRM'){const n=await purgeTesterUsersV854(normWA(from));await sendText(from,`✅ Tester cleanup completed.\nTester users removed: ${n}\nMAIN users preserved.`);return;}
   // V8.7.0 Super Admin contact-directory free-text edit continuation.
+
+  // V8.7.2 self-removal has highest user-command priority. Preserve maintenance history/audit data.
+  const earlyClean=String(payload||text||'').trim();
+  const earlySelfRemove=/^(remove|remov|delete)\s+me[.! ]*$/i.test(earlyClean) || /^(exit|quit|deactivate)[.! ]*$/i.test(earlyClean);
+  if(earlyClean==='REMOVE_ME_CONFIRM'){
+    const ru=await byWA(from);
+    if(!ru){await sendText(from,'You are not registered. Send Hi to register.');return;}
+    await sendButtons(from,'Remove your LMMM Maintenance registration? Maintenance history will be preserved.',[{id:'REMOVE_ME_YES',title:'Yes, Remove'},{id:'ACCOUNT_BACK',title:'Cancel'}]);return;
+  }
+  if(earlyClean==='REMOVE_ME_YES' || earlySelfRemove){
+    const ru=await byWA(from);
+    if(!ru){await sendText(from,'You are not registered. Send Hi to register.');return;}
+    if(earlySelfRemove && earlyClean!=='REMOVE_ME_YES'){await sendButtons(from,'Remove your LMMM Maintenance registration? Maintenance history will be preserved.',[{id:'REMOVE_ME_YES',title:'Yes, Remove'},{id:'ACCOUNT_BACK',title:'Cancel'}]);return;}
+    await removeRegistration(ru,normWA(from));
+    await sendText(from,'Your registration has been removed. Maintenance history is preserved. Send Hi to re-register.');return;
+  }
 
   // V8.7.0 user contact self-service and natural contact-detail capture.
   // V8.7.0 resilient Super Admin employee lookup.
