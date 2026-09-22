@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.8.2
+// LMMM AI Maintenance V8.8.3
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -911,20 +911,21 @@ async function extractMaintenanceV874(bytes,mime,filename,caption){
   if(!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY missing');
   const ext=String(filename||'').toLowerCase().match(/\.([a-z0-9]+)$/)?.[1]||'';
   const mime0=String(mime||'application/octet-stream').toLowerCase();
-  const extMime={pdf:'application/pdf',jpg:'image/jpeg',jpeg:'image/jpeg',png:'image/png',webp:'image/webp',tif:'image/tiff',tiff:'image/tiff',txt:'text/plain',csv:'text/csv',doc:'application/msword',docx:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',xls:'application/vnd.ms-excel',xlsx:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',xlsm:'application/vnd.ms-excel.sheet.macroenabled.12',mdb:'application/vnd.ms-access',accdb:'application/vnd.ms-access'};
+  const extMime={pdf:'application/pdf',jpg:'image/jpeg',jpeg:'image/jpeg',png:'image/png',webp:'image/webp',tif:'image/tiff',tiff:'image/tiff',txt:'text/plain',csv:'text/csv',doc:'application/msword',docx:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',xls:'application/vnd.ms-excel',xlsx:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',xlsm:'application/vnd.ms-excel.sheet.macroenabled.12',mdb:'application/vnd.ms-access',accdb:'application/vnd.ms-access',ogg:'audio/ogg',opus:'audio/ogg',mp3:'audio/mpeg',m4a:'audio/mp4',aac:'audio/aac',wav:'audio/wav'};
   const supportedExt=new Set(Object.keys(extMime));
-  if(!supportedExt.has(ext) && !['application/pdf','image/jpeg','image/png','image/webp','image/tiff','text/plain','text/csv'].some(x=>mime0.startsWith(x))) throw new Error(`UNSUPPORTED:${mime0}`);
+  if(!supportedExt.has(ext) && !['application/pdf','image/jpeg','image/png','image/webp','image/tiff','text/plain','text/csv','audio/ogg','audio/mpeg','audio/mp4','audio/aac','audio/wav'].some(x=>mime0.startsWith(x))) throw new Error(`UNSUPPORTED:${mime0}`);
   const sendMime=(mime0==='application/octet-stream'||mime0==='binary/octet-stream')?(extMime[ext]||mime0):mime0;
   const prompt=`You are the source-faithful file extraction and maintenance classification engine for RINL/VSP LMMM Dept-35.
 
-The source may contain English, Telugu, Hindi, Tenglish, handwriting, scans, tables, BOQ, drawings lists, manuals, spreadsheets or maintenance records.
+The source may contain English, Telugu, Hindi, Tenglish, handwriting, scans, tables, BOQ, drawings lists, manuals, spreadsheets, maintenance records, or WhatsApp voice/audio. For audio, transcribe the complete intelligible speech first and then apply the same maintenance classification rules.
 
 CRITICAL RULES:
 1. Read the WHOLE source, not only a summary. Transcribe all legible meaningful text and table rows in source order into full_text. Do not intentionally omit BOQ items, drawing numbers, part numbers, quantities, dates, headings or maintenance lines. If something is unreadable, write [UNREADABLE] instead of guessing.
 2. Separately classify the whole document. A BOQ/drawing list/manual/reference document is NOT a set of maintenance events.
 3. Never invent or expand Equipment/SAP/Sub-equipment/Drawing/Part identifiers. A generic phrase such as "mill equipment", "repair of mill equipment", a contractor name or document title is NOT an equipment identity. If an exact equipment mapping is not supported by the source, equipment=null and confidence=NEEDS_REVIEW.
 4. For genuine transaction/event content, split only real independent events by explicit equipment/date. For reference documents, use one document-level record and preserve detailed rows in extracted_items.
-5. Normalize the maintenance meaning into concise technical English in records, while full_text preserves source language/content. Preserve exact identifiers/numbers/readings.
+5. Normalize ALL user-facing extracted meaning and ALL stored structured maintenance data into clear concise technical English, regardless of whether the source is Telugu, Hindi, Tenglish, mixed language or English. Preserve exact identifiers/numbers/readings unchanged.
+5A. full_text must preserve the source transcription for audit/source fidelity. ALSO return review_text_english containing the complete readable English rendering/translation of the meaningful source content in source order. Do not omit maintenance facts. For already-English source, review_text_english may equal full_text.
 6. Unrelated content (for example an exam/question paper) must be document_type=UNRELATED and the record must be NEEDS_REVIEW; it must never become maintenance history.
 7. Missing or ambiguous date/equipment/module => null where appropriate and NEEDS_REVIEW. Never use today's date for historical source data.
 
@@ -932,8 +933,9 @@ Return ONLY one JSON object:
 {
  "document_type":"MAINTENANCE_EVENT|LOGBOOK|BOQ|DRAWING_LIST|MANUAL|REFERENCE|SPREADSHEET|UNRELATED|OTHER",
  "detected_languages":["..."],
- "document_summary":"short source-faithful summary",
- "full_text":"complete legible transcription in source order",
+ "document_summary":"short source-faithful summary in English",
+ "full_text":"complete legible SOURCE-LANGUAGE transcription in source order",
+ "review_text_english":"complete clear English rendering of the meaningful extracted source content in source order",
  "extracted_items":[{"item_no":"","identifier":"","description":"","quantity":"","unit":"","remarks":""}],
  "records":[
   {"module":"LOG_BOOK|BREAKDOWN_DELAY|DEFECT|JOB|PM|INSPECTION|CBM_VIBRATION|HISTORY|SPARES|DRAWING_DOCS|MANUAL_REFERENCE|SHUTDOWN|ATTENDANCE|MANPOWER|NEEDS_REVIEW",
@@ -957,6 +959,7 @@ Source format: ${ext||sendMime}.`;
     detected_languages:Array.isArray(out.detected_languages)?out.detected_languages.slice(0,10):[],
     document_summary:String(out.document_summary||'').slice(0,4000),
     full_text:String(out.full_text||'').slice(0,120000),
+    review_text_english:String(out.review_text_english||out.full_text||'').slice(0,120000),
     extracted_items:Array.isArray(out.extracted_items)?out.extracted_items.slice(0,1000):[],
     records:out.records.slice(0,250)
   };
@@ -964,7 +967,7 @@ Source format: ${ext||sendMime}.`;
 function ingestPackV878(p){
   const raw=Array.isArray(p?.extracted_rows)?p.extracted_rows:[];
   if(raw.length===1 && raw[0] && raw[0].__v878_pack) return raw[0].__v878_pack;
-  return {document_type:'OTHER',detected_languages:[],document_summary:'',full_text:'',extracted_items:[],records:raw};
+  return {document_type:'OTHER',detected_languages:[],document_summary:'',full_text:'',review_text_english:'',extracted_items:[],records:raw};
 }
 function packForDBV878(pack){return [{__v878_pack:pack}];}
 function ingestPreviewV877(packOrRows,filename){
@@ -997,7 +1000,7 @@ async function showIngestOptionsV877(from,p){
   ],'File Action');
 }
 function adaptivePreviewStatsV881(pack){
-  const text=String(pack.full_text||'').trim();
+  const text=String(pack.review_text_english||pack.full_text||'').trim();
   const items=Array.isArray(pack.extracted_items)?pack.extracted_items:[];
   const records=Array.isArray(pack.records)?pack.records:[];
   // One clean WhatsApp message for small/medium data; large/tabular data becomes a private review PDF.
@@ -1173,8 +1176,9 @@ async function exportPendingV878(from,p,kind){
     const items=Array.isArray(pack.extracted_items)?pack.extracted_items:[];
     const rows=items.length?items:(pack.records||[]);
     const keys=[...new Set(rows.flatMap(x=>Object.keys(x||{})))];
-    const csv=[keys.map(csvCellV878).join(','),...rows.map(x=>keys.map(k=>csvCellV878(x?.[k])).join(','))].join('\n');
-    await sendGeneratedDocumentV878(from,Buffer.from(csv,'utf8'),`${base}_extracted.csv`,'text/csv');return;
+    const ordered=reportColumnsV880(rows);
+    const csv='\uFEFF'+[ordered.map(csvCellV878).join(','),...rows.map(x=>ordered.map(k=>csvCellV878(x?.[k])).join(','))].join('\r\n');
+    await sendGeneratedDocumentV878(from,Buffer.from(csv,'utf8'),`${base}_extracted_table.csv`,'text/csv; charset=utf-8');return;
   }
 }
 async function storePendingVerifiedV877(from,p){
@@ -1238,7 +1242,7 @@ async function processMediaMessageV874(from,m){
     const pack=await extractMaintenanceV874(d.bytes,mime,filename,caption);
     const q=await pool.query(`INSERT INTO pending_file_ingests(submitted_by_whatsapp,submitted_by_employee_number,source_media_id,source_filename,source_mime_type,source_caption,source_sha256,extracted_rows) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb) RETURNING *`,[normWA(from),u.employee_number,mediaId,filename,mime,caption,sha,JSON.stringify(packForDBV878(pack))]);
     await setPendingIngestSessionV877(from,q.rows[0].id);await setIngestModeV874(from,false);await showIngestOptionsV877(from,q.rows[0]);
-  }catch(e){console.error('[MEDIA_INGEST]',e);const msg=String(e.message||e);if(msg.startsWith('UNSUPPORTED:'))await sendText(from,'Unsupported file type. Enabled test formats: PDF, TIFF/images, TXT/CSV, Word, Excel and Access MDB/ACCDB. Nothing was stored.');else await sendText(from,'File extraction failed. Nothing was stored. Please retry or send a supported file.');}
+  }catch(e){console.error('[MEDIA_INGEST]',e);const msg=String(e.message||e);if(msg.startsWith('UNSUPPORTED:'))await sendText(from,'Unsupported file type. Enabled test formats: PDF, TIFF/images, TXT/CSV, Word, Excel, Access MDB/ACCDB and WhatsApp voice/audio. Nothing was stored.');else await sendText(from,'File extraction failed. Nothing was stored. Please retry or send a supported file.');}
 }
 
 async function processMessage(from,text,payload=''){
@@ -1507,7 +1511,7 @@ app.post('/webhook',(req,res)=>{
       text=m.interactive.button_reply?.title||''; payload=m.interactive.button_reply?.id||'';
     } else if(m.type==='interactive' && m.interactive?.type==='list_reply'){
       text=m.interactive.list_reply?.title||''; payload=m.interactive.list_reply?.id||'';
-    } else if(['document','image'].includes(m.type)){
+    } else if(['document','image','audio','voice'].includes(m.type)){
       processMediaMessageV874(normWA(m.from),m).catch(err=>console.error('[MEDIA_MESSAGE]',err));
       continue;
     } else continue;
@@ -1516,4 +1520,4 @@ app.post('/webhook',(req,res)=>{
 });
 
 await initDB();
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.7.7 confirm-before-store listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.8.3 multilingual-file-voice listening on ${PORT}`));
