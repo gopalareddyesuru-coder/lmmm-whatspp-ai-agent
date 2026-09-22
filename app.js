@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.12.5 RELEVANCE GUARD
+// LMMM AI Maintenance V8.12.6 RELEVANCE CACHE FIX
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -1539,13 +1539,18 @@ async function extractQueuedIngestV895(from,row){
     const bytes=Buffer.from(row.source_bytes||[]);
     if(!bytes.length) throw new Error('Queued source bytes unavailable');
     const pack=await extractMaintenanceV874(bytes,row.source_mime_type||'application/octet-stream',row.source_filename||'upload',row.source_caption||'');
-    const strongRefV8125=strongTechnicalReferenceEvidenceV8125(`${filename||''}\n${JSON.stringify(extracted||rows||'')}`,filename||'');
+    const strongRefV8125=strongTechnicalReferenceEvidenceV8125(JSON.stringify(pack||{}),row.source_filename||'');
+    if(String(pack.document_type||'').toUpperCase()==='UNRELATED' && strongRefV8125){
+      console.log('[RELEVANCE_OVERRIDE] Strong drawing/manual/parts technical-reference evidence; AI UNRELATED overridden',row.source_filename);
+      pack.document_type='REFERENCE';
+      pack.relevance='LMMM_RELEVANT';
+    }
     if(String(pack.document_type||'').toUpperCase()==='UNRELATED' && !strongRefV8125){
       await pool.query(`UPDATE pending_file_ingests SET status='UNRELATED',extracted_rows=$2::jsonb,updated_at=now() WHERE id=$1`,[row.id,JSON.stringify(packForDBV878(pack))]);
       await sendText(from,'This upload is not relevant to LMMM plant / maintenance knowledge. Nothing was stored.');
       return true;
     }
-    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.12.5',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack))]);
+    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.12.6',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack))]);
     await armTemporarySourceExpiryV8120(row.id);
     await reliabilityEventV8100(row,'AI_EXTRACTION','SUCCEEDED',pack?._provider||null);
     await pool.query(`UPDATE pending_file_ingests SET workflow_state='SOURCE_SECURED',updated_at=now() WHERE id=$1`,[row.id]).catch(()=>{});
@@ -1713,6 +1718,11 @@ async function processMediaMessageV874(from,m){
       // Re-run from the durably stored original bytes. The SHA still prevents duplicate source rows.
       q=await pool.query(`UPDATE pending_file_ingests SET status='RECEIVED',extracted_rows='{}'::jsonb,last_error=NULL,next_retry_at=NULL,updated_at=now() WHERE id=$1 RETURNING *`,[row.id]);
       row=q.rows[0];
+    }
+    if(row.status==='UNRELATED' && row.source_bytes){
+      q=await pool.query(`UPDATE pending_file_ingests SET status='RECEIVED',workflow_state='SOURCE_SECURED',extracted_rows='{}'::jsonb,last_error=NULL,next_retry_at=NULL,updated_at=now() WHERE id=$1 RETURNING *`,[row.id]);
+      row=q.rows[0];
+      console.log('[RELEVANCE_RECHECK] previous UNRELATED source reprocessed with V8.12.6',row.id);
     }
     if(row.status==='UNRELATED'){
       await sendText(from,'This upload is not relevant to LMMM plant / maintenance knowledge. Nothing was stored.'); return;
@@ -2012,4 +2022,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.12.5 RELEVANCE GUARD listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.12.6 RELEVANCE CACHE FIX listening on ${PORT}`));
