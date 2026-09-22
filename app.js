@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.3.1
+// LMMM AI Maintenance V8.4.0
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -108,216 +108,54 @@ function autoAuthorityV83(u){
 function workResponsibilityV83(u){
   const area=canonicalArea(u.area_of_working), sec=canonicalSection(u.section_department), sh=canonicalShift(u.shift);
   let duties=[];
-  if(area==='BDM' && sec==='Mechanical') duties=['BDM equipment maintenance','Equipment availability','Support uninterrupted production'];
-  else if(sec==='Mechanical') duties=[`${area||'Assigned area'} equipment maintenance`,'Equipment availability','Support uninterrupted production'];
-  else if(sec==='Operations') duties=[`${area||'Assigned area'} operation`,'Production continuity','Operational entries'];
-  else duties=[`${area||'Assigned area'} ${sec||'assigned section'} responsibilities`];
+  if(sec==='Mechanical') duties=[`${area} equipment maintenance`,`${area} equipment availability`,'Support uninterrupted production'];
+  else if(sec==='Operations') duties=[`${area} operation`,'Production continuity','Production/delay/log-book entries'];
+  else if(sec==='Electrical') duties=[`${area} electrical equipment maintenance`,'Electrical equipment availability','Support uninterrupted production'];
+  else if(sec==='Instrumentation') duties=[`${area} instrumentation maintenance`,'Instrumentation availability','Support uninterrupted production'];
+  else duties=[`${area} ${sec} responsibilities`];
   if(sh==='General') duties.push('General Shift coordination');
-  else if(['A','B','C'].includes(sh)) duties.push(`${sh} Shift coverage`);
+  else if(['A','B','C'].includes(sh)) duties.push(`${sh} Shift duty coverage`);
+  else if(sh==='ROTATING_ABC') duties.push('Rotating A/B/C shift duty coverage');
   return duties.join('; ');
 }
-function canonicalShift(v=''){
-  const raw=String(v||'').trim(); if(!raw) return null;
-  const k=raw.toLowerCase().replace(/[\s._-]+/g,'');
-  if(['a','ashift','1','first'].includes(k)) return 'A';
-  if(['b','bshift','2','second'].includes(k)) return 'B';
-  if(['c','cshift','3','third','night','nightshift'].includes(k)) return 'C';
-  if(['g','gs','gshift','gen','genrl','generl','general','generalshift','generalshft'].includes(k)) return 'General';
-  return raw;
+function profileLooksStaleV84(u,p){
+  if(!p) return false;
+  const area=canonicalArea(u.area_of_working), resp=String(p.responsibility||'').toUpperCase();
+  if(LMMM_ORG.areas.filter(x=>x!==area).some(x=>resp.includes(x))) return true;
+  if(canonicalShift(u.shift)==='ROTATING_ABC' && String(p.assigned_role||'')==='SHIFT_INCHARGE') return true;
+  return false;
 }
-const SHIFT_TIMINGS={
-  A:{start:'06:00',end:'14:30'},
-  B:{start:'14:00',end:'22:30'},
-  C:{start:'22:00',end:'06:30'},
-  General:{start:'09:00',end:'17:30'}
-};
-
-function roleFromDesignation(desig){
-  const d=String(desig||'').toLowerCase();
-  if(/chief general manager|executive director|\bcmd\b|general manager|deputy general manager/.test(d)) return 'FULL_ACCESS';
-  if(/assistant general manager|senior manager|manager|deputy manager|assistant manager|junior manager|management trainee/.test(d)) return 'EXECUTIVE_ENTRY_VIEW';
-  return 'RELEVANT_MODULE_ENTRY';
-}
-function registrationTemplate(prefix='Please register'){
-  return `${prefix}\n\nName:\nEmployee No:\nDesignation:\nArea:\nSection:\nShift:\n\nName and Employee No are compulsory.`;
-}
-function parseRegistration(text=''){
-  const lines=String(text).split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
-  const d={};
-  let labelled=0;
-  for(const line of lines){
-    const m=line.match(/^(name|employee\s*(?:no|number)?|emp\s*(?:no|number)?|designation|desgn|desig|area|section|dept|department|shift)\s*[:=-]\s*(.*)$/i);
-    if(!m) continue;
-    labelled++;
-    const key=m[1].toLowerCase(), val=m[2].trim();
-    if(key==='name') d.name=val;
-    else if(key.startsWith('employee')||key.startsWith('emp')) d.employee_number=val;
-    else if(key.startsWith('des')) d.designation=val;
-    else if(key==='area') d.area=val;
-    else if(['section','dept','department'].includes(key)) d.section=val;
-    else if(key==='shift') d.shift=val;
-  }
-
-  // WhatsApp-friendly positional form:
-  // Name
-  // Employee No
-  // Designation
-  // Area
-  // Section
-  // Shift
-  // This is the exact order shown by the registration prompt.
-  if(labelled===0 && lines.length>=2){
-    d.name=lines[0];
-    d.employee_number=lines[1];
-    d.designation=lines[2] || '';
-    d.area=lines[3] || '';
-    d.section=lines[4] || '';
-    d.shift=lines[5] || '';
-  }
-
-  if(!d.name || !/^\d+$/.test(String(d.employee_number||''))) return null;
-  return {
-    name:d.name.trim(),
-    employee_number:String(d.employee_number).trim(),
-    designation:canonicalDesignationV83(d.designation),
-    area:canonicalArea(d.area),
-    section:canonicalSection(d.section),
-    shift:canonicalShift(d.shift)
-  };
-}
-async function sendText(to, body){
-  if(!PHONE_NUMBER_ID || !ACCESS_TOKEN) throw new Error('Meta WhatsApp credentials missing');
-  const r=await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${PHONE_NUMBER_ID}/messages`,{
-    method:'POST',headers:{Authorization:`Bearer ${ACCESS_TOKEN}`,'Content-Type':'application/json'},
-    body:JSON.stringify({messaging_product:'whatsapp',to,type:'text',text:{body:String(body).slice(0,4096)}})
-  });
-  if(!r.ok) throw new Error(`WhatsApp send failed ${r.status}: ${await r.text()}`);
-}
-
-async function sendButtons(to, body, buttons){
-  if(!PHONE_NUMBER_ID || !ACCESS_TOKEN) throw new Error('Meta WhatsApp credentials missing');
-  const btns=(buttons||[]).slice(0,3).map(b=>({type:'reply',reply:{id:String(b.id).slice(0,256),title:String(b.title).slice(0,20)}}));
-  const r=await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${PHONE_NUMBER_ID}/messages`,{
-    method:'POST',headers:{Authorization:`Bearer ${ACCESS_TOKEN}`,'Content-Type':'application/json'},
-    body:JSON.stringify({messaging_product:'whatsapp',to,type:'interactive',interactive:{type:'button',body:{text:String(body).slice(0,1024)},action:{buttons:btns}}})
-  });
-  if(!r.ok) throw new Error(`WhatsApp button send failed ${r.status}: ${await r.text()}`);
-}
-async function initDB(){
-  if(!pool) throw new Error('DATABASE_URL missing');
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS users(
-      id BIGSERIAL PRIMARY KEY,
-      whatsapp_number TEXT UNIQUE NOT NULL,
-      name TEXT NOT NULL,
-      employee_number TEXT UNIQUE NOT NULL,
-      designation TEXT,
-      area_of_working TEXT,
-      section_department TEXT,
-      shift TEXT,
-      approval_status TEXT NOT NULL DEFAULT 'pending',
-      is_active BOOLEAN NOT NULL DEFAULT false,
-      operational_role TEXT NOT NULL DEFAULT 'PENDING',
-      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-    );
-    CREATE TABLE IF NOT EXISTS registration_audit(
-      id BIGSERIAL PRIMARY KEY,
-      employee_number TEXT,
-      whatsapp_number TEXT,
-      action TEXT NOT NULL,
-      performed_by TEXT,
-      details JSONB NOT NULL DEFAULT '{}'::jsonb,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-    );
-    CREATE TABLE IF NOT EXISTS user_access_profile(
-      employee_number TEXT PRIMARY KEY, assigned_role TEXT, access_level TEXT,
-      responsibility TEXT, authorities TEXT[] NOT NULL DEFAULT ARRAY[]::text[],
-      assignment_source TEXT NOT NULL DEFAULT 'AUTO', assigned_by TEXT,
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-    );
-    CREATE TABLE IF NOT EXISTS employee_roster(
-      id BIGSERIAL PRIMARY KEY, employee_number TEXT NOT NULL,
-      duty_date DATE NOT NULL, duty_type TEXT NOT NULL,
-      shift TEXT, source TEXT NOT NULL DEFAULT 'ENTRY',
-      entered_by TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-      UNIQUE(employee_number,duty_date)
-    );
-    CREATE TABLE IF NOT EXISTS system_migrations(
-      migration_key TEXT PRIMARY KEY,
-      applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
-    );
-  `);
-  // User explicitly requested a clean user reset. Run exactly once.
-  const key='V8_0_1_RESET_NON_SUPERADMIN_REGISTRATIONS_2026_09_22';
-  const done=await pool.query('SELECT 1 FROM system_migrations WHERE migration_key=$1',[key]);
-  if(!done.rowCount){
-    await pool.query('BEGIN');
-    try{
-      // Only registration/auth state is reset. Maintenance/history/master data tables are untouched.
-      for(const t of ['ui_selection_sessions','pending_search_choices','search_context','user_default_permissions','user_special_permissions','user_responsibilities','user_assignments']){
-        await pool.query(`DELETE FROM ${t}`).catch(()=>{});
-      }
-      // Preserve configured Super Admin account(s); reset every other registration.
-      // If a Super Admin row already exists, keep it active and force FULL_ACCESS.
-      const admins=[...SUPER_ADMINS];
-      if(admins.length){
-        await pool.query(`DELETE FROM users WHERE NOT (regexp_replace(whatsapp_number,'\\D','','g') = ANY($1::text[]))`,[admins]);
-        await pool.query(`UPDATE users SET approval_status='approved',is_active=true,operational_role='FULL_ACCESS',updated_at=now()
-                          WHERE regexp_replace(whatsapp_number,'\\D','','g') = ANY($1::text[])`,[admins]);
-      } else {
-        throw new Error('SUPER_ADMIN_NUMBER(S) must be configured before clean reset; refusing to remove users without preserving Super Admin.');
-      }
-      await pool.query('INSERT INTO system_migrations(migration_key) VALUES($1)',[key]);
-      await pool.query('COMMIT');
-      console.log('[V8.0.1] one-time non-Super-Admin registration reset complete; Super Admin preserved');
-    }catch(e){await pool.query('ROLLBACK');throw e;}
-  }
-}
-async function byWA(wa){ const r=await pool.query('SELECT * FROM users WHERE whatsapp_number=$1 LIMIT 1',[normWA(wa)]); return r.rows[0]||null; }
-async function byEmp(emp){ const r=await pool.query('SELECT * FROM users WHERE employee_number=$1 LIMIT 1',[String(emp)]); return r.rows[0]||null; }
-async function audit(u,action,by,details={}){
-  await pool.query('INSERT INTO registration_audit(employee_number,whatsapp_number,action,performed_by,details) VALUES($1,$2,$3,$4,$5::jsonb)',[u?.employee_number||null,u?.whatsapp_number||null,action,String(by||''),JSON.stringify(details)]);
-}
-async function saveRegistration(from,d){
-  const wa=normWA(from);
-  const conflict=await byEmp(d.employee_number);
-  if(conflict && conflict.whatsapp_number!==wa && conflict.approval_status==='approved' && conflict.is_active) return {ok:false,reason:'EMPLOYEE_ACTIVE'};
-  await pool.query('BEGIN');
-  try{
-    await pool.query('DELETE FROM users WHERE whatsapp_number=$1 OR employee_number=$2',[wa,d.employee_number]);
-    const r=await pool.query(`INSERT INTO users(whatsapp_number,name,employee_number,designation,area_of_working,section_department,shift,approval_status,is_active,operational_role)
-      VALUES($1,$2,$3,$4,$5,$6,$7,'pending',false,'PENDING') RETURNING *`,
-      [wa,d.name,d.employee_number,d.designation,d.area,d.section,d.shift]);
-    await audit(r.rows[0],'REGISTER_PENDING',wa,{canonicalized:true});
-    await pool.query('COMMIT'); return {ok:true,user:r.rows[0]};
-  }catch(e){await pool.query('ROLLBACK');throw e;}
-}
-async function removeRegistration(u,by){
-  await pool.query('BEGIN');
-  try{
-    await audit(u,'REMOVE_REGISTRATION',by,{maintenance_history_preserved:true,reregister_allowed:true});
-    await pool.query('DELETE FROM users WHERE employee_number=$1',[u.employee_number]);
-    await pool.query('COMMIT');
-  }catch(e){await pool.query('ROLLBACK');throw e;}
-}
-
 async function ensureProfile(u,by='SYSTEM'){
-  const auto=autoAuthorityV83(u);
-  const resp=workResponsibilityV83(u);
+  const area=canonicalArea(u.area_of_working), section=canonicalSection(u.section_department),
+        designation=canonicalDesignationV83(u.designation), shift=canonicalShift(u.shift);
+  if(area!==u.area_of_working || section!==u.section_department || designation!==u.designation || shift!==u.shift){
+    await pool.query(`UPDATE users SET area_of_working=$2,section_department=$3,designation=$4,shift=$5,updated_at=now() WHERE employee_number=$1`,
+      [u.employee_number,area,section,designation,shift]);
+    u={...u,area_of_working:area,section_department:section,designation,shift};
+  }
+  const auto=autoAuthorityV83(u), resp=workResponsibilityV83(u);
+  const old=(await pool.query('SELECT * FROM user_access_profile WHERE employee_number=$1',[u.employee_number])).rows[0];
+  const stale=profileLooksStaleV84(u,old);
   await pool.query(`INSERT INTO user_access_profile(employee_number,assigned_role,access_level,responsibility,authorities,assignment_source,assigned_by)
     VALUES($1,$2,$3,$4,$5,'AUTO',$6)
     ON CONFLICT(employee_number) DO UPDATE SET
-      assigned_role=CASE WHEN user_access_profile.assignment_source='SUPER_ADMIN' THEN user_access_profile.assigned_role ELSE EXCLUDED.assigned_role END,
-      access_level=CASE WHEN user_access_profile.assignment_source='SUPER_ADMIN' THEN user_access_profile.access_level ELSE EXCLUDED.access_level END,
-      responsibility=CASE WHEN user_access_profile.assignment_source='SUPER_ADMIN' THEN user_access_profile.responsibility ELSE EXCLUDED.responsibility END,
-      authorities=CASE WHEN user_access_profile.assignment_source='SUPER_ADMIN' THEN user_access_profile.authorities ELSE EXCLUDED.authorities END,
-      assigned_by=CASE WHEN user_access_profile.assignment_source='SUPER_ADMIN' THEN user_access_profile.assigned_by ELSE EXCLUDED.assigned_by END,
+      assigned_role=CASE WHEN user_access_profile.assignment_source='SUPER_ADMIN' AND $7=false THEN user_access_profile.assigned_role ELSE EXCLUDED.assigned_role END,
+      access_level=CASE WHEN user_access_profile.assignment_source='SUPER_ADMIN' AND $7=false THEN user_access_profile.access_level ELSE EXCLUDED.access_level END,
+      responsibility=CASE WHEN user_access_profile.assignment_source='SUPER_ADMIN' AND $7=false THEN user_access_profile.responsibility ELSE EXCLUDED.responsibility END,
+      authorities=CASE WHEN user_access_profile.assignment_source='SUPER_ADMIN' AND $7=false THEN user_access_profile.authorities ELSE EXCLUDED.authorities END,
+      assignment_source=CASE WHEN user_access_profile.assignment_source='SUPER_ADMIN' AND $7=false THEN 'SUPER_ADMIN' ELSE 'AUTO' END,
+      assigned_by=CASE WHEN user_access_profile.assignment_source='SUPER_ADMIN' AND $7=false THEN user_access_profile.assigned_by ELSE EXCLUDED.assigned_by END,
       updated_at=now()`,
-    [u.employee_number,auto.role,auto.access,resp,auto.authorities,by]);
+    [u.employee_number,auto.role,auto.access,resp,auto.authorities,by,stale]);
 }
+async function resetProfileToAutoV84(u,by='SYSTEM'){
+  await pool.query('DELETE FROM user_access_profile WHERE employee_number=$1',[u.employee_number]);
+  await ensureProfile(u,by);
+}
+
 async function showUser(to,u){
   await ensureProfile(u,normWA(to));
+  u=await byEmp(u.employee_number);
   const r=await pool.query('SELECT * FROM user_access_profile WHERE employee_number=$1',[u.employee_number]),p=r.rows[0];
   await sendButtons(to,`Employee Details
 Name: ${u.name}
@@ -375,6 +213,24 @@ async function saveRosterEntry(emp,date,dutyType,shift,by){
     [emp,date,String(dutyType).toUpperCase(),sh,by]);
   return {ok:true};
 }
+function governanceSelfTestV84(u,p){
+  const e=autoAuthorityV83(u), t=[], add=(n,ok,d)=>t.push({n,ok,d});
+  add('Designation/category',employeeBandV83(u.designation)!=='UNCLASSIFIED',`${u.designation} -> ${employeeBandV83(u.designation)}`);
+  add('Area',LMMM_ORG.areas.includes(canonicalArea(u.area_of_working)),canonicalArea(u.area_of_working));
+  add('Section',LMMM_ORG.sections.includes(canonicalSection(u.section_department)),canonicalSection(u.section_department));
+  add('Shift',['A','B','C','General','ROTATING_ABC'].includes(canonicalShift(u.shift)),canonicalShift(u.shift));
+  add('Role',p?.assigned_role===e.role || p?.assignment_source==='SUPER_ADMIN',`${p?.assigned_role} / auto ${e.role}`);
+  add('Access',p?.access_level===e.access || p?.assignment_source==='SUPER_ADMIN',`${p?.access_level} / auto ${e.access}`);
+  add('Responsibility',!profileLooksStaleV84(u,p) && String(p?.responsibility||'').includes(canonicalArea(u.area_of_working)),p?.responsibility||'-');
+  add('Authorities',Array.isArray(p?.authorities),(p?.authorities||[]).join(', ')||'None');
+  return t;
+}
+async function sendGovernanceTestV84(to,u){
+  await ensureProfile(u,normWA(to)); u=await byEmp(u.employee_number);
+  const p=(await pool.query('SELECT * FROM user_access_profile WHERE employee_number=$1',[u.employee_number])).rows[0];
+  const t=governanceSelfTestV84(u,p), pass=t.every(x=>x.ok);
+  await sendText(to,`AUTO ASSIGN TEST • ${u.name} / ${u.employee_number}\n${t.map(x=>`${x.ok?'✅':'❌'} ${x.n}: ${x.d}`).join('\n')}\n\n${pass?'✅ AUTO ASSIGN PASS':'❌ AUTO ASSIGN NEEDS FIX'}`);
+}
 async function notifyAdmins(u){
   for(const a of SUPER_ADMINS){
     try{await sendButtons(a,
@@ -396,13 +252,14 @@ async function adminCommand(from,text){
   if(text==='ADM_USERS'||/^users?$/i.test(text)){await sendText(from,'User Management\nSearch by Employee No or Name.');return true;}
   if((a=text.match(/^ADM_VIEW:(\d+)$/))){const u=await byEmp(a[1]); if(u)await showUser(from,u);else await sendText(from,'Employee not found.');return true;}
   if((a=text.match(/^ADM_ASSIGN:(\d+)$/))){await sendButtons(from,'Assign / Change',[{id:`ADM_ROLE:${a[1]}`,title:'Role'},{id:`ADM_ACCESS:${a[1]}`,title:'Access'},{id:`ADM_RESP:${a[1]}`,title:'Responsibility'}]);return true;}
-  if((a=text.match(/^ADM_MORE:(\d+)$/))){await sendButtons(from,'More user controls',[{id:`ADM_AUTH:${a[1]}`,title:'Authorities'},{id:`ADM_REMOVE:${a[1]}`,title:'Remove User'},{id:`ADM_VIEW:${a[1]}`,title:'Back'}]);return true;}
+  if((a=text.match(/^ADM_MORE:(\d+)$/))){await sendButtons(from,'More user controls',[{id:`ADM_AUTH:${a[1]}`,title:'Authorities'},{id:`ADM_TEST:${a[1]}`,title:'Auto Test'},{id:`ADM_REMOVE:${a[1]}`,title:'Remove User'}]);return true;}
   if((a=text.match(/^ADM_ROLE:(\d+)$/))){await sendButtons(from,'Select Role',[{id:`SR:${a[1]}:NON_EXECUTIVE`,title:'Non-Executive'},{id:`SR:${a[1]}:EXECUTIVE`,title:'Executive'},{id:`SR:${a[1]}:DGM`,title:'DGM'}]);return true;}
   if((a=text.match(/^ADM_ACCESS:(\d+)$/))){await sendButtons(from,'Select Access',[{id:`SA:${a[1]}:ENTRY`,title:'Entry'},{id:`SA:${a[1]}:ENTRY_VIEW`,title:'Entry + View'},{id:`SA:${a[1]}:FULL_ACCESS`,title:'Full Access'}]);return true;}
   if((a=text.match(/^ADM_RESP:(\d+)$/))){await sendButtons(from,'Responsibility override',[{id:`SP:${a[1]}:AREA_INCHARGE`,title:'Area In-charge'},{id:`SP:${a[1]}:SHIFT_INCHARGE`,title:'Shift In-charge'},{id:`SP:${a[1]}:GENERAL_SHIFT`,title:'General Shift'}]);return true;}
   if((a=text.match(/^SR:(\d+):(.+)$/))){await setField(a[1],'role',a[2],admin);await showUser(from,await byEmp(a[1]));return true;}
   if((a=text.match(/^SA:(\d+):(.+)$/))){await setField(a[1],'access',a[2],admin);await showUser(from,await byEmp(a[1]));return true;}
   if((a=text.match(/^SP:(\d+):(.+)$/))){await setField(a[1],'resp',a[2],admin);await showUser(from,await byEmp(a[1]));return true;}
+  if((a=text.match(/^ADM_TEST:(\d+)$/))){const u=await byEmp(a[1]);if(!u){await sendText(from,'Employee not found.');return true;}await sendGovernanceTestV84(from,u);return true;}
   if((a=text.match(/^ADM_AUTH:(\d+)$/))){await sendButtons(from,'Toggle Authority',[{id:`AU:${a[1]}:PDF`,title:'PDF'},{id:`AU:${a[1]}:ANALYSIS`,title:'Analysis'},{id:`AU:${a[1]}:RCM`,title:'RCM'}]);return true;}
   if((a=text.match(/^AU:(\d+):(PDF|ANALYSIS|RCM)$/))){await toggleAuth(a[1],a[2],admin);await showUser(from,await byEmp(a[1]));return true;}
   if((a=text.match(/^ADM_REMOVE:(\d+)$/))){await sendButtons(from,'Remove this user? Maintenance history will be preserved.',[{id:`ADM_REMOVE_YES:${a[1]}`,title:'Yes, Remove'},{id:`ADM_VIEW:${a[1]}`,title:'Cancel'}]);return true;}
@@ -418,7 +275,7 @@ async function adminCommand(from,text){
     const u=await byEmp(m[1]); if(!u){await sendText(from,'Employee not found.');return true;}
     const role=roleFromDesignation(u.designation);
     await pool.query(`UPDATE users SET approval_status='approved',is_active=true,operational_role=$2,updated_at=now() WHERE employee_number=$1`,[m[1],role]);
-    await ensureProfile(u,normWA(from));
+    await resetProfileToAutoV84(u,normWA(from));
     await audit(u,'APPROVED',normWA(from),{role,area:u.area_of_working,designation:u.designation});
     await sendButtons(u.whatsapp_number,'Welcome to LMMM Maintenance.',[
       {id:'MENU_SEARCH',title:'Search'},{id:'MENU_ADD',title:'Add Entry'},{id:'MENU_ACCOUNT',title:'My Account'}]);
@@ -443,7 +300,7 @@ async function adminCommand(from,text){
     if(normWA(from)!==u.whatsapp_number) await sendText(from,`${m[1]} registration removed. Maintenance history preserved.`);
     return true;
   }
-  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.3.1 REGISTRATION ACCEPTANCE');return true;}
+  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.4.0 REGISTRATION ACCEPTANCE');return true;}
   return false;
 }
 async function processMessage(from,text,payload=''){
@@ -532,4 +389,4 @@ app.post('/webhook',(req,res)=>{
 });
 
 await initDB();
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.3.1 registration foundation listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.4.0 registration foundation listening on ${PORT}`));
