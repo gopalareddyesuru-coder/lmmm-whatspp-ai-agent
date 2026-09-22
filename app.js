@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.0.3
+// LMMM AI Maintenance V8.1.0
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -164,6 +164,12 @@ async function initDB(){
       details JSONB NOT NULL DEFAULT '{}'::jsonb,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
+    CREATE TABLE IF NOT EXISTS user_access_profile(
+      employee_number TEXT PRIMARY KEY, assigned_role TEXT, access_level TEXT,
+      responsibility TEXT, authorities TEXT[] NOT NULL DEFAULT ARRAY[]::text[],
+      assignment_source TEXT NOT NULL DEFAULT 'AUTO', assigned_by TEXT,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
     CREATE TABLE IF NOT EXISTS system_migrations(
       migration_key TEXT PRIMARY KEY,
       applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -222,6 +228,46 @@ async function removeRegistration(u,by){
     await pool.query('COMMIT');
   }catch(e){await pool.query('ROLLBACK');throw e;}
 }
+
+async function ensureProfile(u,by='SYSTEM'){
+  const d=String(u.designation||'').toLowerCase();
+  let role='NORMAL_USER',access='RELEVANT_MODULE_ENTRY';
+  if(/deputy general manager|general manager|chief general manager|executive director|\bcmd\b/.test(d)){role='FULL_ACCESS';access='FULL_ACCESS';}
+  else if(/assistant general manager|senior manager|manager|deputy manager|assistant manager|junior manager|management trainee/.test(d)){role='EXECUTIVE';access='ENTRY_VIEW';}
+  const resp=[u.area_of_working,u.section_department].filter(Boolean).join(' ')||'General';
+  await pool.query(`INSERT INTO user_access_profile(employee_number,assigned_role,access_level,responsibility,assigned_by)
+    VALUES($1,$2,$3,$4,$5) ON CONFLICT(employee_number) DO NOTHING`,[u.employee_number,role,access,resp,by]);
+}
+async function showUser(to,u){
+  await ensureProfile(u,normWA(to));
+  const r=await pool.query('SELECT * FROM user_access_profile WHERE employee_number=$1',[u.employee_number]),p=r.rows[0];
+  await sendButtons(to,`Employee Details
+Name: ${u.name}
+Employee No: ${u.employee_number}
+Designation: ${u.designation||'-'}
+Area: ${u.area_of_working||'-'}
+Section: ${u.section_department||'-'}
+Shift: ${u.shift||'-'}
+Status: ${u.approval_status}${u.is_active?' / Active':''}
+
+Role: ${p?.assigned_role||'-'}
+Access: ${p?.access_level||'-'}
+Responsibility: ${p?.responsibility||'-'}
+Authorities: ${(p?.authorities||[]).join(', ')||'-'}
+Source: ${p?.assignment_source||'AUTO'}`,
+  [{id:`ADM_ASSIGN:${u.employee_number}`,title:'Assign / Change'},{id:`ADM_MORE:${u.employee_number}`,title:'More Options'},{id:'ADM_USERS',title:'Back'}]);
+}
+async function setField(emp,col,val,by){
+  const u=await byEmp(emp); if(!u)return false; await ensureProfile(u,by);
+  const ok={role:'assigned_role',access:'access_level',resp:'responsibility'}[col]; if(!ok)return false;
+  await pool.query(`UPDATE user_access_profile SET ${ok}=$2,assignment_source='SUPER_ADMIN',assigned_by=$3,updated_at=now() WHERE employee_number=$1`,[emp,val,by]); return true;
+}
+async function toggleAuth(emp,val,by){
+  const u=await byEmp(emp); if(!u)return; await ensureProfile(u,by);
+  const r=await pool.query('SELECT authorities FROM user_access_profile WHERE employee_number=$1',[emp]);
+  const a=new Set(r.rows[0]?.authorities||[]); a.has(val)?a.delete(val):a.add(val);
+  await pool.query(`UPDATE user_access_profile SET authorities=$2,assignment_source='SUPER_ADMIN',assigned_by=$3,updated_at=now() WHERE employee_number=$1`,[emp,[...a],by]);
+}
 async function notifyAdmins(u){
   for(const a of SUPER_ADMINS){
     try{await sendButtons(a,
@@ -239,15 +285,38 @@ Shift: ${u.shift||'-'}`,
 }
 async function adminCommand(from,text){
   if(!SUPER_ADMINS.has(normWA(from))) return false;
+  const admin=normWA(from); let a;
+  if(text==='ADM_USERS'||/^users?$/i.test(text)){await sendText(from,'User Management\nSearch by Employee No or Name.');return true;}
+  if((a=text.match(/^ADM_VIEW:(\d+)$/))){const u=await byEmp(a[1]); if(u)await showUser(from,u);else await sendText(from,'Employee not found.');return true;}
+  if((a=text.match(/^ADM_ASSIGN:(\d+)$/))){await sendButtons(from,'Assign / Change',[{id:`ADM_ROLE:${a[1]}`,title:'Role'},{id:`ADM_ACCESS:${a[1]}`,title:'Access'},{id:`ADM_RESP:${a[1]}`,title:'Responsibility'}]);return true;}
+  if((a=text.match(/^ADM_MORE:(\d+)$/))){await sendButtons(from,'More user controls',[{id:`ADM_AUTH:${a[1]}`,title:'Authorities'},{id:`ADM_REMOVE:${a[1]}`,title:'Remove User'},{id:`ADM_VIEW:${a[1]}`,title:'Back'}]);return true;}
+  if((a=text.match(/^ADM_ROLE:(\d+)$/))){await sendButtons(from,'Select Role',[{id:`SR:${a[1]}:NORMAL_USER`,title:'Normal User'},{id:`SR:${a[1]}:EXECUTIVE`,title:'Executive'},{id:`SR:${a[1]}:SHIFT_INCHARGE`,title:'Shift In-charge'}]);return true;}
+  if((a=text.match(/^ADM_ACCESS:(\d+)$/))){await sendButtons(from,'Select Access',[{id:`SA:${a[1]}:ENTRY`,title:'Entry'},{id:`SA:${a[1]}:ENTRY_VIEW`,title:'Entry + View'},{id:`SA:${a[1]}:FULL_ACCESS`,title:'Full Access'}]);return true;}
+  if((a=text.match(/^ADM_RESP:(\d+)$/))){await sendButtons(from,'Select Responsibility',[{id:`SP:${a[1]}:AREA_INCHARGE`,title:'Area In-charge'},{id:`SP:${a[1]}:SHIFT_INCHARGE`,title:'Shift In-charge'},{id:`SP:${a[1]}:GENERAL_SHIFT`,title:'General Shift'}]);return true;}
+  if((a=text.match(/^SR:(\d+):(.+)$/))){await setField(a[1],'role',a[2],admin);await showUser(from,await byEmp(a[1]));return true;}
+  if((a=text.match(/^SA:(\d+):(.+)$/))){await setField(a[1],'access',a[2],admin);await showUser(from,await byEmp(a[1]));return true;}
+  if((a=text.match(/^SP:(\d+):(.+)$/))){await setField(a[1],'resp',a[2],admin);await showUser(from,await byEmp(a[1]));return true;}
+  if((a=text.match(/^ADM_AUTH:(\d+)$/))){await sendButtons(from,'Toggle Authority',[{id:`AU:${a[1]}:PDF`,title:'PDF'},{id:`AU:${a[1]}:ANALYSIS`,title:'Analysis'},{id:`AU:${a[1]}:RCM`,title:'RCM'}]);return true;}
+  if((a=text.match(/^AU:(\d+):(PDF|ANALYSIS|RCM)$/))){await toggleAuth(a[1],a[2],admin);await showUser(from,await byEmp(a[1]));return true;}
+  if((a=text.match(/^ADM_REMOVE:(\d+)$/))){await sendButtons(from,'Remove this user? Maintenance history will be preserved.',[{id:`ADM_REMOVE_YES:${a[1]}`,title:'Yes, Remove'},{id:`ADM_VIEW:${a[1]}`,title:'Cancel'}]);return true;}
+  if((a=text.match(/^ADM_REMOVE_YES:(\d+)$/))){const u=await byEmp(a[1]);if(!u){await sendText(from,'Employee not found.');return true;}await removeRegistration(u,admin);await pool.query('DELETE FROM user_access_profile WHERE employee_number=$1',[a[1]]);await sendText(u.whatsapp_number,'Your registration has been removed. Send Hi to re-register.');await sendText(from,`${u.name} / ${u.employee_number} removed.`);return true;}
+  if(/^\d+$/.test(text)||/^[A-Za-z][A-Za-z .'-]{1,60}$/.test(text)){
+    const r=await pool.query(`SELECT * FROM users WHERE employee_number=$1 OR lower(name)=lower($1) OR lower(name) LIKE lower($2) ORDER BY name LIMIT 3`,[text,`%${text}%`]);
+    if(r.rowCount===1){await showUser(from,r.rows[0]);return true;}
+    if(r.rowCount>1){await sendButtons(from,'Select user',r.rows.map(u=>({id:`ADM_VIEW:${u.employee_number}`,title:`${u.name} ${u.employee_number}`.slice(0,20)})));return true;}
+  }
+
   let m=text.match(/^APPROVE:(\d+)$/i) || text.match(/^approve\s+(\d+)$/i);
   if(m){
     const u=await byEmp(m[1]); if(!u){await sendText(from,'Employee not found.');return true;}
     const role=roleFromDesignation(u.designation);
     await pool.query(`UPDATE users SET approval_status='approved',is_active=true,operational_role=$2,updated_at=now() WHERE employee_number=$1`,[m[1],role]);
+    await ensureProfile(u,normWA(from));
     await audit(u,'APPROVED',normWA(from),{role,area:u.area_of_working,designation:u.designation});
     await sendButtons(u.whatsapp_number,'Welcome to LMMM Maintenance.',[
       {id:'MENU_SEARCH',title:'Search'},{id:'MENU_ADD',title:'Add Entry'},{id:'MENU_ACCOUNT',title:'My Account'}]);
-    if(normWA(from)!==u.whatsapp_number) await sendText(from,`${u.name} / ${u.employee_number} approved.`);
+    if(normWA(from)!==u.whatsapp_number) await sendButtons(from,`${u.name} / ${u.employee_number} approved.`,
+[{id:`ADM_ASSIGN:${u.employee_number}`,title:'Assign Access'},{id:`ADM_VIEW:${u.employee_number}`,title:'View User'},{id:'ADM_USERS',title:'User Management'}]);
     return true;
   }
   m=text.match(/^REJECT:(\d+)$/i) || text.match(/^reject\s+(\d+)$/i);
@@ -267,7 +336,7 @@ async function adminCommand(from,text){
     if(normWA(from)!==u.whatsapp_number) await sendText(from,`${m[1]} registration removed. Maintenance history preserved.`);
     return true;
   }
-  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.0.3 REGISTRATION ACCEPTANCE');return true;}
+  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.1.0 REGISTRATION ACCEPTANCE');return true;}
   return false;
 }
 async function processMessage(from,text,payload=''){
@@ -312,6 +381,7 @@ Shift: ${u.shift||'-'}`,[{id:'REMOVE_ME_CONFIRM',title:'Remove Me'},{id:'ACCOUNT
     if(!u){await sendText(from,registrationTemplate('Welcome to LMMM Maintenance. Please register:'));return;}
     if(u.approval_status==='pending'){await sendText(from,'Your registration is pending approval.');return;}
     if(u.approval_status==='approved' && u.is_active){
+      if(SUPER_ADMINS.has(normWA(from))){await sendButtons(from,'Super Admin • How can I help you?',[{id:'ADM_USERS',title:'User Management'},{id:'MENU_SEARCH',title:'Search'},{id:'MENU_ACCOUNT',title:'My Account'}]);return;}
       await sendButtons(from,'How can I help you?',[{id:'MENU_SEARCH',title:'Search'},{id:'MENU_ADD',title:'Add Entry'},{id:'MENU_ACCOUNT',title:'My Account'}]);return;}
     await sendText(from,registrationTemplate('Re-register for LMMM Maintenance:'));return;
   }
@@ -355,4 +425,4 @@ app.post('/webhook',(req,res)=>{
 });
 
 await initDB();
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.0.3 registration foundation listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.1.0 registration foundation listening on ${PORT}`));

@@ -1,0 +1,15 @@
+{
+  "version": "8.1.0",
+  "tests": {
+    "employee_search": true,
+    "role": true,
+    "access": true,
+    "responsibility": true,
+    "authorities": true,
+    "remove_confirm": true,
+    "auto_profile": true,
+    "admin_menu": true
+  },
+  "static": "PASS",
+  "live": "PENDING"
+}
