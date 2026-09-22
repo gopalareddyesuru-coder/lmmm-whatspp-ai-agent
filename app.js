@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.5.1
+// LMMM AI Maintenance V8.5.2
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -372,6 +372,55 @@ Emergency Contact: ${c.emergency_contact_name||'-'}
 Emergency Phone: ${c.emergency_contact_phone||'-'}
 Notes: ${c.notes||'-'}`);
 }
+
+async function sendMyContactV852(to,u){
+  await syncPrimaryContactV851(u,normWA(to));
+  const c=await contactCardV851(u.employee_number);
+  if(!c){await sendText(to,'Contact details not available.');return;}
+  const missing=[];
+  if(!c.alternate_phone_number)missing.push({id:'MYC_ALT',title:'Add Alternate Phone'});
+  if(!c.company_email)missing.push({id:'MYC_CMAIL',title:'Add Company Email'});
+  if(!c.personal_email)missing.push({id:'MYC_PMAIL',title:'Add Personal Email'});
+  if(!c.max_number)missing.push({id:'MYC_MAX',title:'Add MAX Number'});
+  if(!c.office_extension)missing.push({id:'MYC_EXT',title:'Add Office Extension'});
+  if(!c.emergency_contact_phone)missing.push({id:'MYC_EMER',title:'Add Emergency Contact'});
+  const body=`My Contact Details
+
+WhatsApp / Main Phone: ${c.whatsapp_registration_number||'-'}
+Alternate Phone: ${c.alternate_phone_number||'-'}
+Company Email: ${c.company_email||'-'}
+Personal Email: ${c.personal_email||'-'}
+MAX Number: ${c.max_number||'-'}
+Office Extension: ${c.office_extension||'-'}
+Emergency Contact: ${c.emergency_contact_name||'-'}
+Emergency Phone: ${c.emergency_contact_phone||'-'}`;
+  await sendText(to,body);
+  if(missing.length)await sendList(to,'Missing Contact Details','Add',missing,'Add missing details');
+  else await sendButtons(to,'Contact details complete',[{id:'MYC_EDIT',title:'Edit Contact Details'}]);
+}
+function extractContactFieldsV852(text=''){
+  const raw=String(text||'').trim(), out={};
+  const emails=[...raw.matchAll(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi)].map(x=>x[0].toLowerCase());
+  for(const e of emails){
+    if(/(vsp|rinl|vizagsteel|steel)/i.test(e) && !out.company_email)out.company_email=e;
+    else if(!out.personal_email)out.personal_email=e;
+  }
+  const get=(re)=>{const m=raw.match(re);return m?.[1]?.trim()||null;};
+  const alt=get(/(?:alternate|alt|other|second)\s*(?:phone|mobile|number|no)?\s*[:=-]?\s*(\+?\d[\d\s-]{6,})/i);
+  const max=get(/\bmax\s*(?:number|no)?\s*[:=-]?\s*([A-Z0-9-]+)/i);
+  const ext=get(/(?:office\s*)?(?:extension|ext)\s*[:=-]?\s*([A-Z0-9-]+)/i);
+  const emer=get(/emergency\s*(?:contact)?\s*[:=-]?\s*([^,\n]+)[,\s]+(\+?\d[\d\s-]{6,})/i);
+  if(alt)out.alternate_phone_number=cleanPhoneV851(alt);
+  if(max)out.max_number=max;
+  if(ext)out.office_extension=ext;
+  if(emer){out.emergency_contact_name=emer[1].trim();out.emergency_contact_phone=cleanPhoneV851(emer[2]);}
+  return Object.fromEntries(Object.entries(out).filter(([,v])=>v));
+}
+async function saveOwnContactPatchV852(u,patch){
+  await syncPrimaryContactV851(u,u.employee_number);
+  const allowed=['alternate_phone_number','company_email','personal_email','max_number','office_extension','emergency_contact_name','emergency_contact_phone'];
+  for(const [k,v] of Object.entries(patch))if(allowed.includes(k))await pool.query(`UPDATE employee_contact_directory SET ${k}=$2,updated_by=$3,updated_at=now() WHERE employee_number=$1`,[u.employee_number,v,u.employee_number]);
+}
 async function adminOverrideV850(emp){return (await pool.query('SELECT * FROM user_admin_override WHERE employee_number=$1',[emp])).rows[0]||null;}
 async function saveAdminOverrideV850(emp,patch,by){
  const old=await adminOverrideV850(emp), n={...(old||{}),...patch};
@@ -607,11 +656,49 @@ if((a=text.match(/^SETSH:(\d+):(General|ROTATING_ABC|A|B|C)$/))){const emp=a[1],
     if(normWA(from)!==u.whatsapp_number) await sendText(from,`${m[1]} registration removed. Maintenance history preserved.`);
     return true;
   }
-  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.5.1 AUTO ASSIGN');return true;}
+  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.5.2 AUTO ASSIGN');return true;}
   return false;
 }
 async function processMessage(from,text,payload=''){
-  // V8.5.1 Super Admin contact-directory free-text edit continuation.
+  // V8.5.2 Super Admin contact-directory free-text edit continuation.
+
+  // V8.5.2 user contact self-service and natural contact-detail capture.
+  const selfUser=await byWA(from);
+  if(selfUser && selfUser.approval_status==='approved' && selfUser.is_active!==false){
+    const t852=String(text||'').trim(), l852=t852.toLowerCase();
+    if(['my details','my profile','profile'].includes(l852)){
+      await sendButtons(from,'My Details',[{id:'MY_CONTACT',title:'Contact Details'},{id:'MY_ACCESS',title:'Access Details'}]);return;
+    }
+    if(l852==='contact details'||l852==='my contact'||t852==='MY_CONTACT'){await sendMyContactV852(from,selfUser);return;}
+    if(t852==='MY_ACCESS'){await ensureProfile(selfUser,normWA(from));const pp=(await pool.query('SELECT * FROM user_access_profile WHERE employee_number=$1',[selfUser.employee_number])).rows[0];await sendText(from,`My Access Details\nRole: ${pp?.assigned_role||'-'}\nAccess: ${pp?.access_level||'-'}\nResponsibility: ${pp?.responsibility||'-'}\nAuthorities: ${(pp?.authorities||[]).join(', ')||'-'}`);return;}
+    if(/^MYC_(ALT|CMAIL|PMAIL|MAX|EXT|EMER)$/.test(t852)){
+      const f=t852.slice(4);
+      await pool.query(`INSERT INTO ui_sessions(whatsapp_number,session_key,session_value,updated_at) VALUES($1,'V852_SELF_CONTACT',$2,now())
+      ON CONFLICT(whatsapp_number,session_key) DO UPDATE SET session_value=EXCLUDED.session_value,updated_at=now()`,[normWA(from),JSON.stringify({field:f})]);
+      const pr={ALT:'Send alternate phone number',CMAIL:'Send company email ID',PMAIL:'Send personal email ID',MAX:'Send MAX number',EXT:'Send office extension',EMER:'Send emergency contact as: Name, Phone'}[f];
+      await sendText(from,pr);return;
+    }
+    const ps=(await pool.query(`SELECT session_value FROM ui_sessions WHERE whatsapp_number=$1 AND session_key='V852_SELF_CONTACT'`,[normWA(from)])).rows[0];
+    if(ps){
+      let st=ps.session_value;if(typeof st==='string'){try{st=JSON.parse(st)}catch{}}
+      let patch={};
+      if(st?.field==='ALT')patch.alternate_phone_number=cleanPhoneV851(t852);
+      if(st?.field==='CMAIL')patch.company_email=cleanEmailV851(t852);
+      if(st?.field==='PMAIL')patch.personal_email=cleanEmailV851(t852);
+      if(st?.field==='MAX')patch.max_number=t852;
+      if(st?.field==='EXT')patch.office_extension=t852;
+      if(st?.field==='EMER'){const q=t852.split(',').map(x=>x.trim());patch.emergency_contact_name=q[0];patch.emergency_contact_phone=cleanPhoneV851(q.slice(1).join(','));}
+      patch=Object.fromEntries(Object.entries(patch).filter(([,v])=>v));
+      if(!Object.keys(patch).length){await sendText(from,'Invalid detail. Please send again.');return;}
+      await saveOwnContactPatchV852(selfUser,patch);await pool.query(`DELETE FROM ui_sessions WHERE whatsapp_number=$1 AND session_key='V852_SELF_CONTACT'`,[normWA(from)]);
+      await sendText(from,'✅ Contact details updated.');await sendMyContactV852(from,selfUser);return;
+    }
+    // Natural message, e.g. "my max no 1234, alternate phone 9..., company mail ..."
+    if(/\b(max|alternate|alt phone|other phone|company email|personal email|office ext|extension|emergency contact)\b/i.test(t852)){
+      const patch=extractContactFieldsV852(t852);
+      if(Object.keys(patch).length){await saveOwnContactPatchV852(selfUser,patch);await sendText(from,'✅ Contact details understood and updated.');await sendMyContactV852(from,selfUser);return;}
+    }
+  }
   if(isOwner(from)){
     const cs=(await pool.query(`SELECT session_value FROM ui_sessions WHERE whatsapp_number=$1 AND session_key='V851_CONTACT_EDIT'`,[normWA(from)])).rows[0];
     if(cs){
@@ -720,4 +807,4 @@ app.post('/webhook',(req,res)=>{
 });
 
 await initDB();
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.5.1 registration foundation listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.5.2 registration foundation listening on ${PORT}`));
