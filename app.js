@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.7.8
+// LMMM AI Maintenance V8.7.9
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -973,7 +973,7 @@ function ingestPreviewV877(packOrRows,filename){
   const review=rows.filter(x=>String(x.confidence||'').toUpperCase()==='NEEDS_REVIEW'||(!x.equipment && !['DRAWING_DOCS','MANUAL_REFERENCE'].includes(String(x.module||'').toUpperCase()))).length;
   const lines=rows.slice(0,5).map((x,i)=>`${i+1}. ${String(x.module||'NEEDS_REVIEW').toUpperCase()} | ${x.equipment||'Equipment: not confirmed'} | ${x.event_date||'Date: not confirmed'}\n${String(x.description||'-').slice(0,220)}`);
   const items=Array.isArray(pack.extracted_items)?pack.extracted_items.length:0;
-  return `File extracted — NOT STORED yet\nSource: ${filename}\nType: ${pack.document_type||'OTHER'}\nLanguage: ${(pack.detected_languages||[]).join(', ')||'Not confirmed'}\nRecords: ${rows.length} | Detailed items: ${items}\nNeeds Review: ${review}\n\n${String(pack.document_summary||'').slice(0,700)}${lines.length?`\n\n${lines.join('\n\n')}`:''}\n\nUse View Full Extraction to verify source text before storage.`;
+  return `File extracted — NOT STORED\nSource: ${filename}\nType: ${pack.document_type||'OTHER'}\nLanguage: ${(pack.detected_languages||[]).join(', ')||'Not confirmed'}\nRecords: ${rows.length} | Detailed items: ${items}\nNeeds Review: ${review}\n\n${String(pack.document_summary||'').slice(0,700)}`;
 }
 async function setPendingIngestSessionV877(from,id){
   await pool.query(`INSERT INTO ui_sessions(whatsapp_number,session_key,session_value,updated_at) VALUES($1,'PENDING_FILE_INGEST',$2::jsonb,now()) ON CONFLICT(whatsapp_number,session_key) DO UPDATE SET session_value=EXCLUDED.session_value,updated_at=now()`,[normWA(from),JSON.stringify({id})]);
@@ -990,37 +990,68 @@ async function clearPendingIngestV877(from,id,status='DISCARDED'){
 async function showIngestOptionsV877(from,p){
   const pack=ingestPackV878(p);
   await sendText(from,ingestPreviewV877(pack,p.source_filename));
-  await sendList(from,'Verify the extraction before deciding what to store','Choose',[
-    {id:'INGEST_VIEW_FULL',title:'View Full Extraction',description:'Show complete extracted text/details; nothing stored'},
-    {id:'INGEST_REVIEW',title:'Review / Edit',description:'Review every record and correct source-backed fields'},
-    {id:'INGEST_STORE_VERIFIED',title:'Store Verified',description:'Store only after your confirmation'},
-    {id:'INGEST_CONVERT',title:'Convert / Export',description:'Export extracted data as TXT, CSV or JSON'},
-    {id:'INGEST_READ_ONLY',title:'Read Only',description:'Use extraction only; do not store'},
-    {id:'INGEST_DISCARD',title:'Discard',description:'Discard this pending extraction'}
+  await sendFullExtractionV878(from,p);
+  await sendList(from,'What do you want to do with this file?','Choose',[
+    {id:'INGEST_STORE_VERIFIED',title:'Store Data',description:'Store only verified, complete maintenance data'},
+    {id:'INGEST_CONVERT',title:'Convert / Export',description:'PDF, Excel, TXT, CSV or JSON'}
   ],'File Action');
 }
 async function sendFullExtractionV878(from,p){
   const pack=ingestPackV878(p);
   const text=String(pack.full_text||'').trim();
   const items=Array.isArray(pack.extracted_items)?pack.extracted_items:[];
-  if(!text && !items.length){await sendText(from,'No detailed text was extracted. Use Review / Edit or resend a clearer source.');return;}
-  const chunks=[];
-  const body=`FULL EXTRACTION — NOT STORED\nSource: ${p.source_filename}\nType: ${pack.document_type}\n\n${text}`;
-  for(let i=0;i<body.length;i+=3800)chunks.push(body.slice(i,i+3800));
-  for(const c of chunks.slice(0,8))await sendText(from,c);
-  if(chunks.length>8)await sendText(from,`Full text is long (${text.length} characters). Use Convert / Export → TXT to receive the complete extraction as a file.`);
-  if(items.length)await sendText(from,`Structured detailed items extracted: ${items.length}. Use Convert / Export → CSV/JSON to inspect all items.`);
+  if(!text && !items.length){await sendText(from,'Detailed extraction unavailable. Nothing has been stored.');return;}
+  const body=`FULL EXTRACTION — NOT STORED\n\n${text}`;
+  if(body.length<=7600){
+    for(let i=0;i<body.length;i+=3800) await sendText(from,body.slice(i,i+3800));
+  }else{
+    await sendText(from,`Full extraction completed (${text.length} characters${items.length?`, ${items.length} structured items`:''}). I am sending the complete extraction as a TXT file to keep WhatsApp clean.`);
+    const base=String(p.source_filename||'extraction').replace(/\.[^.]+$/,'').replace(/[^a-zA-Z0-9._-]+/g,'_').slice(0,80)||'extraction';
+    await sendGeneratedDocumentV878(from,Buffer.from(text,'utf8'),`${base}_full_extraction.txt`,'text/plain');
+  }
+  if(items.length) await sendText(from,`Structured items extracted: ${items.length}. Nothing is stored until you choose Store Data.`);
+}
+function escPdfV879(v){return String(v??'').replace(/\\/g,'\\\\').replace(/\(/g,'\\(').replace(/\)/g,'\\)').replace(/[^\x20-\x7E]/g,'?');}
+function simplePdfV879(text){
+  const lines=String(text||'').replace(/\r/g,'').split('\n').flatMap(x=>{
+    const a=[]; for(let i=0;i<x.length;i+=92)a.push(x.slice(i,i+92)); return a.length?a:[''];
+  });
+  const pages=[]; for(let i=0;i<lines.length;i+=48)pages.push(lines.slice(i,i+48));
+  if(!pages.length)pages.push(['']);
+  const objs=[null]; const add=x=>{objs.push(x);return objs.length-1;};
+  const catalog=add(''); const pagesId=add(''); const font=add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
+  const pageIds=[];
+  for(const pg of pages){
+    let y=760,stream='BT /F1 9 Tf ';
+    for(const ln of pg){stream+=`1 0 0 1 40 ${y} Tm (${escPdfV879(ln)}) Tj `;y-=15;}
+    stream+='ET';
+    const content=add(`<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream`);
+    const pid=add(`<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 ${font} 0 R >> >> /Contents ${content} 0 R >>`);
+    pageIds.push(pid);
+  }
+  objs[catalog]=`<< /Type /Catalog /Pages ${pagesId} 0 R >>`;
+  objs[pagesId]=`<< /Type /Pages /Kids [${pageIds.map(x=>`${x} 0 R`).join(' ')}] /Count ${pageIds.length} >>`;
+  let out='%PDF-1.4\n',offs=[0];
+  for(let i=1;i<objs.length;i++){offs[i]=Buffer.byteLength(out);out+=`${i} 0 obj\n${objs[i]}\nendobj\n`;}
+  const xref=Buffer.byteLength(out);out+=`xref\n0 ${objs.length}\n0000000000 65535 f \n`;
+  for(let i=1;i<objs.length;i++)out+=`${String(offs[i]).padStart(10,'0')} 00000 n \n`;
+  out+=`trailer\n<< /Size ${objs.length} /Root ${catalog} 0 R >>\nstartxref\n${xref}\n%%EOF`;
+  return Buffer.from(out,'binary');
+}
+function excelHtmlV879(pack){
+  const items=Array.isArray(pack.extracted_items)&&pack.extracted_items.length?pack.extracted_items:(pack.records||[]);
+  const keys=[...new Set(items.flatMap(x=>Object.keys(x||{})))];
+  const esc=v=>String(v??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  return `<!doctype html><html><head><meta charset="utf-8"></head><body><table border="1"><tr>${keys.map(k=>`<th>${esc(k)}</th>`).join('')}</tr>${items.map(r=>`<tr>${keys.map(k=>`<td>${esc(r?.[k])}</td>`).join('')}</tr>`).join('')}</table></body></html>`;
 }
 function csvCellV878(v){const z=String(v??'');return /[",\n]/.test(z)?`"${z.replace(/"/g,'""')}"`:z;}
 async function exportPendingV878(from,p,kind){
   const pack=ingestPackV878(p),base=String(p.source_filename||'extraction').replace(/\.[^.]+$/,'').replace(/[^a-zA-Z0-9._-]+/g,'_').slice(0,80)||'extraction';
-  if(kind==='TXT'){
-    const txt=`Source: ${p.source_filename}\nType: ${pack.document_type}\nLanguages: ${(pack.detected_languages||[]).join(', ')}\nSummary: ${pack.document_summary||''}\n\nFULL EXTRACTION\n${pack.full_text||''}\n\nSTRUCTURED ITEMS\n${JSON.stringify(pack.extracted_items||[],null,2)}\n\nRECORDS\n${JSON.stringify(pack.records||[],null,2)}`;
-    await sendGeneratedDocumentV878(from,Buffer.from(txt,'utf8'),`${base}_extracted.txt`,'text/plain');return;
-  }
-  if(kind==='JSON'){
-    await sendGeneratedDocumentV878(from,Buffer.from(JSON.stringify(pack,null,2),'utf8'),`${base}_extracted.json`,'application/json');return;
-  }
+  const full=`Source: ${p.source_filename}\nType: ${pack.document_type}\nLanguages: ${(pack.detected_languages||[]).join(', ')}\nSummary: ${pack.document_summary||''}\n\nFULL EXTRACTION\n${pack.full_text||''}\n\nSTRUCTURED ITEMS\n${JSON.stringify(pack.extracted_items||[],null,2)}\n\nRECORDS\n${JSON.stringify(pack.records||[],null,2)}`;
+  if(kind==='PDF'){await sendGeneratedDocumentV878(from,simplePdfV879(full),`${base}_extracted.pdf`,'application/pdf');return;}
+  if(kind==='EXCEL'){await sendGeneratedDocumentV878(from,Buffer.from(excelHtmlV879(pack),'utf8'),`${base}_extracted.xls`,'application/vnd.ms-excel');return;}
+  if(kind==='TXT'){await sendGeneratedDocumentV878(from,Buffer.from(full,'utf8'),`${base}_extracted.txt`,'text/plain');return;}
+  if(kind==='JSON'){await sendGeneratedDocumentV878(from,Buffer.from(JSON.stringify(pack,null,2),'utf8'),`${base}_extracted.json`,'application/json');return;}
   if(kind==='CSV'){
     const items=Array.isArray(pack.extracted_items)?pack.extracted_items:[];
     const rows=items.length?items:(pack.records||[]);
@@ -1040,7 +1071,7 @@ async function storePendingVerifiedV877(from,p){
     try{const raw={...x,document_type:pack.document_type,document_summary:pack.document_summary,extracted_items:pack.extracted_items};
       const q=await pool.query(`INSERT INTO maintenance_ingest_records(data_class,source_type,source_media_id,source_filename,source_mime_type,source_caption,source_sha256,submitted_by_employee_number,submitted_by_whatsapp,module,area,equipment,sub_equipment,event_date,event_time,shift,description,action_taken,status,remarks,confidence,raw_extraction) VALUES('TEST','WHATSAPP_FILE',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::date,$13::time,$14,$15,$16,$17,$18,$19,$20::jsonb) ON CONFLICT DO NOTHING RETURNING id`,[p.source_media_id,p.source_filename,p.source_mime_type,p.source_caption,p.source_sha256,u.employee_number,normWA(from),module,x.area||null,x.equipment||null,x.sub_equipment||null,x.event_date||null,x.event_time||null,x.shift||null,x.description||pack.document_summary||null,x.action_taken||null,x.status||null,x.remarks||null,confidence,JSON.stringify(raw)]);if(q.rowCount)saved++;else dupe++;}catch(e){console.error('[INGEST_STORE]',e.message);review++;}
   }
-  if(review){await sendText(from,`Storage not finalized.\nStored confirmed: ${saved}\nStill needs review: ${review}\nDuplicates skipped: ${dupe}\n\nReview items remain pending so you can correct them.`);return;}
+  if(review){const missing=rows.filter(x=>String(x.confidence||'').toUpperCase()==='NEEDS_REVIEW'||(!x.equipment&&!['DRAWING_DOCS','MANUAL_REFERENCE'].includes(String(x.module||'').toUpperCase()))).slice(0,8).map((x,i)=>`${i+1}. ${x.module||'NEEDS_REVIEW'} — ${!x.equipment?'Equipment missing/uncertain; ':''}${!x.event_date?'Date missing/uncertain; ':''}${x.description||''}`).join('\n');await sendText(from,`Not stored completely because ${review} record(s) need confirmation.\n\n${missing}\n\nSend the correct source-backed details in a simple message, for example:\nEDIT 1 | Equipment=WBF-2 | Date=2026-09-22 | Module=DEFECT\n\nThen choose Store Data again.`);return;}
   await clearPendingIngestV877(from,p.id,'STORED');
   await sendText(from,`✅ Confirmed TEST data stored\nStored: ${saved}\nDuplicates skipped: ${dupe}\nSource: ${p.source_filename}`);
 }
@@ -1048,34 +1079,33 @@ async function handlePendingIngestCommandV877(from,cmd){
   if(!/^INGEST_/.test(cmd) && !/^EDIT\s+\d+\s*\|/i.test(cmd))return false;
   const p=await getPendingIngestV877(from);if(!p){await sendText(from,'No pending file extraction. Please send the file again.');return true;}
   const pack=ingestPackV878(p),rows=Array.isArray(pack.records)?pack.records:[];
-  if(cmd==='INGEST_VIEW_FULL'){await sendFullExtractionV878(from,p);await showIngestOptionsV877(from,p);return true;}
   if(cmd==='INGEST_STORE_VERIFIED'){await storePendingVerifiedV877(from,p);return true;}
-  if(cmd==='INGEST_READ_ONLY'){await clearPendingIngestV877(from,p.id,'READ_ONLY');await sendText(from,'Read-only selected. Nothing from this file was stored.');return true;}
-  if(cmd==='INGEST_DISCARD'){await clearPendingIngestV877(from,p.id,'DISCARDED');await sendText(from,'Pending extraction discarded. Nothing was stored.');return true;}
   if(cmd==='INGEST_CONVERT'){
-    await sendList(from,'Choose extraction export format','Export',[
-      {id:'INGEST_EXPORT_TXT',title:'Extracted TXT',description:'Complete extracted text + structured data'},
-      {id:'INGEST_EXPORT_CSV',title:'Extracted CSV',description:'Detailed items/records in spreadsheet-friendly CSV'},
-      {id:'INGEST_EXPORT_JSON',title:'Extracted JSON',description:'Complete structured extraction'}
-    ],'Export Format');return true;
+    await sendList(from,'Choose file format','Convert',[
+      {id:'INGEST_EXPORT_PDF',title:'PDF',description:'Complete extraction as PDF'},
+      {id:'INGEST_EXPORT_EXCEL',title:'Excel',description:'Structured extracted data for Excel'},
+      {id:'INGEST_EXPORT_TXT',title:'TXT',description:'Complete extracted text'},
+      {id:'INGEST_EXPORT_CSV',title:'CSV',description:'Spreadsheet-friendly extracted data'},
+      {id:'INGEST_EXPORT_JSON',title:'JSON',description:'Complete structured extraction'}
+    ],'File Conversion');return true;
   }
-  if(cmd==='INGEST_EXPORT_TXT'||cmd==='INGEST_EXPORT_CSV'||cmd==='INGEST_EXPORT_JSON'){
-    const kind=cmd.replace('INGEST_EXPORT_','');await exportPendingV878(from,p,kind);await showIngestOptionsV877(from,p);return true;
+  if(/^INGEST_EXPORT_(PDF|EXCEL|TXT|CSV|JSON)$/.test(cmd)){
+    const kind=cmd.replace('INGEST_EXPORT_','');await exportPendingV878(from,p,kind);
+    await sendList(from,'Conversion sent. Store the verified maintenance data only if it is correct.','Choose',[
+      {id:'INGEST_STORE_VERIFIED',title:'Store Data',description:'Store verified, complete maintenance data'},
+      {id:'INGEST_CONVERT',title:'Convert Again',description:'Choose another output format'}
+    ],'Next Action');return true;
   }
-  if(cmd==='INGEST_REVIEW'){
-    if(!rows.length){await sendText(from,'No structured records were extracted. Use View Full Extraction to inspect source text.');return true;}
-    const msg=rows.slice(0,12).map((x,i)=>`${i+1}. ${x.module||'NEEDS_REVIEW'}\nArea: ${x.area||'MISSING'}\nEquipment: ${x.equipment||'MISSING'}\nSub-equipment: ${x.sub_equipment||'-'}\nDate: ${x.event_date||'MISSING'} ${x.event_time||''}\nShift: ${x.shift||'-'}\nConfidence: ${x.confidence||'NEEDS_REVIEW'}\nDescription: ${String(x.description||'-').slice(0,500)}`).join('\n\n');
-    await sendText(from,`REVIEW ALL — NOT STORED\n\n${msg.slice(0,3900)}`);
-    await sendText(from,'To correct a source-backed field send:\nEDIT 1 | Equipment=WBF-2 | Date=2026-09-22 | Module=DEFECT\n\nAllowed: Equipment, Date, Module, Area, Sub-equipment, Shift.\nAfter editing, Review / Edit again and then Store Verified.');return true;
-  }
+  // Backward-compatible handling for old WhatsApp list messages; these are no longer shown in the UI.
+  if(cmd==='INGEST_VIEW_FULL'){await sendFullExtractionV878(from,p);return true;}
+  if(cmd==='INGEST_READ_ONLY'||cmd==='INGEST_DISCARD'||cmd==='INGEST_REVIEW'){await showIngestOptionsV877(from,p);return true;}
   const m=cmd.match(/^EDIT\s+(\d+)\s*\|\s*(.+)$/i);if(m){
     const idx=Number(m[1])-1;if(idx<0||idx>=rows.length){await sendText(from,'Invalid record number.');return true;}
     const allowed={equipment:'equipment',date:'event_date',module:'module',area:'area','sub-equipment':'sub_equipment',subequipment:'sub_equipment',shift:'shift'};
     for(const part of m[2].split('|')){const z=part.split('=');if(z.length<2)continue;const k=allowed[z[0].trim().toLowerCase()];if(k)rows[idx][k]=z.slice(1).join('=').trim()||null;}
     rows[idx].confidence=(rows[idx].module && rows[idx].module!=='NEEDS_REVIEW' && (rows[idx].equipment || ['DRAWING_DOCS','MANUAL_REFERENCE'].includes(String(rows[idx].module).toUpperCase())))?'MEDIUM':'NEEDS_REVIEW';
-    pack.records=rows;
-    await pool.query(`UPDATE pending_file_ingests SET extracted_rows=$2::jsonb,updated_at=now() WHERE id=$1`,[p.id,JSON.stringify(packForDBV878(pack))]);
-    const fresh={...p,extracted_rows:packForDBV878(pack)};await showIngestOptionsV877(from,fresh);return true;
+    pack.records=rows;await pool.query(`UPDATE pending_file_ingests SET extracted_rows=$2::jsonb,updated_at=now() WHERE id=$1`,[p.id,JSON.stringify(packForDBV878(pack))]);
+    await showIngestOptionsV877(from,{...p,extracted_rows:packForDBV878(pack)});return true;
   }
   return false;
 }
