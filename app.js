@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.6.0
+// LMMM AI Maintenance V8.7.0
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -258,13 +258,6 @@ async function sendButtons(to, body, buttons){
   if(!r.ok) throw new Error(`WhatsApp button send failed ${r.status}: ${await r.text()}`);
 }
 async function initDB(){
-  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS employment_category TEXT`);
-  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS employee_type TEXT`);
-  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS reporting_to_employee_number TEXT`);
-  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS location TEXT`);
-  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS remarks TEXT`);
-  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_updated_at TIMESTAMPTZ DEFAULT now()`);
-
   if(!pool) throw new Error('DATABASE_URL missing');
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users(
@@ -337,6 +330,12 @@ async function initDB(){
       applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
   `);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS employment_category TEXT`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS employee_type TEXT`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS reporting_to_employee_number TEXT`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS location TEXT`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS remarks TEXT`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_updated_at TIMESTAMPTZ DEFAULT now()`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS data_class TEXT NOT NULL DEFAULT 'MAIN'`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_users_data_class ON users(data_class)`);
   // User explicitly requested a clean user reset. Run exactly once.
@@ -410,10 +409,20 @@ async function contactCardV851(emp){
 }
 async function sendContactAdminV851(to,emp){
  const c=await contactCardV851(emp); if(!c){await sendText(to,'Employee not found.');return;}
- await sendText(to,`Contact Details
+ const u=await byEmp(emp),p=u?(await pool.query('SELECT * FROM user_access_profile WHERE employee_number=$1',[emp])).rows[0]:null,o=u?await adminOverrideV850(emp):null,g=u?governanceScopeV870(u,p,o):null;
+ await sendText(to,`Employee & Contact Details
 
 Name: ${c.name}
 Employee No: ${c.employee_number}
+Designation: ${c.designation||'-'}
+Department: LMMM / 35
+Destination / Assigned Area: ${u?.area_of_working||'-'}
+Section: ${u?.section_department||'-'}
+Shift: ${u?.shift||'-'}
+Role: ${p?.assigned_role||'-'}
+Scope: ${g?.label||'-'}
+Responsibility: ${g?.responsibility||p?.responsibility||'-'}
+
 WhatsApp / Main Phone: ${c.whatsapp_registration_number||'-'}
 Alternate Phone: ${c.alternate_phone_number||'-'}
 Company Email: ${c.company_email||'-'}
@@ -554,11 +563,28 @@ async function resetProfileToAutoV841(u,by='SYSTEM'){
   await pool.query('DELETE FROM user_access_profile WHERE employee_number=$1',[u.employee_number]);
   await ensureProfile(u,by);
 }
+function governanceScopeV870(u,p,o){
+  const role=String(p?.assigned_role||o?.operational_role||'NORMAL_EMPLOYEE').toUpperCase();
+  const area=canonicalArea(o?.area||u.area_of_working)||'-';
+  const section=canonicalSection(o?.section||u.section_department)||'-';
+  if(role==='HOD') return {code:'LMMM_ALL',label:'LMMM',responsibility:'LMMM'};
+  if(role==='SECTION_INCHARGE') return {code:'LMMM_SECTION',label:`LMMM / ${section}`,responsibility:'LMMM'};
+  if(role==='AREA_INCHARGE') return {code:'AREA',label:area,responsibility:area};
+  if(role==='SHIFT_INCHARGE') return {code:'SHIFT_AREA_SECTION',label:`${area} / ${section} / ${canonicalShift(o?.shift||u.shift)||'-'}`,responsibility:`${area} ${section} shift`};
+  return {code:'REGISTERED_AREA_SECTION',label:`${area} / ${section}`,responsibility:p?.responsibility||workResponsibilityV83(u)};
+}
+async function rememberAdminEmployeeV870(to,emp){
+ try{await pool.query(`INSERT INTO ui_sessions(whatsapp_number,session_key,session_value,updated_at) VALUES($1,'V870_ADMIN_EMP',$2,now()) ON CONFLICT(whatsapp_number,session_key) DO UPDATE SET session_value=EXCLUDED.session_value,updated_at=now()`,[normWA(to),JSON.stringify({employee_number:String(emp)})]);}catch(e){console.error('[ADMIN_EMP_SESSION]',e.message);}
+}
+async function currentAdminEmployeeV870(to){
+ try{const r=await pool.query(`SELECT session_value FROM ui_sessions WHERE whatsapp_number=$1 AND session_key='V870_ADMIN_EMP'`,[normWA(to)]);return r.rows[0]?.session_value?.employee_number||null;}catch{return null;}
+}
 async function showUser(to,u){
+  await rememberAdminEmployeeV870(to,u.employee_number);
   await ensureProfile(u,normWA(to));u=await byEmp(u.employee_number);
   await syncPrimaryContactV851(u,normWA(to));
   const p=(await pool.query('SELECT * FROM user_access_profile WHERE employee_number=$1',[u.employee_number])).rows[0];
-  const c=await contactCardV851(u.employee_number),o=await adminOverrideV850(u.employee_number);
+  const c=await contactCardV851(u.employee_number),o=await adminOverrideV850(u.employee_number),g=governanceScopeV870(u,p,o);
   await sendText(to,`Employee Full Details
 
 Name: ${u.name}
@@ -569,6 +595,10 @@ Section: ${u.section_department||'-'}
 Shift: ${u.shift||'-'}
 Status: ${u.approval_status}${u.is_active?' / Active':''}
 Data Class: ${u.data_class||'MAIN'}
+Department: LMMM / 35
+Destination / Assigned Area: ${o?.area||u.area_of_working||'-'}
+Assigned Section: ${o?.section||u.section_department||'-'}
+Governance Scope: ${g.label}
 
 Main Phone: ${c?.whatsapp_registration_number||u.whatsapp_number||'-'}
 Alternate Phone: ${c?.alternate_phone_number||'-'}
@@ -581,8 +611,8 @@ Emergency Phone: ${c?.emergency_contact_phone||'-'}
 
 Category/Role: ${p?.assigned_role||'-'}
 Access: ${p?.access_level||'-'}
-Scope: ${o?.scope||autoAuthorityV83(u).scope}
-Responsibility: ${p?.responsibility||'-'}
+Scope: ${g.code}
+Responsibility: ${g.responsibility||p?.responsibility||'-'}
 Authorities: ${(p?.authorities||[]).join(', ')||'-'}
 Source: ${p?.assignment_source||'AUTO'}`);
   await sendButtons(to,'Employee Actions',[
@@ -665,6 +695,8 @@ Shift: ${u.shift||'-'}`,
 async function adminCommand(from,text){
   if(!SUPER_ADMINS.has(normWA(from))) return false;
   const admin=normWA(from); let a;
+  // V8.7.0: survive clients/webhooks that return only interactive title, not payload ID.
+  if(!/^ADM_|^AUTH_|^AU:|^SET|^SA:|^SR:/.test(text)){const emp=await currentAdminEmployeeV870(from);if(emp){const map={'User / Designation':`ADM_IDENTITY:${emp}`,'Work Assignment':`ADM_WORK:${emp}`,'Permissions':`ADM_PERM:${emp}`,'Contact Details':`ADM_CONTACT:${emp}`,'More Options':`ADM_MORE:${emp}`,'Authorities':`ADM_AUTH:${emp}`,'Core Access':`AUTH_CORE:${emp}`,'Docs / Reports':`AUTH_DOC:${emp}`,'Advanced':`AUTH_ADV:${emp}`,'Admin Tools':`ADM_ADMINTOOLS:${emp}`};if(map[text])text=map[text];}}
   if(text==='ADM_USERS'||/^users?$/i.test(text)){await sendText(from,'User Management\nSearch by Employee No or Name.');return true;}
   if((a=text.match(/^ADM_VIEW:(\d+)$/))){const u=await byEmp(a[1]); if(u)await showUser(from,u);else await sendText(from,'Employee not found.');return true;}
   if((a=text.match(/^ADM_ASSIGN:(\d+)$/))){await sendButtons(from,'Assign / Change',[
@@ -675,8 +707,8 @@ if((a=text.match(/^ADM_IDENTITY:(\d+)$/))){await sendList(from,'User / Designati
 {id:`ADM_CAT:${a[1]}`,title:'Category / Role'},{id:`ADM_DESIG:${a[1]}`,title:'Designation'},
 {id:`ADM_DATACLASS:${a[1]}`,title:'Tester / Main'}],'Employee Setup');return true;}
 if((a=text.match(/^ADM_WORK:(\d+)$/))){await sendList(from,'Work Assignment','Select',[
-{id:`ADM_AREA:${a[1]}`,title:'Area'},{id:`ADM_SECTION:${a[1]}`,title:'Section'},
-{id:`ADM_SHIFT:${a[1]}`,title:'Shift'},{id:`ADM_RESP:${a[1]}`,title:'Responsibility'}],'Work Assignment');return true;}
+{id:`ADM_AREA:${a[1]}`,title:'Destination Area'},{id:`ADM_SECTION:${a[1]}`,title:'Section'},
+{id:`ADM_SHIFT:${a[1]}`,title:'Shift / Roster'},{id:`ADM_RESP:${a[1]}`,title:'Responsibility / Scope'}],'Work Assignment');return true;}
 if((a=text.match(/^ADM_PERM:(\d+)$/))){await sendList(from,'Permissions','Select',[
 {id:`ADM_ACCESS:${a[1]}`,title:'Access Level'},{id:`ADM_AUTH:${a[1]}`,title:'Authorities'}],'Permission Control');return true;}
 if((a=text.match(/^ADM_CONTACT:(\d+)$/))){
@@ -724,7 +756,7 @@ if((a=text.match(/^ADM_ADMINTOOLS:(\d+)$/))){await sendList(from,'Admin Tools','
   if((a=text.match(/^ADM_RESP:(\d+)$/))){await sendList(from,'Operational Responsibility','Select',OPERATIONAL_RESPONSIBILITIES_V850.map(([code,title])=>({id:`SETRESP:${a[1]}:${code}`,title})),'Responsibility');return true;}
   if((a=text.match(/^SR:(\d+):(.+)$/))){await setField(a[1],'role',a[2],admin);await showUser(from,await byEmp(a[1]));return true;}
   if((a=text.match(/^SA:(\d+):(ENTRY|VIEW_ONLY|ENTRY_VIEW|EDIT|FULL_ACCESS)$/))){await setAccessSyncedV858(a[1],a[2],admin);await sendText(from,`✅ Saved in real time\nAccess: ${a[2]}\nAuthorities replaced to match this access level.\nEmployee: ${a[1]}\nOnly Super Admin notified.`);await showUser(from,await byEmp(a[1]));return true;}
-  if((a=text.match(/^SETRESP:(\d+):([A-Z_]+)$/))){const emp=a[1],role=a[2],u=await byEmp(emp);if(!u){await sendText(from,'Employee not found.');return true;}const base=role==='NORMAL_EMPLOYEE'?workResponsibilityV83(u):`${role.replaceAll('_',' ')} • ${canonicalArea(u.area_of_working)} • ${canonicalSection(u.section_department)}`,o=await saveAdminOverrideV850(emp,{operational_role:role,responsibility:base},normWA(from));await applyAdminOverrideV850(u,o,normWA(from));await sendText(from,`✅ Responsibility changed: ${role.replaceAll('_',' ')}\nEmployee: ${emp}\nOnly Super Admin notified.`);return true;}
+  if((a=text.match(/^SETRESP:(\d+):([A-Z_]+)$/))){const emp=a[1],role=a[2],u=await byEmp(emp);if(!u){await sendText(from,'Employee not found.');return true;}let base=workResponsibilityV83(u),scope='REGISTERED_AREA_SECTION';if(role==='AREA_INCHARGE'){base=canonicalArea(u.area_of_working);scope='AREA';}else if(role==='SECTION_INCHARGE'){base='LMMM';scope='LMMM_SECTION';}else if(role==='HOD'){base='LMMM';scope='LMMM_ALL';}else if(role==='SHIFT_INCHARGE'){base=`${canonicalArea(u.area_of_working)} ${canonicalSection(u.section_department)} shift`;scope='SHIFT_AREA_SECTION';}else if(role==='DGM'){base='LMMM';scope='LMMM_ALL';}else if(role==='SUPER_ADMIN'){base='LMMM';scope='LMMM_ALL';}const o=await saveAdminOverrideV850(emp,{operational_role:role,responsibility:base,scope},normWA(from));await applyAdminOverrideV850(u,o,normWA(from));await sendText(from,`✅ Responsibility changed: ${role.replaceAll('_',' ')}\nEmployee: ${emp}\nOnly Super Admin notified.`);return true;}
   if((a=text.match(/^SP:(\d+):(.+)$/))){await setField(a[1],'resp',a[2],admin);await showUser(from,await byEmp(a[1]));return true;}
   if((a=text.match(/^ADM_TEST:(\d+)$/))){const u=await byEmp(a[1]);if(!u){await sendText(from,'Employee not found.');return true;}await sendGovernanceTestV841(from,u);return true;}
   if((a=text.match(/^ADM_AUTH:(\d+)$/))){await sendButtons(from,'Authority Control',[
@@ -779,7 +811,7 @@ if((a=text.match(/^AUTH_ADV:(\d+)$/))){await sendList(from,'Advanced Authorities
     if(normWA(from)!==u.whatsapp_number) await sendText(from,`${m[1]} registration removed. Maintenance history preserved.`);
     return true;
   }
-  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.6.0 AUTO ASSIGN');return true;}
+  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.7.0 AUTO ASSIGN');return true;}
   return false;
 }
 async function processMessage(from,text,payload=''){
@@ -787,10 +819,10 @@ async function processMessage(from,text,payload=''){
   try{await pool.query(`CREATE TABLE IF NOT EXISTS ui_sessions(whatsapp_number TEXT NOT NULL,session_key TEXT NOT NULL,session_value JSONB,updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),PRIMARY KEY(whatsapp_number,session_key))`);}catch(e){console.error('[SESSION_SCHEMA]',e.message);}
   if(isOwner(from) && /^PURGE_TESTERS$/i.test(cmd)){await sendButtons(from,'Delete all TESTER registrations/profile/contact/roster data? MAIN users and Super Admin are preserved.',[{id:'PURGE_TESTERS_CONFIRM',title:'Confirm Delete'},{id:'BACK',title:'Cancel'}]);return;}
   if(isOwner(from) && cmd==='PURGE_TESTERS_CONFIRM'){const n=await purgeTesterUsersV854(normWA(from));await sendText(from,`✅ Tester cleanup completed.\nTester users removed: ${n}\nMAIN users preserved.`);return;}
-  // V8.6.0 Super Admin contact-directory free-text edit continuation.
+  // V8.7.0 Super Admin contact-directory free-text edit continuation.
 
-  // V8.6.0 user contact self-service and natural contact-detail capture.
-  // V8.6.0 resilient Super Admin employee lookup.
+  // V8.7.0 user contact self-service and natural contact-detail capture.
+  // V8.7.0 resilient Super Admin employee lookup.
   if(isOwner(from)){
     const q855=String(text||'').trim(), emp855=/^\d{3,}$/.test(q855);
     const name855=/^[A-Za-z][A-Za-z .'-]{2,50}$/.test(q855)&&!['hi','hello','hey','start','back','search','version'].includes(q855.toLowerCase());
@@ -838,7 +870,7 @@ async function processMessage(from,text,payload=''){
       if(Object.keys(patch).length){await saveOwnContactPatchV852(selfUser,patch);await sendText(from,'✅ Contact details understood and updated.');await sendMyContactV852(from,selfUser);return;}
     }
   }
-  // V8.6.0 approved-user employee directory: basic public internal fields only.
+  // V8.7.0 approved-user employee directory: basic public internal fields only.
   if(!isOwner(from) && selfUser && selfUser.approval_status==='approved' && selfUser.is_active!==false){
     const q853=String(text||'').trim();
     const empQuery=/^\d{3,}$/.test(q853);
@@ -1031,4 +1063,4 @@ app.post('/webhook',(req,res)=>{
 });
 
 await initDB();
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.6.0 registration foundation listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.7.0 registration foundation listening on ${PORT}`));
