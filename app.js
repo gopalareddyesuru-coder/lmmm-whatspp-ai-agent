@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.9.8
+// LMMM AI Maintenance V8.10.0 FAIL-SAFE CORE
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -398,6 +398,24 @@ async function initDB(){
   await pool.query(`ALTER TABLE pending_file_ingests ADD COLUMN IF NOT EXISTS last_error TEXT`);
   await pool.query(`ALTER TABLE pending_file_ingests ADD COLUMN IF NOT EXISTS next_retry_at TIMESTAMPTZ`);
   await pool.query(`ALTER TABLE pending_file_ingests ADD COLUMN IF NOT EXISTS extraction_engine_version TEXT`);
+  await pool.query(`ALTER TABLE pending_file_ingests ADD COLUMN IF NOT EXISTS workflow_state TEXT NOT NULL DEFAULT 'RECEIVED'`);
+  await pool.query(`ALTER TABLE pending_file_ingests ADD COLUMN IF NOT EXISTS locked_at TIMESTAMPTZ`);
+  await pool.query(`ALTER TABLE pending_file_ingests ADD COLUMN IF NOT EXISTS last_provider TEXT`);
+  await pool.query(`ALTER TABLE pending_file_ingests ADD COLUMN IF NOT EXISTS delivery_pending BOOLEAN NOT NULL DEFAULT FALSE`);
+  await pool.query(`ALTER TABLE pending_file_ingests ADD COLUMN IF NOT EXISTS archive_sync_status TEXT NOT NULL DEFAULT 'PENDING'`);
+  await pool.query(`ALTER TABLE pending_file_ingests ADD COLUMN IF NOT EXISTS archive_file_id TEXT`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS reliability_events(
+    id BIGSERIAL PRIMARY KEY,
+    ingest_id BIGINT,
+    whatsapp TEXT,
+    stage TEXT NOT NULL,
+    state TEXT NOT NULL,
+    provider TEXT,
+    error_text TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_reliability_ingest ON reliability_events(ingest_id,created_at DESC)`);
+
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_pending_ingest_retry ON pending_file_ingests(status,next_retry_at,created_at)`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS employment_category TEXT`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS employee_type TEXT`);
@@ -1408,9 +1426,28 @@ async function handlePendingIngestCommandV877(from,cmd){
   }
   return false;
 }
+async function reliabilityEventV8100(row,stage,state,provider=null,error=null){
+  await pool.query(`INSERT INTO reliability_events(ingest_id,whatsapp,stage,state,provider,error_text) VALUES($1,$2,$3,$4,$5,$6)`,
+    [row?.id||null,row?.submitted_by_whatsapp||null,stage,state,provider,error?String(error).slice(0,1500):null]).catch(e=>console.error('[RELIABILITY_AUDIT]',e));
+}
+function retryDelayMinutesV8100(n){
+  return Math.min(60,Math.max(1,Math.pow(2,Math.min(Number(n||0),5))));
+}
+async function markRetryV8100(row,stage,error){
+  const mins=retryDelayMinutesV8100(row?.retry_count||0);
+  await pool.query(`UPDATE pending_file_ingests SET status='RETRY_PENDING',workflow_state=$2,last_error=$3,next_retry_at=now()+($4||' minutes')::interval,locked_at=NULL,updated_at=now() WHERE id=$1`,
+    [row.id,`${stage}_RETRY_PENDING`,String(error?.message||error).slice(0,1500),String(mins)]);
+  await reliabilityEventV8100(row,stage,'RETRY_PENDING',null,error);
+}
+async function recoverPendingWorkV8100(){
+  // Server restart recovery: release stale locks and make unfinished work retryable.
+  await pool.query(`UPDATE pending_file_ingests SET status='RETRY_PENDING',workflow_state='RECOVERED_AFTER_RESTART',locked_at=NULL,next_retry_at=now(),updated_at=now()
+    WHERE status='EXTRACTING' AND (locked_at IS NULL OR locked_at < now()-interval '5 minutes')`).catch(e=>console.error('[RECOVERY]',e));
+}
 async function extractQueuedIngestV895(from,row){
   try{
-    await pool.query(`UPDATE pending_file_ingests SET status='EXTRACTING',retry_count=retry_count+1,last_error=NULL,updated_at=now() WHERE id=$1`,[row.id]);
+    await pool.query(`UPDATE pending_file_ingests SET status='EXTRACTING',workflow_state='AI_PROCESSING',locked_at=now(),retry_count=retry_count+1,last_error=NULL,updated_at=now() WHERE id=$1`,[row.id]);
+    await reliabilityEventV8100(row,'AI_EXTRACTION','STARTED');
     const bytes=Buffer.from(row.source_bytes||[]);
     if(!bytes.length) throw new Error('Queued source bytes unavailable');
     const pack=await extractMaintenanceV874(bytes,row.source_mime_type||'application/octet-stream',row.source_filename||'upload',row.source_caption||'');
@@ -1419,7 +1456,10 @@ async function extractQueuedIngestV895(from,row){
       await sendText(from,'This upload is not relevant to LMMM plant / maintenance knowledge. Nothing was stored.');
       return true;
     }
-    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,extraction_engine_version='V8.9.8',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack))]);
+    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.10.0',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack))]);
+    await reliabilityEventV8100(row,'AI_EXTRACTION','SUCCEEDED',pack?._provider||null);
+    await pool.query(`UPDATE pending_file_ingests SET workflow_state='SOURCE_SECURED',updated_at=now() WHERE id=$1`,[row.id]).catch(()=>{});
+    await reliabilityEventV8100(row,'INTAKE','SOURCE_SECURED');
     await setPendingIngestSessionV877(from,row.id);
     await setIngestModeV874(from,false);
     await showIngestOptionsV877(from,q.rows[0]);
@@ -1427,7 +1467,7 @@ async function extractQueuedIngestV895(from,row){
   }catch(e){
     const msg=String(e?.message||e).slice(0,1500);
     console.error('[QUEUED_EXTRACT]',row.id,e);
-    await pool.query(`UPDATE pending_file_ingests SET status='RETRY_PENDING',last_error=$2,next_retry_at=now()+interval '2 minutes',updated_at=now() WHERE id=$1`,[row.id,msg]).catch(()=>{});
+    await markRetryV8100(row,'AI_EXTRACTION',e).catch(()=>{});
     await setPendingIngestSessionV877(from,row.id).catch(()=>{});
     await sendButtons(from,'Source is safely queued. AI is temporarily unavailable; no re-upload needed.',[
       {id:'RETRY_LAST_UPLOAD',title:'Retry Extraction'},
@@ -1435,6 +1475,19 @@ async function extractQueuedIngestV895(from,row){
     ]);
     return false;
   }
+}
+async function failSafeWorkerV8100(){
+  let lock=false;
+  try{
+    const lk=await pool.query(`SELECT pg_try_advisory_lock(3518100) AS ok`); lock=!!lk.rows?.[0]?.ok;
+    if(!lock) return;
+    const q=await pool.query(`SELECT * FROM pending_file_ingests WHERE status='RETRY_PENDING' AND (next_retry_at IS NULL OR next_retry_at<=now()) ORDER BY created_at ASC LIMIT 3`);
+    for(const row of q.rows){
+      try{await extractQueuedIngestV895(row.submitted_by_whatsapp,row);}
+      catch(e){console.error('[FAILSAFE_WORKER_ITEM]',row.id,e);}
+    }
+  }catch(e){console.error('[FAILSAFE_WORKER]',e);}
+  finally{if(lock) await pool.query(`SELECT pg_advisory_unlock(3518100)`).catch(()=>{});}
 }
 async function retryLastQueuedV895(from){
   const q=await pool.query(`SELECT * FROM pending_file_ingests WHERE submitted_by_whatsapp=$1 AND status IN ('RETRY_PENDING','RECEIVED','EXTRACTING') ORDER BY created_at DESC LIMIT 1`,[normWA(from)]);
@@ -1770,4 +1823,7 @@ app.post('/webhook',(req,res)=>{
 });
 
 await initDB();
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.9.8 stale-cache invalidation + PDF batches listening on ${PORT}`));
+recoverPendingWorkV8100().then(()=>failSafeWorkerV8100()).catch(e=>console.error('[FAILSAFE_STARTUP]',e));
+setInterval(()=>failSafeWorkerV8100().catch(e=>console.error('[FAILSAFE_INTERVAL]',e)),60000).unref();
+
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.10.0 FAIL-SAFE CORE listening on ${PORT}`));
