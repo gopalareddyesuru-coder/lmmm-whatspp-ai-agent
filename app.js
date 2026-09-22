@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.5.5
+// LMMM AI Maintenance V8.5.6
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -21,6 +21,7 @@ const SUPER_ADMINS = new Set(
 const pool = DATABASE_URL ? new Pool({connectionString:DATABASE_URL, ssl:DATABASE_URL.includes('localhost')?false:{rejectUnauthorized:false}}) : null;
 const normWA = x => String(x||'').replace(/\D/g,'');
 
+function isOwner(wa){ return SUPER_ADMINS.has(normWA(wa)); }
 function canonicalDesignation(v=''){
   const raw=String(v||'').trim(); if(!raw) return null;
   const k=raw.toLowerCase().replace(/[._-]+/g,' ').replace(/\s+/g,' ').trim();
@@ -690,7 +691,7 @@ if((a=text.match(/^SETSH:(\d+):(General|ROTATING_ABC|A|B|C)$/))){const emp=a[1],
     if(normWA(from)!==u.whatsapp_number) await sendText(from,`${m[1]} registration removed. Maintenance history preserved.`);
     return true;
   }
-  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.5.5 AUTO ASSIGN');return true;}
+  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.5.6 AUTO ASSIGN');return true;}
   return false;
 }
 async function processMessage(from,text,payload=''){
@@ -698,10 +699,10 @@ async function processMessage(from,text,payload=''){
   try{await pool.query(`CREATE TABLE IF NOT EXISTS ui_sessions(whatsapp_number TEXT NOT NULL,session_key TEXT NOT NULL,session_value JSONB,updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),PRIMARY KEY(whatsapp_number,session_key))`);}catch(e){console.error('[SESSION_SCHEMA]',e.message);}
   if(isOwner(from) && /^PURGE_TESTERS$/i.test(cmd)){await sendButtons(from,'Delete all TESTER registrations/profile/contact/roster data? MAIN users and Super Admin are preserved.',[{id:'PURGE_TESTERS_CONFIRM',title:'Confirm Delete'},{id:'BACK',title:'Cancel'}]);return;}
   if(isOwner(from) && cmd==='PURGE_TESTERS_CONFIRM'){const n=await purgeTesterUsersV854(normWA(from));await sendText(from,`✅ Tester cleanup completed.\nTester users removed: ${n}\nMAIN users preserved.`);return;}
-  // V8.5.5 Super Admin contact-directory free-text edit continuation.
+  // V8.5.6 Super Admin contact-directory free-text edit continuation.
 
-  // V8.5.5 user contact self-service and natural contact-detail capture.
-  // V8.5.5 resilient Super Admin employee lookup.
+  // V8.5.6 user contact self-service and natural contact-detail capture.
+  // V8.5.6 resilient Super Admin employee lookup.
   if(isOwner(from)){
     const q855=String(text||'').trim(), emp855=/^\d{3,}$/.test(q855);
     const name855=/^[A-Za-z][A-Za-z .'-]{2,50}$/.test(q855)&&!['hi','hello','hey','start','back','search','version'].includes(q855.toLowerCase());
@@ -752,7 +753,7 @@ async function processMessage(from,text,payload=''){
       if(Object.keys(patch).length){await saveOwnContactPatchV852(selfUser,patch);await sendText(from,'✅ Contact details understood and updated.');await sendMyContactV852(from,selfUser);return;}
     }
   }
-  // V8.5.5 approved-user employee directory: basic public internal fields only.
+  // V8.5.6 approved-user employee directory: basic public internal fields only.
   if(!isOwner(from) && selfUser && selfUser.approval_status==='approved' && selfUser.is_active!==false){
     const q853=String(text||'').trim();
     const empQuery=/^\d{3,}$/.test(q853);
@@ -913,4 +914,4 @@ app.post('/webhook',(req,res)=>{
 });
 
 await initDB();
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.5.5 registration foundation listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.5.6 registration foundation listening on ${PORT}`));
