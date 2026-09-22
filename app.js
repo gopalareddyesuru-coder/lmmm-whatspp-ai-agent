@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.9.7
+// LMMM AI Maintenance V8.9.8
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -397,6 +397,7 @@ async function initDB(){
   await pool.query(`ALTER TABLE pending_file_ingests ADD COLUMN IF NOT EXISTS retry_count INTEGER NOT NULL DEFAULT 0`);
   await pool.query(`ALTER TABLE pending_file_ingests ADD COLUMN IF NOT EXISTS last_error TEXT`);
   await pool.query(`ALTER TABLE pending_file_ingests ADD COLUMN IF NOT EXISTS next_retry_at TIMESTAMPTZ`);
+  await pool.query(`ALTER TABLE pending_file_ingests ADD COLUMN IF NOT EXISTS extraction_engine_version TEXT`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_pending_ingest_retry ON pending_file_ingests(status,next_retry_at,created_at)`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS employment_category TEXT`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS employee_type TEXT`);
@@ -1418,7 +1419,7 @@ async function extractQueuedIngestV895(from,row){
       await sendText(from,'This upload is not relevant to LMMM plant / maintenance knowledge. Nothing was stored.');
       return true;
     }
-    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack))]);
+    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,extraction_engine_version='V8.9.8',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack))]);
     await setPendingIngestSessionV877(from,row.id);
     await setIngestModeV874(from,false);
     await showIngestOptionsV877(from,q.rows[0]);
@@ -1446,7 +1447,7 @@ async function queuedStatusV895(from){
   const q=await pool.query(`SELECT id,source_filename,status,retry_count,last_error,created_at,updated_at FROM pending_file_ingests WHERE submitted_by_whatsapp=$1 ORDER BY created_at DESC LIMIT 1`,[normWA(from)]);
   if(!q.rows.length){await sendText(from,'No recent upload queue found.');return true;}
   const r=q.rows[0];
-  await sendText(from,`Upload: ${r.source_filename||'source'}\nStatus: ${r.status}\nAttempts: ${r.retry_count}\nOriginal source: safely queued`);
+  await sendText(from,`Upload: ${r.source_filename||'source'}\nStatus: ${r.status}\nAttempts: ${r.retry_count}\nEngine: V8.9.8\nOriginal source: safely queued`);
   return true;
 }
 async function processMediaMessageV874(from,m){
@@ -1477,7 +1478,10 @@ async function processMediaMessageV874(from,m){
     }
     await setPendingIngestSessionV877(from,row.id);
     if(row.status==='PENDING_CONFIRMATION' && row.extracted_rows){
-      await showIngestOptionsV877(from,row); return;
+      // Extraction engines evolve; never serve an old cached preview as if it were freshly extracted.
+      // Re-run from the durably stored original bytes. The SHA still prevents duplicate source rows.
+      q=await pool.query(`UPDATE pending_file_ingests SET status='RECEIVED',extracted_rows='{}'::jsonb,last_error=NULL,next_retry_at=NULL,updated_at=now() WHERE id=$1 RETURNING *`,[row.id]);
+      row=q.rows[0];
     }
     if(row.status==='UNRELATED'){
       await sendText(from,'This upload is not relevant to LMMM plant / maintenance knowledge. Nothing was stored.'); return;
@@ -1766,4 +1770,4 @@ app.post('/webhook',(req,res)=>{
 });
 
 await initDB();
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.9.7 PDF-page-batch extraction listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.9.8 stale-cache invalidation + PDF batches listening on ${PORT}`));
