@@ -1492,6 +1492,7 @@ async function setResponsibility(from, employeeNumber, code) {
   }catch(e){ await pool.query('ROLLBACK'); throw e; }
 
   await syncAutomaticResponsibilities(employeeNumber,from);
+  await resolveHierarchyRole(employeeNumber,from);
   await syncDefaultAccess(employeeNumber,from,'Approved responsibility / hierarchy changed');
   await sendButtons(
     from,
@@ -1853,27 +1854,76 @@ function naturalSearchAliases(q=''){
 }
 async function syncBundledLmmmKnowledge(){
   try{
-    const meta=(await pool.query(`SELECT sync_key,record_count FROM lmmm_master_sync_meta WHERE sync_key IN ('core-v75-clean1','unified-v4')`)).rows;
-    const have=new Map(meta.map(x=>[x.sync_key,Number(x.record_count)]));
-    if(have.get('core-v75-clean1')!==23088){
-      const rows=JSON.parse(await fs.readFile(new URL('./data/master_core_records.json',import.meta.url),'utf8'));
-      await pool.query(`INSERT INTO lmmm_master_records(uid,record_type,equipment,area,event_date,record_text,source_name,source_payload)
-        SELECT x.uid,x.record_type,NULLIF(x.equipment,''),NULLIF(x.area,''),NULLIF(x.event_date,''),x.text,x.source,x.payload
-        FROM jsonb_to_recordset($1::jsonb) AS x(uid text,record_type text,equipment text,area text,event_date text,text text,source text,payload jsonb)
-        ON CONFLICT(uid) DO UPDATE SET record_type=EXCLUDED.record_type,equipment=EXCLUDED.equipment,area=EXCLUDED.area,event_date=EXCLUDED.event_date,record_text=EXCLUDED.record_text,source_name=EXCLUDED.source_name,source_payload=EXCLUDED.source_payload`,[JSON.stringify(rows)]);
-      await pool.query(`INSERT INTO lmmm_master_sync_meta(sync_key,record_count,synced_at) VALUES('core-v75-clean1',$1,now()) ON CONFLICT(sync_key) DO UPDATE SET record_count=EXCLUDED.record_count,synced_at=now()`,[rows.length]);
-      console.log('[V7.5 MASTER SYNC] core',rows.length);
+    const unwrap=(obj)=>Array.isArray(obj)?obj:(Array.isArray(obj?.records)?obj.records:[]);
+    const readJson=async(name)=>JSON.parse(await fs.readFile(new URL(`./data/${name}`,import.meta.url),'utf8'));
+
+    // V7.7.64: V17 GitHub data uses {module,record_count,records}. Older builds used a bare array.
+    // Accept both formats and use the full 23,145-record unified source as the authoritative bundled search layer.
+    let unified=[];
+    try{ unified=unwrap(await readJson('unified_retrieval_records.json')); }catch(e){ console.error('[BUNDLED UNIFIED READ]',e.message); }
+    let core=[];
+    try{ core=unwrap(await readJson('master_core_records.json')); }catch(_e){}
+    const sourceRows=unified.length?unified:core;
+    if(sourceRows.length){
+      const normalized=sourceRows.map((r,i)=>{
+        const d=r?.data||r?.source_payload||{};
+        const equipment=d.eq||d.equipment||d.equipment_name||r.equipment||null;
+        const area=d.area||r.area||null;
+        const eventDate=d.date||d.event_date||r.event_date||null;
+        return {
+          uid:String(r._record_id||r.uid||`bundled:${i}`),
+          record_type:String(r.record_type||'knowledge'),
+          equipment:equipment==null?null:String(equipment),
+          area:area==null?null:String(area),
+          event_date:eventDate==null?null:String(eventDate),
+          text:String(r.text||r.raw_text||r.record_text||''),
+          source:String(d.source||r.source||r.source_file||r.source_name||'LMMM V17 bundled source'),
+          payload:r
+        };
+      }).filter(x=>x.text);
+      const syncKey=`unified-v17-${normalized.length}`;
+      const done=(await pool.query(`SELECT 1 FROM lmmm_master_sync_meta WHERE sync_key=$1 LIMIT 1`,[syncKey])).rows.length;
+      if(!done){
+        // Replace only the bundled master/search cache. Live WhatsApp operational tables are untouched.
+        await pool.query(`DELETE FROM lmmm_master_records`);
+        const batch=1500;
+        for(let i=0;i<normalized.length;i+=batch){
+          const part=normalized.slice(i,i+batch);
+          await pool.query(`INSERT INTO lmmm_master_records(uid,record_type,equipment,area,event_date,record_text,source_name,source_payload)
+            SELECT x.uid,x.record_type,NULLIF(x.equipment,''),NULLIF(x.area,''),NULLIF(x.event_date,''),x.text,x.source,x.payload
+            FROM jsonb_to_recordset($1::jsonb) AS x(uid text,record_type text,equipment text,area text,event_date text,text text,source text,payload jsonb)
+            ON CONFLICT(uid) DO UPDATE SET record_type=EXCLUDED.record_type,equipment=EXCLUDED.equipment,area=EXCLUDED.area,event_date=EXCLUDED.event_date,record_text=EXCLUDED.record_text,source_name=EXCLUDED.source_name,source_payload=EXCLUDED.source_payload`,[JSON.stringify(part)]);
+        }
+        await pool.query(`DELETE FROM lmmm_master_sync_meta WHERE sync_key LIKE 'core-v75-%' OR sync_key LIKE 'unified-v4%' OR sync_key LIKE 'unified-v17-%'`);
+        await pool.query(`INSERT INTO lmmm_master_sync_meta(sync_key,record_count,synced_at) VALUES($1,$2,now())`,[syncKey,normalized.length]);
+        console.log('[V7.7.64 MASTER SYNC]',normalized.length);
+      }
     }
-    if(have.get('unified-v4')!==10805){
-      const rows=JSON.parse(await fs.readFile(new URL('./data/unified_retrieval_records.json',import.meta.url),'utf8'));
-      await pool.query(`INSERT INTO lmmm_knowledge_records(uid,source_name,source_row,entity_types,raw_text,normalized_text,identifiers,verification_status,source_payload)
-        SELECT x.uid,x.source_file,x.source_row,x.entity_types,x.raw_text,x.normalized_text,x.identifiers,x.verification_status,to_jsonb(x)
-        FROM jsonb_to_recordset($1::jsonb) AS x(uid text,source_file text,source_row text,entity_types text[],raw_text text,normalized_text text,identifiers text[],verification_status text)
-        ON CONFLICT(uid) DO UPDATE SET raw_text=EXCLUDED.raw_text,normalized_text=EXCLUDED.normalized_text,identifiers=EXCLUDED.identifiers,entity_types=EXCLUDED.entity_types,verification_status=EXCLUDED.verification_status`,[JSON.stringify(rows)]);
-      await pool.query(`INSERT INTO lmmm_master_sync_meta(sync_key,record_count,synced_at) VALUES('unified-v4',$1,now()) ON CONFLICT(sync_key) DO UPDATE SET record_count=EXCLUDED.record_count,synced_at=now()`,[rows.length]);
-      console.log('[V7.5 MASTER SYNC] unified',rows.length);
-    }
-  }catch(e){console.error('[V7.5 MASTER SYNC ERROR]',e);}
+
+    // Bundle the already-extracted 1,125 manual pages into the same reference search used by About.
+    try{
+      const pages=unwrap(await readJson('manual_pages_full.json'));
+      const mKey=`manual-pages-v17-${pages.length}`;
+      const mDone=(await pool.query(`SELECT 1 FROM lmmm_master_sync_meta WHERE sync_key=$1 LIMIT 1`,[mKey])).rows.length;
+      if(pages.length && !mDone){
+        await pool.query(`DELETE FROM technical_document_chunks WHERE entered_by='BUNDLED_MASTER_V17'`);
+        const batch=400;
+        for(let i=0;i<pages.length;i+=batch){
+          const part=pages.slice(i,i+batch).map(x=>({
+            title:String(x.source_file||'LMMM Manual'), page:Number(x.page)||null,
+            text:String(x.raw_text||''), source:String(x.source_file||'LMMM Manual')
+          })).filter(x=>x.text.trim());
+          if(!part.length)continue;
+          await pool.query(`INSERT INTO technical_document_chunks(media_ingestion_id,employee_number,document_class,title,equipment_name,identifiers,page_start,page_end,section_heading,content_text,source_filename,entered_by)
+            SELECT -1,'SYSTEM','manual',x.title,NULL,'[]'::jsonb,x.page,x.page,NULL,x.text,x.source,'BUNDLED_MASTER_V17'
+            FROM jsonb_to_recordset($1::jsonb) AS x(title text,page int,text text,source text)`,[JSON.stringify(part)]);
+        }
+        await pool.query(`DELETE FROM lmmm_master_sync_meta WHERE sync_key LIKE 'manual-pages-v17-%'`);
+        await pool.query(`INSERT INTO lmmm_master_sync_meta(sync_key,record_count,synced_at) VALUES($1,$2,now())`,[mKey,pages.length]);
+        console.log('[V7.7.64 MANUAL PAGE SYNC]',pages.length);
+      }
+    }catch(e){console.error('[V7.7.64 MANUAL SYNC ERROR]',e.message);}
+  }catch(e){console.error('[V7.7.64 MASTER SYNC ERROR]',e);}
 }
 
 async function searchBundledMasterForEquipment(equipment,intent='general',limit=20,dateRange=null,offset=0){
@@ -2674,9 +2724,37 @@ async function familyCombinedRows(spec,intent,u,dr=null,limit=20){
  out.sort((a,b)=>String(b.event_date||'').localeCompare(String(a.event_date||''))||String(a.uid||'').localeCompare(String(b.uid||'')));
  return out.slice(0,limit);
 }
+
+async function searchAreaModuleRecords(area,intent,u,limit=20){
+ const sc=await effectiveSearchScope(u);
+ if(sc && !sc.plantWide && sc.areas?.length && !areaMatchesScope(area,sc)) return {denied:true,rows:[]};
+ const type=intent==='defect'?'defect':intent==='history'?'history':intent==='job_action'?'history':null;
+ if(!type)return {rows:[]};
+ const r=await pool.query(`WITH assets AS (
+   SELECT DISTINCT equipment FROM lmmm_master_records
+   WHERE record_type='equipment' AND LOWER(COALESCE(area,''))=LOWER($1) AND equipment IS NOT NULL AND length(equipment)>=3
+ ), hits AS (
+   SELECT DISTINCT m.* FROM lmmm_master_records m
+   WHERE m.record_type=$2 AND (
+     LOWER(COALESCE(m.area,''))=LOWER($1) OR
+     EXISTS (SELECT 1 FROM assets a WHERE LOWER(COALESCE(m.equipment,''))=LOWER(a.equipment)
+       OR LOWER(m.record_text) LIKE '%'||LOWER(a.equipment)||'%')
+   )
+ ) SELECT * FROM hits ORDER BY CASE WHEN event_date ~ '^\\d{4}-\\d{2}-\\d{2}$' THEN event_date END DESC NULLS LAST,uid DESC LIMIT $3`,[area,type,Math.max(1,Math.min(Number(limit)||20,50))]);
+ let rows=r.rows;
+ if(intent==='job_action')rows=rows.filter(isJobHistoryRow);
+ return {rows};
+}
 async function universalSearch(q,u){
  const rawOriginal=String(q||'').trim(); if(!rawOriginal)return null;
  const original=naturalSearchAliases(rawOriginal);
+ const areaModule=original.match(/^\s*(BDM|BAR\s*MILL|FINISHING)\s+(defects?|history|jobs?)\s*$/i);
+ if(areaModule){
+   const area=canonicalAreaName(areaModule[1]); const ai=searchIntent(original); const ar=await searchAreaModuleRecords(area,ai,u,20);
+   if(ar.denied)return {text:'This area is outside your authorised work scope.'};
+   if(ar.rows.length)return {text:`${area} — ${ai==='defect'?'Defects':ai==='history'?'History':'Jobs'}\nShowing latest ${ar.rows.length}\n\n${formatBundledResults(ar.rows)}`,buttons:await primarySearchButtons(u,false)};
+   return {text:`${area} — No source-backed ${ai==='defect'?'defect':ai==='history'?'history':'job'} records found in the currently indexed data.`,buttons:[{id:'BACK_EQUIPMENT_MENU',title:'Back'}]};
+ }
  if(areaDataQuery(original)) return await areaSearchMenu(original,u);
  let ctx=await getSearchContext(u); const range=dateRangeFromText(original);
  if(/^(select date( range)?|date range|search_date|SEARCH_DATE)$/i.test(original))return {dateMenu:true,text:'Select a time frame'};
@@ -3202,6 +3280,7 @@ function responsibilityDisplay(a,u){
  return out.join(', ')||'Not Assigned';
 }
 async function employeeGovernanceSummary(emp){
+ try{ await resolveHierarchyRole(emp,'ACCESS_SUMMARY_SELF_HEAL'); }catch(e){ console.error('[ROLE SELF HEAL]',e.message); }
  await resolveHierarchyRole(emp,'SYSTEM_ACCESS_VIEW').catch(()=>null);
  const u=await byEmp(emp),a=await effectiveAuthority(emp); if(!u||!a)return null;
  const sc=await effectiveSearchScope(u), snap=await runtimeAccessSnapshot(emp), p=await searchPermissions(u);
@@ -3688,15 +3767,10 @@ async function ownerCommand(from, text) {
 
   m = text.match(/^remove\s+(\d+)$/i);
   if (m) {
-    const exists = await byEmp(m[1]);
-    if (!exists) {
-      await sendText(from, 'Not found.');
-      return true;
-    }
-    await sendButtons(from, `Remove registration for ${m[1]}? Historical maintenance records will be preserved.`, [
-      { id: `CONFIRM_REMOVE:${m[1]}`, title: 'Remove' },
-      { id: `CANCEL_REMOVE:${m[1]}`, title: 'Cancel' }
-    ]);
+    const removed = await removeUserRegistrationForReregister(m[1],from);
+    if (!removed) { await sendText(from, 'Not found.'); return true; }
+    await sendText(removed.whatsapp_number, 'Your LMMM AI Maintenance registration is inactive. Send Hi to re-register.');
+    await sendText(from, `${m[1]} removed from active registration. Historical maintenance records are preserved. Next Hi from that user will start re-registration.`);
     return true;
   }
 
@@ -4377,7 +4451,7 @@ app.post('/webhook', (req, res) => {
 app.get('/api/status', (_q, r) =>
   r.status(200).json({
     status: 'ready',
-    registration: 'V7.7.63-consolidated-governance-ingestion-export',
+    registration: 'V7.7.64-consolidated-governance-ingestion-export',
     webhook: '/webhook',
     super_admins_configured: SUPER_ADMIN_NUMBERS.size
   })
