@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.5.2
+// LMMM AI Maintenance V8.5.3
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -656,23 +656,24 @@ if((a=text.match(/^SETSH:(\d+):(General|ROTATING_ABC|A|B|C)$/))){const emp=a[1],
     if(normWA(from)!==u.whatsapp_number) await sendText(from,`${m[1]} registration removed. Maintenance history preserved.`);
     return true;
   }
-  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.5.2 AUTO ASSIGN');return true;}
+  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.5.3 AUTO ASSIGN');return true;}
   return false;
 }
 async function processMessage(from,text,payload=''){
-  // V8.5.2 Super Admin contact-directory free-text edit continuation.
+  const cmd=String(payload||text||'').trim();
+  // V8.5.3 Super Admin contact-directory free-text edit continuation.
 
-  // V8.5.2 user contact self-service and natural contact-detail capture.
+  // V8.5.3 user contact self-service and natural contact-detail capture.
   const selfUser=await byWA(from);
   if(selfUser && selfUser.approval_status==='approved' && selfUser.is_active!==false){
-    const t852=String(text||'').trim(), l852=t852.toLowerCase();
+    const t852=String(text||'').trim(), c852=cmd, l852=t852.toLowerCase();
     if(['my details','my profile','profile'].includes(l852)){
       await sendButtons(from,'My Details',[{id:'MY_CONTACT',title:'Contact Details'},{id:'MY_ACCESS',title:'Access Details'}]);return;
     }
-    if(l852==='contact details'||l852==='my contact'||t852==='MY_CONTACT'){await sendMyContactV852(from,selfUser);return;}
-    if(t852==='MY_ACCESS'){await ensureProfile(selfUser,normWA(from));const pp=(await pool.query('SELECT * FROM user_access_profile WHERE employee_number=$1',[selfUser.employee_number])).rows[0];await sendText(from,`My Access Details\nRole: ${pp?.assigned_role||'-'}\nAccess: ${pp?.access_level||'-'}\nResponsibility: ${pp?.responsibility||'-'}\nAuthorities: ${(pp?.authorities||[]).join(', ')||'-'}`);return;}
-    if(/^MYC_(ALT|CMAIL|PMAIL|MAX|EXT|EMER)$/.test(t852)){
-      const f=t852.slice(4);
+    if(l852==='contact details'||l852==='my contact'||c852==='MY_CONTACT'){await sendMyContactV852(from,selfUser);return;}
+    if(c852==='MY_ACCESS'){await ensureProfile(selfUser,normWA(from));const pp=(await pool.query('SELECT * FROM user_access_profile WHERE employee_number=$1',[selfUser.employee_number])).rows[0];await sendText(from,`My Access Details\nRole: ${pp?.assigned_role||'-'}\nAccess: ${pp?.access_level||'-'}\nResponsibility: ${pp?.responsibility||'-'}\nAuthorities: ${(pp?.authorities||[]).join(', ')||'-'}`);return;}
+    if(/^MYC_(ALT|CMAIL|PMAIL|MAX|EXT|EMER)$/.test(c852)){
+      const f=c852.slice(4);
       await pool.query(`INSERT INTO ui_sessions(whatsapp_number,session_key,session_value,updated_at) VALUES($1,'V852_SELF_CONTACT',$2,now())
       ON CONFLICT(whatsapp_number,session_key) DO UPDATE SET session_value=EXCLUDED.session_value,updated_at=now()`,[normWA(from),JSON.stringify({field:f})]);
       const pr={ALT:'Send alternate phone number',CMAIL:'Send company email ID',PMAIL:'Send personal email ID',MAX:'Send MAX number',EXT:'Send office extension',EMER:'Send emergency contact as: Name, Phone'}[f];
@@ -697,6 +698,59 @@ async function processMessage(from,text,payload=''){
     if(/\b(max|alternate|alt phone|other phone|company email|personal email|office ext|extension|emergency contact)\b/i.test(t852)){
       const patch=extractContactFieldsV852(t852);
       if(Object.keys(patch).length){await saveOwnContactPatchV852(selfUser,patch);await sendText(from,'✅ Contact details understood and updated.');await sendMyContactV852(from,selfUser);return;}
+    }
+  }
+  // V8.5.3 approved-user employee directory: basic public internal fields only.
+  if(selfUser && selfUser.approval_status==='approved' && selfUser.is_active!==false){
+    const q853=String(text||'').trim();
+    const empQuery=/^\d{3,}$/.test(q853);
+    const nameQuery=/^[A-Za-z][A-Za-z .'-]{2,50}$/.test(q853) &&
+      !['hi','hello','hey','start','back','search','my account','my details','contact details','profile'].includes(q853.toLowerCase());
+    if(empQuery||nameQuery){
+      let rows;
+      if(empQuery) rows=(await pool.query(`SELECT u.name,u.employee_number,u.designation,c.whatsapp_registration_number,c.alternate_phone_number,c.company_email,c.personal_email,c.max_number,c.office_extension
+        FROM users u LEFT JOIN employee_contact_directory c ON c.employee_number=u.employee_number
+        WHERE u.employee_number=$1 AND u.approval_status='approved' AND u.is_active=true LIMIT 1`,[q853])).rows;
+      else rows=(await pool.query(`SELECT u.name,u.employee_number,u.designation,c.whatsapp_registration_number,c.alternate_phone_number,c.company_email,c.personal_email,c.max_number,c.office_extension
+        FROM users u LEFT JOIN employee_contact_directory c ON c.employee_number=u.employee_number
+        WHERE lower(u.name)=lower($1) AND u.approval_status='approved' AND u.is_active=true ORDER BY u.employee_number LIMIT 10`,[q853])).rows;
+      if(rows.length===1){
+        const r=rows[0];
+        await sendText(from,`Employee Details
+
+Name: ${r.name}
+Employee No: ${r.employee_number}
+Designation: ${r.designation||'-'}
+Main Phone: ${r.whatsapp_registration_number||'-'}
+Alternate Phone: ${r.alternate_phone_number||'-'}
+Company Email: ${r.company_email||'-'}
+Personal Email: ${r.personal_email||'-'}
+MAX Number: ${r.max_number||'-'}
+Office Extension: ${r.office_extension||'-'}`);
+        return;
+      }
+      if(rows.length>1){
+        await sendList(from,'Employees found','Select',rows.map(r=>({id:`DIR_EMP:${r.employee_number}`,title:r.name,description:`Employee No: ${r.employee_number}`})),'Employee Directory');return;
+      }
+      await sendText(from,'Employee not found in approved directory.');return;
+    }
+    if(/^DIR_EMP:\d+$/.test(cmd)){
+      const emp=cmd.split(':')[1],r=(await pool.query(`SELECT u.name,u.employee_number,u.designation,c.whatsapp_registration_number,c.alternate_phone_number,c.company_email,c.personal_email,c.max_number,c.office_extension
+        FROM users u LEFT JOIN employee_contact_directory c ON c.employee_number=u.employee_number
+        WHERE u.employee_number=$1 AND u.approval_status='approved' AND u.is_active=true LIMIT 1`,[emp])).rows[0];
+      if(!r){await sendText(from,'Employee not found in approved directory.');return;}
+      await sendText(from,`Employee Details
+
+Name: ${r.name}
+Employee No: ${r.employee_number}
+Designation: ${r.designation||'-'}
+Main Phone: ${r.whatsapp_registration_number||'-'}
+Alternate Phone: ${r.alternate_phone_number||'-'}
+Company Email: ${r.company_email||'-'}
+Personal Email: ${r.personal_email||'-'}
+MAX Number: ${r.max_number||'-'}
+Office Extension: ${r.office_extension||'-'}`);
+      return;
     }
   }
   if(isOwner(from)){
@@ -807,4 +861,4 @@ app.post('/webhook',(req,res)=>{
 });
 
 await initDB();
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.5.2 registration foundation listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.5.3 registration foundation listening on ${PORT}`));
