@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.8.5
+// LMMM AI Maintenance V8.8.6
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -907,6 +907,21 @@ function safeJsonV874(t=''){
   const x=String(t).replace(/^```(?:json)?\s*/i,'').replace(/```\s*$/,'').trim();
   try{return JSON.parse(x)}catch{const a=x.indexOf('['),b=x.lastIndexOf(']');if(a>=0&&b>a)try{return JSON.parse(x.slice(a,b+1))}catch{};return null;}
 }
+async function classifyTechnicalRelevanceV886(bytes,mime,filename,caption){
+  if(!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY missing');
+  const prompt=`Classify whether this upload is useful to the RINL/VSP LMMM engineering/maintenance knowledge system.
+ACCEPT as TECHNICAL when it contains plant/equipment/maintenance/operations/mechanical/electrical/instrumentation/safety/technical training/drawings/manuals/BOQ/spares/logbook/inspection/condition monitoring/production/shutdown/work-order/engineering reference content.
+REJECT as UNRELATED when it is personal, entertainment, general school/exam material with no engineering/industrial relevance, random social content, or otherwise not useful to LMMM technical knowledge.
+Do not reject merely because the language is Telugu/Hindi/Tenglish or because equipment/date is missing.
+Return ONLY JSON: {"relevance":"TECHNICAL|UNRELATED|UNCERTAIN","reason":"short English reason","source_kind":"VOICE|IMAGE|PDF|TIFF|SPREADSHEET|DOCUMENT|OTHER"}.
+Filename: ${filename||'(unknown)'}
+Caption: ${caption||'(none)'}`;
+  const body={contents:[{parts:[{text:prompt},{inline_data:{mime_type:mime,data:bytes.toString('base64')}}]}],generationConfig:{temperature:0,responseMimeType:'application/json',maxOutputTokens:512}};
+  const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  if(!r.ok) throw new Error(`Relevance check failed ${r.status}: ${(await r.text()).slice(0,300)}`);
+  const j=await r.json(),txt=(j.candidates?.[0]?.content?.parts||[]).map(x=>x.text||'').join('');
+  return safeJsonV874(txt)||{relevance:'UNCERTAIN',reason:'Could not confidently classify',source_kind:'OTHER'};
+}
 async function extractMaintenanceV874(bytes,mime,filename,caption){
   if(!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY missing');
   const ext=String(filename||'').toLowerCase().match(/\.([a-z0-9]+)$/)?.[1]||'';
@@ -1247,7 +1262,19 @@ async function processMediaMessageV874(from,m){
     await sendText(from,isAudio?'Voice received. Detecting language and extracting maintenance data… Nothing will be stored until you confirm.':'File received. Extracting for preview… Nothing will be stored until you confirm.');
     const d=await downloadWhatsAppMediaV874(mediaId),mime=String(obj.mime_type||d.mime||'application/octet-stream').toLowerCase();
     const guessedExt=(m.type==='audio'||m.type==='voice')?(String(obj.mime_type||'').includes('mpeg')?'.mp3':String(obj.mime_type||'').includes('mp4')?'.m4a':'.ogg'):'';
-    const filename=obj.filename||`${m.type}_${mediaId}${guessedExt}`;const crypto=await import('node:crypto');const sha=crypto.createHash('sha256').update(d.bytes).digest('hex');
+    const filename=obj.filename||`${m.type}_${mediaId}${guessedExt}`;
+    const ext=String(filename).toLowerCase().match(/\.([a-z0-9]+)$/)?.[1]||'';
+    const gateMime=mime.startsWith('audio/ogg')?'audio/ogg':mime.startsWith('audio/mp4')?'audio/mp4':mime.startsWith('audio/mpeg')?'audio/mpeg':mime;
+    let relevance={relevance:'UNCERTAIN',reason:'Relevance pre-check unavailable'};
+    try{relevance=await classifyTechnicalRelevanceV886(d.bytes,gateMime,filename,caption);}catch(gateErr){console.error('[RELEVANCE_GATE]',gateErr);}
+    if(String(relevance.relevance||'').toUpperCase()==='UNRELATED'){
+      await sendText(from,`This upload does not appear relevant to LMMM / engineering / maintenance data.\n\nReason: ${String(relevance.reason||'Unrelated content').slice(0,240)}\n\nNothing was extracted or stored.`);
+      return;
+    }
+    if(String(relevance.relevance||'').toUpperCase()==='UNCERTAIN'){
+      await sendText(from,'Technical relevance is uncertain. I will inspect it carefully, but nothing will be stored unless you confirm.');
+    }
+    const crypto=await import('node:crypto');const sha=crypto.createHash('sha256').update(d.bytes).digest('hex');
     const pack=await extractMaintenanceV874(d.bytes,mime,filename,caption);
     const q=await pool.query(`INSERT INTO pending_file_ingests(submitted_by_whatsapp,submitted_by_employee_number,source_media_id,source_filename,source_mime_type,source_caption,source_sha256,extracted_rows) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb) RETURNING *`,[normWA(from),u.employee_number,mediaId,filename,mime,caption,sha,JSON.stringify(packForDBV878(pack))]);
     await setPendingIngestSessionV877(from,q.rows[0].id);await setIngestModeV874(from,false);await showIngestOptionsV877(from,q.rows[0]);
@@ -1256,7 +1283,7 @@ async function processMediaMessageV874(from,m){
     const msg=String(e.message||e);
     if(msg.startsWith('UNSUPPORTED:')) await sendText(from,'Unsupported file type. Supported test formats: PDF, TIFF/images, TXT/CSV, Word, Excel, Access MDB/ACCDB and WhatsApp voice/audio. Nothing was stored.');
     else if(/audio|ogg|opus|voice/i.test(msg)) await sendText(from,'Voice extraction failed for this audio format. Nothing was stored. Please resend the voice note; the bot will retry with the supported audio path.');
-    else await sendText(from,'File extraction failed. Nothing was stored. Please retry or send a supported file.');
+    else await sendText(from,'Technical extraction could not be completed for this upload. Nothing was stored. Please retry the technical file/voice once; if it fails again, keep the source for review instead of storing incomplete data.');
   }
 }
 
@@ -1535,4 +1562,4 @@ app.post('/webhook',(req,res)=>{
 });
 
 await initDB();
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.8.5 exhaustive-multipage-translation listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.8.6 technical-relevance-gate listening on ${PORT}`));
