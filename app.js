@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.7.3
+// LMMM AI Maintenance V8.7.4
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -14,6 +14,8 @@ const GRAPH_VERSION = process.env.META_GRAPH_VERSION || 'v26.0';
 const PHONE_NUMBER_ID = process.env.META_PHONE_NUMBER_ID || process.env.PHONE_NUMBER_ID || '';
 const ACCESS_TOKEN = process.env.META_ACCESS_TOKEN || '';
 const DATABASE_URL = process.env.DATABASE_URL || '';
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '';
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 const SUPER_ADMINS = new Set(
   String(process.env.SUPER_ADMIN_NUMBERS || process.env.SUPER_ADMIN_NUMBER || process.env.OWNER_NUMBERS || process.env.OWNER_NUMBER || '')
   .split(',').map(x=>x.replace(/\D/g,'')).filter(Boolean)
@@ -350,6 +352,21 @@ async function initDB(){
       migration_key TEXT PRIMARY KEY,
       applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
+    CREATE TABLE IF NOT EXISTS maintenance_ingest_records(
+      id BIGSERIAL PRIMARY KEY,
+      data_class TEXT NOT NULL DEFAULT 'TEST',
+      source_type TEXT NOT NULL DEFAULT 'WHATSAPP_FILE',
+      source_media_id TEXT, source_filename TEXT, source_mime_type TEXT,
+      source_caption TEXT, source_sha256 TEXT,
+      submitted_by_employee_number TEXT, submitted_by_whatsapp TEXT NOT NULL,
+      module TEXT NOT NULL DEFAULT 'NEEDS_REVIEW', area TEXT, equipment TEXT, sub_equipment TEXT,
+      event_date DATE, event_time TIME, shift TEXT, description TEXT, action_taken TEXT, status TEXT, remarks TEXT,
+      confidence TEXT NOT NULL DEFAULT 'NEEDS_REVIEW', raw_extraction JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS idx_ingest_equipment ON maintenance_ingest_records(equipment);
+    CREATE INDEX IF NOT EXISTS idx_ingest_module_date ON maintenance_ingest_records(module,event_date);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_ingest_source_fingerprint ON maintenance_ingest_records(submitted_by_whatsapp,source_sha256,module,COALESCE(event_date,'1900-01-01'::date),COALESCE(equipment,''),COALESCE(description,''));
   `);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS employment_category TEXT`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS employee_type TEXT`);
@@ -836,9 +853,75 @@ if((a=text.match(/^AUTH_ADV:(\d+)$/))){await sendList(from,'Advanced Authorities
     if(normWA(from)!==u.whatsapp_number) await sendText(from,`${m[1]} registration removed. Maintenance history preserved.`);
     return true;
   }
-  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.7.3 AUTO ASSIGN');return true;}
+  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.7.5 MULTIFORMAT MULTILINGUAL INGEST');return true;}
   return false;
 }
+async function hasAuthorityV874(u, authority){
+  if(isOwner(u?.whatsapp_number)) return true;
+  if(!u?.employee_number) return false;
+  await ensureProfile(u,normWA(u.whatsapp_number));
+  const r=await pool.query('SELECT authorities FROM user_access_profile WHERE employee_number=$1',[u.employee_number]);
+  return (r.rows[0]?.authorities||[]).includes(authority);
+}
+async function setIngestModeV874(from,on=true){
+  if(on) await pool.query(`INSERT INTO ui_sessions(whatsapp_number,session_key,session_value,updated_at) VALUES($1,'FILE_INGEST', $2::jsonb,now()) ON CONFLICT(whatsapp_number,session_key) DO UPDATE SET session_value=EXCLUDED.session_value,updated_at=now()`,[normWA(from),JSON.stringify({active:true})]);
+  else await pool.query(`DELETE FROM ui_sessions WHERE whatsapp_number=$1 AND session_key='FILE_INGEST'`,[normWA(from)]);
+}
+async function ingestModeV874(from){
+  const r=await pool.query(`SELECT session_value FROM ui_sessions WHERE whatsapp_number=$1 AND session_key='FILE_INGEST'`,[normWA(from)]);return !!r.rows[0]?.session_value?.active;
+}
+async function downloadWhatsAppMediaV874(mediaId){
+  const meta=await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${mediaId}`,{headers:{Authorization:`Bearer ${ACCESS_TOKEN}`}});
+  if(!meta.ok) throw new Error(`Media metadata failed ${meta.status}`);
+  const m=await meta.json();
+  const bin=await fetch(m.url,{headers:{Authorization:`Bearer ${ACCESS_TOKEN}`}});
+  if(!bin.ok) throw new Error(`Media download failed ${bin.status}`);
+  const ab=await bin.arrayBuffer(); return {bytes:Buffer.from(ab),mime:m.mime_type||bin.headers.get('content-type')||'application/octet-stream'};
+}
+function safeJsonV874(t=''){
+  const x=String(t).replace(/^```(?:json)?\s*/i,'').replace(/```\s*$/,'').trim();
+  try{return JSON.parse(x)}catch{const a=x.indexOf('['),b=x.lastIndexOf(']');if(a>=0&&b>a)try{return JSON.parse(x.slice(a,b+1))}catch{};return null;}
+}
+async function extractMaintenanceV874(bytes,mime,filename,caption){
+  if(!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY missing');
+  const ext=String(filename||'').toLowerCase().match(/\.([a-z0-9]+)$/)?.[1]||'';
+  const mime0=String(mime||'application/octet-stream').toLowerCase();
+  const extMime={pdf:'application/pdf',jpg:'image/jpeg',jpeg:'image/jpeg',png:'image/png',webp:'image/webp',tif:'image/tiff',tiff:'image/tiff',txt:'text/plain',csv:'text/csv',doc:'application/msword',docx:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',xls:'application/vnd.ms-excel',xlsx:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',xlsm:'application/vnd.ms-excel.sheet.macroenabled.12',mdb:'application/vnd.ms-access',accdb:'application/vnd.ms-access'};
+  const supportedExt=new Set(Object.keys(extMime));
+  if(!supportedExt.has(ext) && !['application/pdf','image/jpeg','image/png','image/webp','image/tiff','text/plain','text/csv'].some(x=>mime0.startsWith(x))) throw new Error(`UNSUPPORTED:${mime0}`);
+  const sendMime=(mime0==='application/octet-stream'||mime0==='binary/octet-stream')?(extMime[ext]||mime0):mime0;
+  const prompt=`You are extracting authorised LMMM Dept-35 maintenance TEST data from a WhatsApp file. The source may be English, Telugu, Hindi, Tenglish, or mixed language. Understand the source language; normalize maintenance meaning into concise technical English while preserving exact original equipment/SAP/sub-equipment/drawing/part numbers, numeric readings and source meaning. Return ONLY a JSON array. Split independent dates/equipment/events into separate objects. Map each event to its respective equipment only when supported by the source. Never invent identifiers, dates, equipment, readings, actions or status. If equipment/date/module mapping is ambiguous use null and confidence NEEDS_REVIEW rather than guessing. Classify module only as LOG_BOOK, BREAKDOWN_DELAY, DEFECT, JOB, PM, INSPECTION, CBM_VIBRATION, HISTORY, SPARES, SHUTDOWN, ATTENDANCE, MANPOWER, or NEEDS_REVIEW. Fields: module, area, equipment, sub_equipment, event_date (YYYY-MM-DD or null), event_time (HH:MM:SS or null), shift, description, action_taken, status, remarks, confidence (HIGH/MEDIUM/NEEDS_REVIEW). For tables/databases, process rows/records independently and preserve relationships that are explicit in the source. Caption: ${caption||'(none)'}. Filename: ${filename||'(unknown)'}. Source format: ${ext||sendMime}.`;
+  const body={contents:[{parts:[{text:prompt},{inline_data:{mime_type:sendMime,data:bytes.toString('base64')}}]}],generationConfig:{temperature:0.1,responseMimeType:'application/json'}};
+  const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  if(!r.ok) throw new Error(`Gemini extraction failed ${r.status}: ${(await r.text()).slice(0,500)}`);
+  const j=await r.json(),txt=(j.candidates?.[0]?.content?.parts||[]).map(x=>x.text||'').join('');
+  const out=safeJsonV874(txt); if(!Array.isArray(out)) throw new Error('Extraction JSON invalid'); return out;
+}
+async function processMediaMessageV874(from,m){
+  try{
+    const u=await byWA(from);
+    if(!u||u.approval_status!=='approved'||!u.is_active){await sendText(from,'Approved registration required before maintenance file ingestion.');return;}
+    if(!(await hasAuthorityV874(u,'ENTRY'))){await sendText(from,'Permission denied. ENTRY authority is required to store maintenance data.');return;}
+    const obj=m[m.type]||{},caption=String(obj.caption||'').trim();
+    const explicit=await ingestModeV874(from)||/\b(store|save|ingest|add entry|record)\b/i.test(caption);
+    if(!explicit){await sendText(from,'File received. To store extracted maintenance data, open Add Entry and send the file again.');return;}
+    const mediaId=obj.id;if(!mediaId){await sendText(from,'File media ID not available. Please resend.');return;}
+    await sendText(from,'File received. Extracting maintenance data…');
+    const d=await downloadWhatsAppMediaV874(mediaId), mime=String(obj.mime_type||d.mime||'application/octet-stream').toLowerCase();
+    const filename=obj.filename||`${m.type}_${mediaId}`;
+    const crypto=await import('node:crypto'); const sha=crypto.createHash('sha256').update(d.bytes).digest('hex');
+    const rows=await extractMaintenanceV874(d.bytes,mime,filename,caption);
+    let saved=0,review=0,dupe=0;
+    for(const x of rows.slice(0,250)){
+      const confidence=['HIGH','MEDIUM'].includes(String(x.confidence||'').toUpperCase())?String(x.confidence).toUpperCase():'NEEDS_REVIEW';
+      if(confidence==='NEEDS_REVIEW')review++;
+      try{const q=await pool.query(`INSERT INTO maintenance_ingest_records(data_class,source_type,source_media_id,source_filename,source_mime_type,source_caption,source_sha256,submitted_by_employee_number,submitted_by_whatsapp,module,area,equipment,sub_equipment,event_date,event_time,shift,description,action_taken,status,remarks,confidence,raw_extraction) VALUES('TEST','WHATSAPP_FILE',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::date,$13::time,$14,$15,$16,$17,$18,$19,$20::jsonb) ON CONFLICT DO NOTHING RETURNING id`,[mediaId,filename,mime,caption,sha,u.employee_number,normWA(from),String(x.module||'NEEDS_REVIEW').toUpperCase(),x.area||null,x.equipment||null,x.sub_equipment||null,x.event_date||null,x.event_time||null,x.shift||null,x.description||null,x.action_taken||null,x.status||null,x.remarks||null,confidence,JSON.stringify(x)]);if(q.rowCount)saved++;else dupe++;}catch(e){console.error('[INGEST_ROW]',e.message);review++;}
+    }
+    await setIngestModeV874(from,false);
+    await sendText(from,`✅ TEST data ingestion complete\nExtracted: ${rows.length}\nStored: ${saved}\nNeeds Review: ${review}\nDuplicates skipped: ${dupe}\nSource: ${filename}\n\nNo uncertain identifier was guessed.`);
+  }catch(e){console.error('[MEDIA_INGEST]',e); const msg=String(e.message||e); if(msg.startsWith('UNSUPPORTED:')) await sendText(from,'Unsupported file type. Enabled test formats: PDF, TIFF/images, TXT/CSV, Word DOC/DOCX, Excel XLS/XLSX/XLSM, and Access MDB/ACCDB. File was not stored.'); else await sendText(from,'File extraction failed. Nothing was stored. Please retry or send a supported file.');}
+}
+
 async function processMessage(from,text,payload=''){
   const cmd=String(payload||text||'').trim();
   try{await pool.query(`CREATE TABLE IF NOT EXISTS ui_sessions(whatsapp_number TEXT NOT NULL,session_key TEXT NOT NULL,session_value JSONB,updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),PRIMARY KEY(whatsapp_number,session_key))`);}catch(e){console.error('[SESSION_SCHEMA]',e.message);}
@@ -1025,6 +1108,12 @@ Office Extension: ${r.office_extension||'-'}`);
   const selfRemove=/^(remove|remov|delete)\s+me[.! ]*$/i.test(clean) || /^(exit|quit|deactivate)[.! ]*$/i.test(clean);
   let u=await byWA(from);
 
+  if(clean==='MENU_ADD'){
+    if(!u){await sendText(from,'You are not registered. Send Hi to register.');return;}
+    if(!(await hasAuthorityV874(u,'ENTRY'))){await sendText(from,'Permission denied. ENTRY authority is required.');return;}
+    await setIngestModeV874(from,true);
+    await sendText(from,'Add Entry mode ready. Send maintenance data as PDF, TIFF/image, TXT/CSV, Word, Excel or Access MDB/ACCDB. English/Telugu/Hindi/mixed content is accepted. Data is stored as TEST data; uncertain equipment/date mappings go to Needs Review.');return;
+  }
   if(clean==='MENU_ACCOUNT'){
     if(!u){await sendText(from,'You are not registered. Send Hi to register.');return;}
     await sendButtons(from,`My Account
@@ -1080,8 +1169,8 @@ Shift: ${u.shift||'-'}`,[{id:'REMOVE_ME_CONFIRM',title:'Remove Me'},{id:'ACCOUNT
 }
 
 app.get('/health', async (_req,res)=>{
-  try{await pool.query('SELECT 1');res.json({ok:true,version:'8.7.3',phase:'registration',db:true});}
-  catch(e){res.status(500).json({ok:false,version:'8.7.3',error:e.message});}
+  try{await pool.query('SELECT 1');res.json({ok:true,version:'8.7.4',phase:'registration',db:true});}
+  catch(e){res.status(500).json({ok:false,version:'8.7.4',error:e.message});}
 });
 app.get('/webhook',(req,res)=>{
   const mode=req.query['hub.mode'], token=req.query['hub.verify_token'], challenge=req.query['hub.challenge'];
@@ -1098,10 +1187,13 @@ app.post('/webhook',(req,res)=>{
       text=m.interactive.button_reply?.title||''; payload=m.interactive.button_reply?.id||'';
     } else if(m.type==='interactive' && m.interactive?.type==='list_reply'){
       text=m.interactive.list_reply?.title||''; payload=m.interactive.list_reply?.id||'';
+    } else if(['document','image'].includes(m.type)){
+      processMediaMessageV874(normWA(m.from),m).catch(err=>console.error('[MEDIA_MESSAGE]',err));
+      continue;
     } else continue;
     processMessage(normWA(m.from),text,payload).catch(err=>console.error('[MESSAGE]',err));
   }
 });
 
 await initDB();
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.7.3 testing-mode foundation listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.7.5 multiformat multilingual ingest listening on ${PORT}`));
