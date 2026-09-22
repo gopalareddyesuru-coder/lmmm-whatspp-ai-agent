@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.12.0 PDF FAILOVER + TEMP CLEANUP
+// LMMM AI Maintenance V8.12.1 RUNTIME HOTFIX
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -1528,8 +1528,8 @@ async function extractQueuedIngestV895(from,row){
       await sendText(from,'This upload is not relevant to LMMM plant / maintenance knowledge. Nothing was stored.');
       return true;
     }
-    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.12.0',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack))]);
-    await armTemporarySourceExpiryV8120(ingestId);
+    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.12.1',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack))]);
+    await armTemporarySourceExpiryV8120(row.id);
     await reliabilityEventV8100(row,'AI_EXTRACTION','SUCCEEDED',pack?._provider||null);
     await pool.query(`UPDATE pending_file_ingests SET workflow_state='SOURCE_SECURED',updated_at=now() WHERE id=$1`,[row.id]).catch(()=>{});
     await reliabilityEventV8100(row,'INTAKE','SOURCE_SECURED');
@@ -1580,7 +1580,6 @@ async function purgeExpiredTemporarySourcesV8120(){
   const r=await pool.query(`
     UPDATE pending_file_ingests
        SET source_bytes=NULL,
-           extracted_rows=NULL,
            source_purged_at=NOW(),
            workflow_state='EXPIRED',
            status='EXPIRED',
@@ -1601,7 +1600,6 @@ async function purgeRejectedTemporarySourcesV8120(){
   const r=await pool.query(`
     UPDATE pending_file_ingests
        SET source_bytes=NULL,
-           extracted_rows=NULL,
            source_purged_at=NOW()
      WHERE source_bytes IS NOT NULL
        AND (
@@ -1997,4 +1995,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.12.0 PDF FAILOVER + TEMP CLEANUP listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.12.1 RUNTIME HOTFIX listening on ${PORT}`));
