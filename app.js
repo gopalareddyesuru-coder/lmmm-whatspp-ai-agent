@@ -1,3 +1,4 @@
+// V7.7.61 MODULE-SOURCE ROUTING + ROLE SYNC FIX
 // V7.7.60 REMOVE/REREGISTER + ROLE + SEARCH FIX
 // V7.7.59 STRICT EQUIPMENT ROUTING + DEACTIVATION FIX
 // V7.7.58 SAFE USER EXIT + ADMIN DEACTIVATION
@@ -1489,8 +1490,7 @@ async function setResponsibility(from, employeeNumber, code) {
     await pool.query('COMMIT');
   }catch(e){ await pool.query('ROLLBACK'); throw e; }
 
-  await syncAutomaticResponsibilities(employeeNumber,from);
-  await syncDefaultAccess(employeeNumber,from,'Approved responsibility / hierarchy changed');
+  await syncHierarchyAndAccess(employeeNumber,from,'Approved responsibility / hierarchy changed');
   await sendButtons(
     from,
     `Responsibility set\n${u.name} / ${employeeNumber}\n${role}\nSection: ${section}\nArea: ${area}`,
@@ -2142,6 +2142,7 @@ async function areaSearchMenu(q,u){
 }
 function searchIntent(q=''){
  const t=String(q).toLowerCase();
+ if(/\b(about|details?|description|function|working|technical\s*details?)\b/.test(t))return 'about';
  if(/\b(defect|defects|fault|faults|problem|problems)\b/.test(t))return 'defect';
  if(/\b(job|jobs|work\s*order|maintenance\s*job)\b/.test(t))return 'job_action';
  if(/\b(inspection|condition|vibration|cbm)\b/.test(t))return 'condition';
@@ -2752,6 +2753,22 @@ async function universalSearch(q,u){
  if(equipment && !explicitEquipmentModuleIntent(original)){
    return equipmentMenuResult(equipment);
  }
+ if(equipment && intent==='about'){
+   await setSearchFilters(u,{module:'about',offset:0,lastQuery:original});
+   return {knowledgeQuery:equipment,referenceIntent:'about',strictEquipment:equipment,status:'REFERENCE_ROUTE'};
+ }
+ if(equipment && ['defect','job_action','history'].includes(intent)){
+   ctx=await getSearchContext(u);
+   const type=intent==='defect'?'defect':intent==='history'?'history':null;
+   let rows=await rowsForContext(ctx,type,200,u);
+   if(intent==='job_action') rows=rows.filter(r=>String(r.record_type||'').toLowerCase()==='job_action'||isJobHistoryRow(r));
+   rows=rows.slice(0,20);
+   if(rows.length){
+     return {text:`${equipment} — ${intent==='defect'?'Defects':intent==='history'?'History':'Jobs'}\nShowing latest ${rows.length}\n\n${formatBundledResults(rows)}`,
+       buttons:await primarySearchButtons(u,rows.length===20),status:'OK'};
+   }
+   return {text:`${equipment}\nNo source-backed ${intent==='defect'?'defect':intent==='history'?'history':'job'} records are available in the currently indexed ${intent==='defect'?'Defects':intent==='history'?'History':'Jobs'} data.`,buttons:await primarySearchButtons(u,false),status:'NO_MODULE_DATA'};
+ }
  ctx=await getSearchContext(u); const dr=range|| (ctx?.date_from?{from:String(ctx.date_from).slice(0,10),to:String(ctx.date_to||ctx.date_from).slice(0,10)}:null);
  if(intent==='condition' && equipment){
    const cbmRows=await conditionSearchForEquipment(equipment,u,dr);
@@ -2783,6 +2800,19 @@ async function universalSearch(q,u){
  return {knowledgeQuery:equipment && !original.toLowerCase().includes(equipment.toLowerCase())?`${equipment} ${original}`:original,status:'NO_STRUCTURED_DATA'};
 }
 
+async function retrieveEquipmentAboutKnowledge(equipment,u){
+ const eq=String(equipment||'').trim();if(!eq)return[];const like=`%${eq}%`;
+ const r=await pool.query(`SELECT id,document_class,title,equipment_name,page_start,page_end,section_heading,content_text,source_filename
+ FROM technical_document_chunks
+ WHERE LOWER(COALESCE(equipment_name,''))=LOWER($1) OR LOWER(COALESCE(title,'')) LIKE LOWER($2)
+ OR LOWER(COALESCE(section_heading,'')) LIKE LOWER($2) OR LOWER(content_text) LIKE LOWER($2)
+ ORDER BY CASE LOWER(COALESCE(document_class,'')) WHEN 'manual' THEN 0 WHEN 'smp' THEN 1 WHEN 'sop' THEN 2 WHEN 'other_reference' THEN 3 ELSE 4 END,
+ CASE WHEN LOWER(COALESCE(equipment_name,''))=LOWER($1) THEN 0 ELSE 1 END,page_start NULLS LAST,id LIMIT 24`,[eq,like]);
+ if(r.rows.length)return r.rows;
+ return (await pool.query(`SELECT NULL::bigint id,'knowledge'::text document_class,source_name title,NULL::text equipment_name,
+ NULL::int page_start,NULL::int page_end,NULL::text section_heading,raw_text content_text,source_name source_filename
+ FROM lmmm_knowledge_records WHERE LOWER(raw_text) LIKE LOWER($1) OR LOWER(normalized_text) LIKE LOWER($1) LIMIT 18`,[like])).rows;
+}
 async function retrieveReferenceKnowledge(question,u){
  const ctx=await currentShiftContext(u);
  let terms=queryTokens(question);
@@ -4240,11 +4270,17 @@ async function processMessage(from, text, rawMessage = null) {
         return;
       }
       const kq=us?.knowledgeQuery||clean;
-      const knowledgeRows=await retrieveReferenceKnowledge(kq,u);
+      const knowledgeRows=us?.referenceIntent==='about' && us?.strictEquipment
+        ? await retrieveEquipmentAboutKnowledge(us.strictEquipment,u)
+        : await retrieveReferenceKnowledge(kq,u);
       if(knowledgeRows.length){
-        const answer=await geminiAnswerFromKnowledge(kq,knowledgeRows,u);
+        const aq=us?.referenceIntent==='about'
+          ? `About ${us.strictEquipment}: give its source-backed technical description, function/working, major assemblies/components and relevant maintenance information from the supplied manuals/reference documents. Do not substitute unrelated equipment.`
+          : kq;
+        const answer=await geminiAnswerFromKnowledge(aq,knowledgeRows,u);
         if(answer){await sendText(from,answer);return;}
       }
+      if(us?.referenceIntent==='about' && us?.strictEquipment){await sendText(from,`${us.strictEquipment}\nManual/reference details are not available in the currently indexed authorised sources.`);return;}
       if(us?.status==='NO_STRUCTURED_DATA'){await sendText(from,'No authorised stored records were found for the current equipment/module/date filters. Try Date Range, change equipment, or clear the filter.');return;}
     }catch(e){console.error('[UNIVERSAL SEARCH]',e); await sendText(from,'Search could not be completed due to a system error. Please retry.'); return;}
     await sendText(from,ml(languageOf(clean),'No matching stored LMMM record or indexed reference knowledge was found. Try an equipment name, item number, maintenance term, or another date range.','సరిపోలే LMMM రికార్డు లేదా ఇండెక్స్ చేసిన రిఫరెన్స్ సమాచారం దొరకలేదు. Equipment పేరు, item number, maintenance term లేదా మరో date range తో ప్రయత్నించండి.','मिलता हुआ LMMM रिकॉर्ड या indexed reference knowledge नहीं मिला। Equipment name, item number, maintenance term या दूसरी date range से खोजें।'));return;
