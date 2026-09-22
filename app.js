@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.2.0
+// LMMM AI Maintenance V8.3.0
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -56,6 +56,82 @@ function canonicalSection(v=''){
   const k=raw.toLowerCase().replace(/[._-]+/g,' ').replace(/\s+/g,' ').trim();
   const aliases={'mech':'Mechanical','mechanical':'Mechanical','mm':'Mechanical','ops':'Operations','operation':'Operations','operations':'Operations','production':'Operations','elec':'Electrical','electrical':'Electrical','inst':'Instrumentation','instrumentation':'Instrumentation','etl':'ETL','telecom':'Telecommunications','water':'Water Management','dnw':'DNW','enmd':'EnMD','red':'RED'};
   return aliases[k] || raw.replace(/\b\w/g,c=>c.toUpperCase());
+}
+
+const LMMM_ORG = {
+  department_code:'35',
+  areas:['BDM','BAR MILL','FINISHING'],
+  sections:['Operations','Mechanical','Electrical','Instrumentation','ETL','Telecommunications','Water Management','DNW','EnMD','RED']
+};
+function normKey(v=''){return String(v||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();}
+function canonicalArea(v=''){
+  const k=normKey(v);
+  const aliases={
+    'bdm':'BDM','break down mill':'BDM','breakdown mill':'BDM','billet mill':'BDM','b d m':'BDM',
+    'bar mill':'BAR MILL','barmill':'BAR MILL','bm':'BAR MILL',
+    'finishing':'FINISHING','finishing mill':'FINISHING','finish':'FINISHING'
+  };
+  return aliases[k]||String(v||'').trim().toUpperCase();
+}
+function canonicalSection(v=''){
+  const k=normKey(v);
+  const aliases={
+    'mech':'Mechanical','mechanical':'Mechanical','me':'Mechanical',
+    'ops':'Operations','operation':'Operations','operations':'Operations','production':'Operations',
+    'elec':'Electrical','elect':'Electrical','electrical':'Electrical',
+    'inst':'Instrumentation','instrument':'Instrumentation','instrumentation':'Instrumentation',
+    'etl':'ETL','telecom':'Telecommunications','telecommunications':'Telecommunications',
+    'water':'Water Management','water management':'Water Management','wm':'Water Management',
+    'dnw':'DNW','enmd':'EnMD','en md':'EnMD','red':'RED'
+  };
+  return aliases[k]||String(v||'').trim();
+}
+function canonicalDesignationV83(v=''){
+  const k=normKey(v);
+  const aliases={
+    'mgr':'Manager','manager':'Manager',
+    'sr mgr':'Senior Manager','sr manager':'Senior Manager','senior mgr':'Senior Manager','senior manager':'Senior Manager',
+    'dy mgr':'Deputy Manager','deputy mgr':'Deputy Manager','deputy manager':'Deputy Manager',
+    'asst mgr':'Assistant Manager','ast mgr':'Assistant Manager','assistant manager':'Assistant Manager',
+    'jr mgr':'Junior Manager','junior manager':'Junior Manager',
+    'mt':'Management Trainee','management trainee':'Management Trainee',
+    'agm':'Assistant General Manager','asst general manager':'Assistant General Manager','assistant general manager':'Assistant General Manager',
+    'dgm':'Deputy General Manager','deputy general manager':'Deputy General Manager',
+    'gm':'General Manager','general manager':'General Manager',
+    'cgm':'Chief General Manager','chief general manager':'Chief General Manager',
+    'ed':'Executive Director','executive director':'Executive Director','cmd':'CMD',
+    'tech':'Technician','technician':'Technician','kalasi':'Kalasi',
+    'chgman':'Chargeman','chargeman':'Chargeman',
+    'fm':'Foreman','foreman':'Foreman','afm':'Acting Foreman','acting foreman':'Acting Foreman',
+    'gf':'General Foreman','general foreman':'General Foreman'
+  };
+  return aliases[k]||String(v||'').trim().replace(/\b\w/g,c=>c.toUpperCase());
+}
+function employeeBandV83(designation=''){
+  const d=canonicalDesignationV83(designation);
+  if(['Kalasi','Technician','Chargeman','Foreman','Acting Foreman','General Foreman'].includes(d)) return 'NON_EXECUTIVE';
+  if(d==='Deputy General Manager') return 'DGM';
+  if(['Management Trainee','Junior Manager','Assistant Manager','Deputy Manager','Manager','Senior Manager','Assistant General Manager'].includes(d)) return 'EXECUTIVE';
+  if(['General Manager','Chief General Manager','Executive Director','CMD'].includes(d)) return 'SENIOR_EXECUTIVE';
+  return 'UNCLASSIFIED';
+}
+function autoAuthorityV83(u){
+  const band=employeeBandV83(u.designation);
+  if(band==='NON_EXECUTIVE') return {role:'NON_EXECUTIVE',access:'ENTRY',authorities:['ENTRY'],scope:'REGISTERED_AREA_SECTION'};
+  if(band==='EXECUTIVE') return {role:'EXECUTIVE',access:'ENTRY_VIEW',authorities:['ENTRY','VIEW'],scope:'REGISTERED_AREA_SECTION'};
+  if(band==='DGM'||band==='SENIOR_EXECUTIVE') return {role:band==='DGM'?'DGM':'EXECUTIVE',access:'FULL_ACCESS',authorities:['ENTRY','VIEW','EDIT','DELETE_UNDO','APPROVAL','PDF','EXCEL','ANALYSIS','REPORTS','RCM'],scope:'ASSIGNED_SECTION'};
+  return {role:'NORMAL_USER',access:'RELEVANT_MODULE_ENTRY',authorities:['ENTRY'],scope:'REGISTERED_AREA_SECTION'};
+}
+function workResponsibilityV83(u){
+  const area=canonicalArea(u.area_of_working), sec=canonicalSection(u.section_department), sh=canonicalShift(u.shift);
+  let duties=[];
+  if(area==='BDM' && sec==='Mechanical') duties=['BDM equipment maintenance','Equipment availability','Support uninterrupted production'];
+  else if(sec==='Mechanical') duties=[`${area||'Assigned area'} equipment maintenance`,'Equipment availability','Support uninterrupted production'];
+  else if(sec==='Operations') duties=[`${area||'Assigned area'} operation`,'Production continuity','Operational entries'];
+  else duties=[`${area||'Assigned area'} ${sec||'assigned section'} responsibilities`];
+  if(sh==='General') duties.push('General Shift coordination');
+  else if(['A','B','C'].includes(sh)) duties.push(`${sh} Shift coverage`);
+  return duties.join('; ');
 }
 function canonicalShift(v=''){
   const raw=String(v||'').trim(); if(!raw) return null;
@@ -244,17 +320,18 @@ async function removeRegistration(u,by){
 }
 
 async function ensureProfile(u,by='SYSTEM'){
-  const d=String(u.designation||'').toLowerCase();
-  let role='NORMAL_USER',access='RELEVANT_MODULE_ENTRY';
-  if(/deputy general manager|general manager|chief general manager|executive director|\bcmd\b/.test(d)){role='FULL_ACCESS';access='FULL_ACCESS';}
-  else if(/assistant general manager|senior manager|manager|deputy manager|assistant manager|junior manager|management trainee/.test(d)){role='EXECUTIVE';access='ENTRY_VIEW';}
-  const area=String(u.area_of_working||'').toUpperCase(), section=String(u.section_department||'').toLowerCase();
-  let resp=[u.area_of_working,u.section_department].filter(Boolean).join(' ')||'General';
-  if(area==='BDM' && section==='mechanical') resp='BDM Equipment Maintenance & Availability; Support uninterrupted production';
-  if(u.shift==='General') resp += '; General Shift coordination';
-  else if(['A','B','C'].includes(u.shift)) resp += `; ${u.shift} Shift maintenance coverage`;
-  await pool.query(`INSERT INTO user_access_profile(employee_number,assigned_role,access_level,responsibility,assigned_by)
-    VALUES($1,$2,$3,$4,$5) ON CONFLICT(employee_number) DO NOTHING`,[u.employee_number,role,access,resp,by]);
+  const auto=autoAuthorityV83(u);
+  const resp=workResponsibilityV83(u);
+  await pool.query(`INSERT INTO user_access_profile(employee_number,assigned_role,access_level,responsibility,authorities,assignment_source,assigned_by)
+    VALUES($1,$2,$3,$4,$5,'AUTO',$6)
+    ON CONFLICT(employee_number) DO UPDATE SET
+      assigned_role=CASE WHEN user_access_profile.assignment_source='SUPER_ADMIN' THEN user_access_profile.assigned_role ELSE EXCLUDED.assigned_role END,
+      access_level=CASE WHEN user_access_profile.assignment_source='SUPER_ADMIN' THEN user_access_profile.access_level ELSE EXCLUDED.access_level END,
+      responsibility=CASE WHEN user_access_profile.assignment_source='SUPER_ADMIN' THEN user_access_profile.responsibility ELSE EXCLUDED.responsibility END,
+      authorities=CASE WHEN user_access_profile.assignment_source='SUPER_ADMIN' THEN user_access_profile.authorities ELSE EXCLUDED.authorities END,
+      assigned_by=CASE WHEN user_access_profile.assignment_source='SUPER_ADMIN' THEN user_access_profile.assigned_by ELSE EXCLUDED.assigned_by END,
+      updated_at=now()`,
+    [u.employee_number,auto.role,auto.access,resp,auto.authorities,by]);
 }
 async function showUser(to,u){
   await ensureProfile(u,normWA(to));
@@ -268,8 +345,9 @@ Section: ${u.section_department||'-'}
 Shift: ${u.shift||'-'}${SHIFT_TIMINGS[u.shift]?` (${SHIFT_TIMINGS[u.shift].start}-${SHIFT_TIMINGS[u.shift].end})`:''}
 Status: ${u.approval_status}${u.is_active?' / Active':''}
 
-Role: ${p?.assigned_role||'-'}
+Category/Role: ${p?.assigned_role||'-'}
 Access: ${p?.access_level||'-'}
+Scope: ${autoAuthorityV83(u).scope}
 Responsibility: ${p?.responsibility||'-'}
 Authorities: ${(p?.authorities||[]).join(', ')||'-'}
 Source: ${p?.assignment_source||'AUTO'}`,
@@ -336,9 +414,9 @@ async function adminCommand(from,text){
   if((a=text.match(/^ADM_VIEW:(\d+)$/))){const u=await byEmp(a[1]); if(u)await showUser(from,u);else await sendText(from,'Employee not found.');return true;}
   if((a=text.match(/^ADM_ASSIGN:(\d+)$/))){await sendButtons(from,'Assign / Change',[{id:`ADM_ROLE:${a[1]}`,title:'Role'},{id:`ADM_ACCESS:${a[1]}`,title:'Access'},{id:`ADM_RESP:${a[1]}`,title:'Responsibility'}]);return true;}
   if((a=text.match(/^ADM_MORE:(\d+)$/))){await sendButtons(from,'More user controls',[{id:`ADM_AUTH:${a[1]}`,title:'Authorities'},{id:`ADM_REMOVE:${a[1]}`,title:'Remove User'},{id:`ADM_VIEW:${a[1]}`,title:'Back'}]);return true;}
-  if((a=text.match(/^ADM_ROLE:(\d+)$/))){await sendButtons(from,'Select Role',[{id:`SR:${a[1]}:NORMAL_USER`,title:'Normal User'},{id:`SR:${a[1]}:EXECUTIVE`,title:'Executive'},{id:`SR:${a[1]}:SHIFT_INCHARGE`,title:'Shift In-charge'}]);return true;}
+  if((a=text.match(/^ADM_ROLE:(\d+)$/))){await sendButtons(from,'Select Role',[{id:`SR:${a[1]}:NON_EXECUTIVE`,title:'Non-Executive'},{id:`SR:${a[1]}:EXECUTIVE`,title:'Executive'},{id:`SR:${a[1]}:DGM`,title:'DGM'}]);return true;}
   if((a=text.match(/^ADM_ACCESS:(\d+)$/))){await sendButtons(from,'Select Access',[{id:`SA:${a[1]}:ENTRY`,title:'Entry'},{id:`SA:${a[1]}:ENTRY_VIEW`,title:'Entry + View'},{id:`SA:${a[1]}:FULL_ACCESS`,title:'Full Access'}]);return true;}
-  if((a=text.match(/^ADM_RESP:(\d+)$/))){await sendButtons(from,'Select Responsibility',[{id:`SP:${a[1]}:AREA_INCHARGE`,title:'Area In-charge'},{id:`SP:${a[1]}:SHIFT_INCHARGE`,title:'Shift In-charge'},{id:`SP:${a[1]}:GENERAL_SHIFT`,title:'General Shift'}]);return true;}
+  if((a=text.match(/^ADM_RESP:(\d+)$/))){await sendButtons(from,'Responsibility override',[{id:`SP:${a[1]}:AREA_INCHARGE`,title:'Area In-charge'},{id:`SP:${a[1]}:SHIFT_INCHARGE`,title:'Shift In-charge'},{id:`SP:${a[1]}:GENERAL_SHIFT`,title:'General Shift'}]);return true;}
   if((a=text.match(/^SR:(\d+):(.+)$/))){await setField(a[1],'role',a[2],admin);await showUser(from,await byEmp(a[1]));return true;}
   if((a=text.match(/^SA:(\d+):(.+)$/))){await setField(a[1],'access',a[2],admin);await showUser(from,await byEmp(a[1]));return true;}
   if((a=text.match(/^SP:(\d+):(.+)$/))){await setField(a[1],'resp',a[2],admin);await showUser(from,await byEmp(a[1]));return true;}
@@ -382,7 +460,7 @@ async function adminCommand(from,text){
     if(normWA(from)!==u.whatsapp_number) await sendText(from,`${m[1]} registration removed. Maintenance history preserved.`);
     return true;
   }
-  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.2.0 REGISTRATION ACCEPTANCE');return true;}
+  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.3.0 REGISTRATION ACCEPTANCE');return true;}
   return false;
 }
 async function processMessage(from,text,payload=''){
@@ -471,4 +549,4 @@ app.post('/webhook',(req,res)=>{
 });
 
 await initDB();
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.2.0 registration foundation listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.3.0 registration foundation listening on ${PORT}`));
