@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.8.4
+// LMMM AI Maintenance V8.8.5
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -924,12 +924,14 @@ async function extractMaintenanceV874(bytes,mime,filename,caption){
 The source may contain English, Telugu, Hindi, Tenglish, handwriting, scans, tables, BOQ, drawings lists, manuals, spreadsheets, maintenance records, or WhatsApp voice/audio. For audio, transcribe the complete intelligible speech first and then apply the same maintenance classification rules.
 
 CRITICAL RULES:
-1. Read the WHOLE source, not only a summary. Transcribe all legible meaningful text and table rows in source order into full_text. Do not intentionally omit BOQ items, drawing numbers, part numbers, quantities, dates, headings or maintenance lines. If something is unreadable, write [UNREADABLE] instead of guessing.
+1. Read EVERY page/frame of the source, not only page 1 and not only a summary. For multi-page PDF/TIFF, process pages in order and extract every legible row/item from every page. Transcribe all legible meaningful text and table rows in source order into full_text. Do not intentionally omit BOQ items, drawing numbers, part numbers, quantities, dates, headings or maintenance lines. If something is unreadable, write [UNREADABLE] instead of guessing.
+1A. For DRAWING_LIST/BOQ/table documents, extracted_items MUST contain ALL legible rows from ALL pages, one source row per item. Never return only the first few rows as a sample. document_summary may summarize, but full_text/extracted_items must be exhaustive within the source.
 2. Separately classify the whole document. A BOQ/drawing list/manual/reference document is NOT a set of maintenance events.
 3. Never invent or expand Equipment/SAP/Sub-equipment/Drawing/Part identifiers. A generic phrase such as "mill equipment", "repair of mill equipment", a contractor name or document title is NOT an equipment identity. If an exact equipment mapping is not supported by the source, equipment=null and confidence=NEEDS_REVIEW.
 4. For genuine transaction/event content, split only real independent events by explicit equipment/date. For reference documents, use one document-level record and preserve detailed rows in extracted_items.
 5. Normalize ALL user-facing extracted meaning and ALL stored structured maintenance data into clear concise technical English, regardless of whether the source is Telugu, Hindi, Tenglish, mixed language or English. Preserve exact identifiers/numbers/readings unchanged.
-5A. full_text must preserve the source transcription for audit/source fidelity. ALSO return review_text_english containing the complete readable English rendering/translation of the meaningful source content in source order. Do not omit maintenance facts. For already-English source, review_text_english may equal full_text.
+5A. full_text must preserve the source transcription for audit/source fidelity. ALSO return review_text_english containing a faithful, complete English translation/rendering of the meaningful source content in the SAME order. Translate what the source actually says; do not paraphrase a Hindi/Telugu question, instruction, option, technical term or sentence into a different meaning. Preserve question numbering, item numbering, quantities, negation, units and technical terms. If a word cannot be read confidently, use [UNREADABLE] rather than inventing a translation. For already-English source, review_text_english may equal full_text.
+5B. For non-maintenance educational/general documents, translate faithfully but classify UNRELATED; never reinterpret them as maintenance records.
 6. Unrelated content (for example an exam/question paper) must be document_type=UNRELATED and the record must be NEEDS_REVIEW; it must never become maintenance history.
 7. Missing or ambiguous date/equipment/module => null where appropriate and NEEDS_REVIEW. Never use today's date for historical source data.
 
@@ -951,7 +953,7 @@ Caption: ${caption||'(none)'}
 Filename: ${filename||'(unknown)'}
 Source format: ${ext||sendMime}.`;
   const body={contents:[{parts:[{text:prompt},{inline_data:{mime_type:sendMime,data:bytes.toString('base64')}}]}],
-    generationConfig:{temperature:0.02,responseMimeType:'application/json',maxOutputTokens:16384}};
+    generationConfig:{temperature:0.02,responseMimeType:'application/json',maxOutputTokens:32768}};
   const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   if(!r.ok) throw new Error(`Gemini extraction failed ${r.status}: ${(await r.text()).slice(0,500)}`);
   const j=await r.json(),txt=(j.candidates?.[0]?.content?.parts||[]).map(x=>x.text||'').join('');
@@ -1008,8 +1010,9 @@ function adaptivePreviewStatsV881(pack){
   const items=Array.isArray(pack.extracted_items)?pack.extracted_items:[];
   const records=Array.isArray(pack.records)?pack.records:[];
   // One clean WhatsApp message for small/medium data; large/tabular data becomes a private review PDF.
-  const tableHeavy=items.length>12 || records.length>10;
-  const large=text.length>3200 || tableHeavy;
+  const tableHeavy=items.length>8 || records.length>8;
+  const pageHint=/\bpages?\b/i.test(String(pack.document_summary||'')) || /DRAWING_LIST|BOQ|SPREADSHEET/.test(String(pack.document_type||''));
+  const large=text.length>2600 || tableHeavy || (pageHint && items.length>5);
   return {text,items,records,large};
 }
 async function sendAdaptiveExtractionPreviewV881(from,p){
@@ -1532,4 +1535,4 @@ app.post('/webhook',(req,res)=>{
 });
 
 await initDB();
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.8.4 voice-media-safe listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.8.5 exhaustive-multipage-translation listening on ${PORT}`));
