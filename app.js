@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.7.2
+// LMMM AI Maintenance V8.7.3
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -357,8 +357,13 @@ async function initDB(){
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS location TEXT`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS remarks TEXT`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_updated_at TIMESTAMPTZ DEFAULT now()`);
-  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS data_class TEXT NOT NULL DEFAULT 'MAIN'`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS data_class TEXT NOT NULL DEFAULT 'TESTER'`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_users_data_class ON users(data_class)`);
+  await pool.query(`ALTER TABLE users ALTER COLUMN data_class SET DEFAULT 'TESTER'`);
+  // V8.7.3 TESTING MODE: every non-Super-Admin registration is TESTER.
+  const _testAdmins=[...SUPER_ADMINS];
+  if(_testAdmins.length){await pool.query(`UPDATE users SET data_class='TESTER',updated_at=now() WHERE NOT (whatsapp_number = ANY($1::text[]))`,[_testAdmins]);}
+  else {await pool.query(`UPDATE users SET data_class='TESTER',updated_at=now()`);}
   // User explicitly requested a clean user reset. Run exactly once.
   const key='V8_0_1_RESET_NON_SUPERADMIN_REGISTRATIONS_2026_09_22';
   const done=await pool.query('SELECT 1 FROM system_migrations WHERE migration_key=$1',[key]);
@@ -397,8 +402,8 @@ async function saveRegistration(from,d){
   await pool.query('BEGIN');
   try{
     await pool.query('DELETE FROM users WHERE whatsapp_number=$1 OR employee_number=$2',[wa,d.employee_number]);
-    const r=await pool.query(`INSERT INTO users(whatsapp_number,name,employee_number,designation,area_of_working,section_department,shift,approval_status,is_active,operational_role)
-      VALUES($1,$2,$3,$4,$5,$6,$7,'pending',false,'PENDING') RETURNING *`,
+    const r=await pool.query(`INSERT INTO users(whatsapp_number,name,employee_number,designation,area_of_working,section_department,shift,approval_status,is_active,operational_role,data_class)
+      VALUES($1,$2,$3,$4,$5,$6,$7,'pending',false,'PENDING','TESTER') RETURNING *`,
       [wa,d.name,d.employee_number,d.designation,d.area,d.section,d.shift]);
     await audit(r.rows[0],'REGISTER_PENDING',wa,{canonicalized:true});
     await pool.query('COMMIT'); return {ok:true,user:r.rows[0]};
@@ -725,8 +730,7 @@ async function adminCommand(from,text){
 {id:`ADM_WORK:${a[1]}`,title:'Work Assignment'},
 {id:`ADM_PERM:${a[1]}`,title:'Permissions'}]);return true;}
 if((a=text.match(/^ADM_IDENTITY:(\d+)$/))){await sendList(from,'User / Designation','Select',[
-{id:`ADM_CAT:${a[1]}`,title:'Category / Role'},{id:`ADM_DESIG:${a[1]}`,title:'Designation'},
-{id:`ADM_DATACLASS:${a[1]}`,title:'Tester / Main'}],'Employee Setup');return true;}
+{id:`ADM_CAT:${a[1]}`,title:'Category / Role'},{id:`ADM_DESIG:${a[1]}`,title:'Designation'}],'Employee Setup');return true;}
 if((a=text.match(/^ADM_WORK:(\d+)$/))){await sendList(from,'Work Assignment','Select',[
 {id:`ADM_AREA:${a[1]}`,title:'Destination Area'},{id:`ADM_SECTION:${a[1]}`,title:'Section'},
 {id:`ADM_SHIFT:${a[1]}`,title:'Shift / Roster'},{id:`ADM_RESP:${a[1]}`,title:'Responsibility / Scope'}],'Work Assignment');return true;}
@@ -752,8 +756,8 @@ if((a=text.match(/^CONTACT_(ALT|CMAIL|PMAIL|MAX|EXT|EMER|NOTES):(\d+)$/))){
  const prompt={ALT:'Send alternate phone number',CMAIL:'Send company email ID',PMAIL:'Send personal email ID',MAX:'Send MAX number',EXT:'Send office extension',EMER:'Send emergency contact as: Name, Phone',NOTES:'Send contact notes'}[a[1]];
  await sendText(from,prompt);return true;
 }
-if((a=text.match(/^ADM_DATACLASS:(\d+)$/))){await sendButtons(from,'Select Data Class',[{id:`SETCLASS:${a[1]}:TESTER`,title:'Tester'},{id:`SETCLASS:${a[1]}:MAIN`,title:'Main'}]);return true;}
-if((a=text.match(/^SETCLASS:(\d+):(TESTER|MAIN)$/))){try{const kind=await setDataClassV854(a[1],a[2],normWA(from));await sendText(from,`✅ Data Class changed: ${kind}\nEmployee: ${a[1]}\nOnly Super Admin notified.`);}catch(e){await sendText(from,`Cannot change Data Class: ${e.message}`);}return true;}
+if((a=text.match(/^ADM_DATACLASS:(\d+)$/))){await sendText(from,'Testing mode is active. All non-Super-Admin users are automatically TESTER.');return true;}
+if((a=text.match(/^SETCLASS:(\d+):(TESTER|MAIN)$/))){await sendText(from,'Testing mode is active. Manual Tester/Main switching is disabled.');return true;}
 if((a=text.match(/^ADM_CAT:(\d+)$/))){await sendButtons(from,'Select Category',[{id:`SETCAT:${a[1]}:CONTRACT_WORKER`,title:'Contract Worker'},{id:`SETCAT:${a[1]}:NON_EXECUTIVE`,title:'Non-Executive'},{id:`SETCAT:${a[1]}:EXECUTIVE`,title:'Executive'}]);return true;}
 if((a=text.match(/^SETCAT:(\d+):(CONTRACT_WORKER|NON_EXECUTIVE|EXECUTIVE)$/))){const emp=a[1],cat=a[2];await saveAdminOverrideV850(emp,{category:cat},normWA(from));await sendList(from,`${cat.replaceAll('_',' ')} hierarchy`,'Select',EMPLOYEE_HIERARCHY_V850[cat].map(([code,title])=>({id:`SETDES:${emp}:${code}`,title})),'Designation');await sendText(from,`✅ Category changed: ${cat.replaceAll('_',' ')}\nEmployee: ${emp}\nOnly Super Admin notified.`);return true;}
 if((a=text.match(/^ADM_DESIG:(\d+)$/))){await sendButtons(from,'Select Category',[{id:`ADM_CAT:${a[1]}`,title:'Choose Category'}]);return true;}
@@ -769,7 +773,7 @@ if((a=text.match(/^SETSH:(\d+):(General|ROTATING_ABC|A|B|C)$/))){const emp=a[1],
 {id:`ADM_AUTH:${a[1]}`,title:'Authorities'},{id:`ADM_ADMINTOOLS:${a[1]}`,title:'Admin Tools'},{id:`ADM_REMOVE:${a[1]}`,title:'Remove User'}]);return true;}
 if((a=text.match(/^ADM_ADMINTOOLS:(\d+)$/))){await sendList(from,'Admin Tools','Select',[
 {id:`ADM_TEST:${a[1]}`,title:'Auto Assignment Test'},{id:`ADM_CONTACT:${a[1]}`,title:'Contact Details'},
-{id:`ADM_DATACLASS:${a[1]}`,title:'Tester / Main'},{id:`ADM_VIEW:${a[1]}`,title:'Refresh Full Details'}],'Admin Tools');return true;}
+{id:`ADM_VIEW:${a[1]}`,title:'Refresh Full Details'}],'Admin Tools');return true;}
   if((a=text.match(/^ADM_ROLE:(\d+)$/))){await sendButtons(from,'Select Role',[{id:`SR:${a[1]}:NON_EXECUTIVE`,title:'Non-Executive'},{id:`SR:${a[1]}:EXECUTIVE`,title:'Executive'},{id:`SR:${a[1]}:DGM`,title:'DGM'}]);return true;}
   if((a=text.match(/^ADM_ACCESS:(\d+)$/))){await sendList(from,'Select Access','Select',[
 {id:`SA:${a[1]}:ENTRY`,title:'Entry Only'},{id:`SA:${a[1]}:VIEW_ONLY`,title:'View Only'},{id:`SA:${a[1]}:ENTRY_VIEW`,title:'Entry + View'},
@@ -832,7 +836,7 @@ if((a=text.match(/^AUTH_ADV:(\d+)$/))){await sendList(from,'Advanced Authorities
     if(normWA(from)!==u.whatsapp_number) await sendText(from,`${m[1]} registration removed. Maintenance history preserved.`);
     return true;
   }
-  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.7.2 AUTO ASSIGN');return true;}
+  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.7.3 AUTO ASSIGN');return true;}
   return false;
 }
 async function processMessage(from,text,payload=''){
@@ -1076,8 +1080,8 @@ Shift: ${u.shift||'-'}`,[{id:'REMOVE_ME_CONFIRM',title:'Remove Me'},{id:'ACCOUNT
 }
 
 app.get('/health', async (_req,res)=>{
-  try{await pool.query('SELECT 1');res.json({ok:true,version:'8.4.1',phase:'registration',db:true});}
-  catch(e){res.status(500).json({ok:false,version:'8.4.1',error:e.message});}
+  try{await pool.query('SELECT 1');res.json({ok:true,version:'8.7.3',phase:'registration',db:true});}
+  catch(e){res.status(500).json({ok:false,version:'8.7.3',error:e.message});}
 });
 app.get('/webhook',(req,res)=>{
   const mode=req.query['hub.mode'], token=req.query['hub.verify_token'], challenge=req.query['hub.challenge'];
@@ -1100,4 +1104,4 @@ app.post('/webhook',(req,res)=>{
 });
 
 await initDB();
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.7.0 registration foundation listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.7.3 testing-mode foundation listening on ${PORT}`));
