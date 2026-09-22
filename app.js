@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.7.0
+// LMMM AI Maintenance V8.7.1
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -257,6 +257,24 @@ async function sendButtons(to, body, buttons){
   });
   if(!r.ok) throw new Error(`WhatsApp button send failed ${r.status}: ${await r.text()}`);
 }
+async function sendList(to, body, buttonText, rows, sectionTitle='Options'){
+  if(!PHONE_NUMBER_ID || !ACCESS_TOKEN) throw new Error('Meta WhatsApp credentials missing');
+  const clean=(rows||[]).slice(0,10).map((r,i)=>({
+    id:String(r.id||`ROW_${i+1}`).slice(0,200),
+    title:String(r.title||`Option ${i+1}`).slice(0,24),
+    ...(r.description?{description:String(r.description).slice(0,72)}:{})
+  }));
+  if(!clean.length){await sendText(to,'No options available.');return;}
+  const payload={messaging_product:'whatsapp',to,type:'interactive',interactive:{
+    type:'list',body:{text:String(body||'Select an option').slice(0,1024)},
+    action:{button:String(buttonText||'Select').slice(0,20),sections:[{title:String(sectionTitle||'Options').slice(0,24),rows:clean}]}
+  }};
+  const r=await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${PHONE_NUMBER_ID}/messages`,{
+    method:'POST',headers:{Authorization:`Bearer ${ACCESS_TOKEN}`,'Content-Type':'application/json'},body:JSON.stringify(payload)
+  });
+  if(!r.ok) throw new Error(`WhatsApp list send failed ${r.status}: ${await r.text()}`);
+}
+
 async function initDB(){
   if(!pool) throw new Error('DATABASE_URL missing');
   await pool.query(`
@@ -695,7 +713,7 @@ Shift: ${u.shift||'-'}`,
 async function adminCommand(from,text){
   if(!SUPER_ADMINS.has(normWA(from))) return false;
   const admin=normWA(from); let a;
-  // V8.7.0: survive clients/webhooks that return only interactive title, not payload ID.
+  // V8.7.1: survive clients/webhooks that return only interactive title, not payload ID.
   if(!/^ADM_|^AUTH_|^AU:|^SET|^SA:|^SR:/.test(text)){const emp=await currentAdminEmployeeV870(from);if(emp){const map={'User / Designation':`ADM_IDENTITY:${emp}`,'Work Assignment':`ADM_WORK:${emp}`,'Permissions':`ADM_PERM:${emp}`,'Contact Details':`ADM_CONTACT:${emp}`,'More Options':`ADM_MORE:${emp}`,'Authorities':`ADM_AUTH:${emp}`,'Core Access':`AUTH_CORE:${emp}`,'Docs / Reports':`AUTH_DOC:${emp}`,'Advanced':`AUTH_ADV:${emp}`,'Admin Tools':`ADM_ADMINTOOLS:${emp}`};if(map[text])text=map[text];}}
   if(text==='ADM_USERS'||/^users?$/i.test(text)){await sendText(from,'User Management\nSearch by Employee No or Name.');return true;}
   if((a=text.match(/^ADM_VIEW:(\d+)$/))){const u=await byEmp(a[1]); if(u)await showUser(from,u);else await sendText(from,'Employee not found.');return true;}
@@ -811,7 +829,7 @@ if((a=text.match(/^AUTH_ADV:(\d+)$/))){await sendList(from,'Advanced Authorities
     if(normWA(from)!==u.whatsapp_number) await sendText(from,`${m[1]} registration removed. Maintenance history preserved.`);
     return true;
   }
-  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.7.0 AUTO ASSIGN');return true;}
+  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.7.1 AUTO ASSIGN');return true;}
   return false;
 }
 async function processMessage(from,text,payload=''){
