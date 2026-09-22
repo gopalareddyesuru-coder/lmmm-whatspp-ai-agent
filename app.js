@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.8.7
+// LMMM AI Maintenance V8.8.8
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -909,19 +909,26 @@ function safeJsonV874(t=''){
 }
 async function classifyTechnicalRelevanceV886(bytes,mime,filename,caption){
   if(!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY missing');
-  const prompt=`Classify whether this upload is useful to the RINL/VSP LMMM engineering/maintenance knowledge system.
-ACCEPT as TECHNICAL when it contains plant/equipment/maintenance/operations/mechanical/electrical/instrumentation/safety/technical training/drawings/manuals/BOQ/spares/logbook/inspection/condition monitoring/production/shutdown/work-order/engineering reference content.
-REJECT as UNRELATED when it is personal, entertainment, general school/exam material with no engineering/industrial relevance, random social content, or otherwise not useful to LMMM technical knowledge.
-Do not reject merely because the language is Telugu/Hindi/Tenglish or because equipment/date is missing.
-Return ONLY JSON: {"relevance":"TECHNICAL|UNRELATED|UNCERTAIN","reason":"short English reason","source_kind":"VOICE|IMAGE|PDF|TIFF|SPREADSHEET|DOCUMENT|OTHER"}.
+  const prompt=`You are the intake gate for the RINL/VSP LMMM maintenance knowledge system.
+Decide PROJECT RELEVANCE, not whether the page merely contains technical words.
+
+ACCEPT as LMMM_RELEVANT only when the source is plausibly useful to LMMM plant work: plant equipment, mechanical/electrical/instrumentation maintenance, operations, equipment drawings/drawing lists, manuals, spares/parts, BOQ, logbooks, inspections, condition monitoring, shutdowns, work orders, production, plant safety/procedures, or an engineering reference directly useful to industrial maintenance.
+
+REJECT as UNRELATED when it is a general competitive/trade/school exam question paper, generic classroom worksheet, personal/social/entertainment content, or other material not intended as LMMM/plant maintenance knowledge. A page being about "trade/basic fitting" or having technical terms does NOT by itself make an exam/question paper LMMM relevant.
+
+If the source is a drawing/parts/manual/BOQ list, classify it LMMM_RELEVANT even when exact LMMM equipment mapping is not yet known; mapping can remain NEEDS_REVIEW.
+
+Return ONLY JSON:
+{"relevance":"LMMM_RELEVANT|UNRELATED|UNCERTAIN","reason":"short English reason","document_type":"DRAWING_LIST|PARTS_LIST|MANUAL_REFERENCE|BOQ|LOGBOOK|INSPECTION|DEFECT|JOB|TRAINING_REFERENCE|OTHER"}
 Filename: ${filename||'(unknown)'}
 Caption: ${caption||'(none)'}`;
   const body={contents:[{parts:[{text:prompt},{inline_data:{mime_type:mime,data:bytes.toString('base64')}}]}],generationConfig:{temperature:0,responseMimeType:'application/json',maxOutputTokens:512}};
   const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   if(!r.ok) throw new Error(`Relevance check failed ${r.status}: ${(await r.text()).slice(0,300)}`);
   const j=await r.json(),txt=(j.candidates?.[0]?.content?.parts||[]).map(x=>x.text||'').join('');
-  return safeJsonV874(txt)||{relevance:'UNCERTAIN',reason:'Could not confidently classify',source_kind:'OTHER'};
+  return safeJsonV874(txt)||{relevance:'UNCERTAIN',reason:'Could not confidently classify',document_type:'OTHER'};
 }
+
 async function extractMaintenanceCoreV887(bytes,mime,filename,caption,compact=false){
   if(!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY missing');
   const ext=String(filename||'').toLowerCase().match(/\.([a-z0-9]+)$/)?.[1]||'';
@@ -940,7 +947,8 @@ The source may contain English, Telugu, Hindi, Tenglish, handwriting, scans, tab
 
 CRITICAL RULES:
 1. Read EVERY page/frame of the source, not only page 1 and not only a summary. For multi-page PDF/TIFF, process pages in order and extract every legible row/item from every page. Transcribe all legible meaningful text and table rows in source order into full_text. Do not intentionally omit BOQ items, drawing numbers, part numbers, quantities, dates, headings or maintenance lines. If something is unreadable, write [UNREADABLE] instead of guessing.
-1A. For DRAWING_LIST/BOQ/table documents, extracted_items MUST contain ALL legible rows from ALL pages, one source row per item. Never return only the first few rows as a sample. document_summary may summarize, but full_text/extracted_items must be exhaustive within the source.
+1A. For DRAWING_LIST/PARTS_LIST/BOQ/table reference documents, extracted_items is the PRIMARY table output. Put each legible source row there. Do NOT duplicate every reference row into records. records is only for genuine maintenance events (defect/job/inspection/history/etc.). For a pure drawing/parts/BOQ reference list, records may contain one document-level NEEDS_REVIEW record while extracted_items carries the table rows.
+1B. For multi-page reference lists, extract as many complete rows as fit safely. Never invent missing rows. Preserve page/item/drawing/part identifiers exactly.
 2. Separately classify the whole document. A BOQ/drawing list/manual/reference document is NOT a set of maintenance events.
 3. Never invent or expand Equipment/SAP/Sub-equipment/Drawing/Part identifiers. A generic phrase such as "mill equipment", "repair of mill equipment", a contractor name or document title is NOT an equipment identity. If an exact equipment mapping is not supported by the source, equipment=null and confidence=NEEDS_REVIEW.
 4. For genuine transaction/event content, split only real independent events by explicit equipment/date. For reference documents, use one document-level record and preserve detailed rows in extracted_items.
@@ -955,7 +963,7 @@ Return ONLY one JSON object:
  "document_type":"MAINTENANCE_EVENT|LOGBOOK|BOQ|DRAWING_LIST|MANUAL|REFERENCE|SPREADSHEET|UNRELATED|OTHER",
  "detected_languages":["..."],
  "document_summary":"short source-faithful summary in English",
- "full_text":"complete legible SOURCE-LANGUAGE transcription in source order",
+ "full_text":"complete meaningful source transcription; for large tabular drawing/parts/BOQ lists, headings plus structured extracted_items are sufficient and rows need not be duplicated here",
  "review_text_english":"complete clear English rendering of the meaningful extracted source content in source order",
  "extracted_items":[{"item_no":"","identifier":"","description":"","quantity":"","unit":"","remarks":""}],
  "records":[
@@ -968,7 +976,7 @@ Caption: ${caption||'(none)'}
 Filename: ${filename||'(unknown)'}
 Source format: ${ext||sendMime}.`;
   const body={contents:[{parts:[{text:prompt},{inline_data:{mime_type:sendMime,data:bytes.toString('base64')}}]}],
-    generationConfig:{temperature:0.02,responseMimeType:'application/json',maxOutputTokens:16384}};
+    generationConfig:{temperature:0.02,responseMimeType:'application/json',maxOutputTokens:8192}};
   const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   if(!r.ok) throw new Error(`Gemini extraction failed ${r.status}: ${(await r.text()).slice(0,500)}`);
   const j=await r.json(),txt=(j.candidates?.[0]?.content?.parts||[]).map(x=>x.text||'').join('');
@@ -1281,9 +1289,9 @@ async function processMediaMessageV874(from,m){
     const ext=String(filename).toLowerCase().match(/\.([a-z0-9]+)$/)?.[1]||'';
     const gateMime=mime.startsWith('audio/ogg')?'audio/ogg':mime.startsWith('audio/mp4')?'audio/mp4':mime.startsWith('audio/mpeg')?'audio/mpeg':mime;
     let relevance={relevance:'UNCERTAIN',reason:'Relevance pre-check unavailable'};
-    try{relevance=await classifyTechnicalRelevanceV886(d.bytes,gateMime,filename,caption);}catch(gateErr){console.error('[RELEVANCE_GATE]',gateErr);}
+    try{relevance=await classifyTechnicalRelevanceV886(d.bytes,gateMime,filename,caption);console.log('[RELEVANCE]',filename,relevance.relevance,relevance.document_type||'',relevance.reason||'');}catch(gateErr){console.error('[RELEVANCE_GATE]',gateErr);}
     if(String(relevance.relevance||'').toUpperCase()==='UNRELATED'){
-      await sendText(from,`This upload does not appear relevant to LMMM / engineering / maintenance data.\n\nReason: ${String(relevance.reason||'Unrelated content').slice(0,240)}\n\nNothing was extracted or stored.`);
+      await sendText(from,`This upload does not appear relevant to LMMM plant / maintenance knowledge.\n\nReason: ${String(relevance.reason||'Unrelated content').slice(0,240)}\n\nNothing was extracted or stored.`);
       return;
     }
     // UNCERTAIN is an internal routing state: continue extraction without bothering the user.
@@ -1575,4 +1583,4 @@ app.post('/webhook',(req,res)=>{
 });
 
 await initDB();
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.8.7 technical-extraction-retry listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.8.8 lmmm-relevance-reference-extraction listening on ${PORT}`));
