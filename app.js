@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.9.2
+// LMMM AI Maintenance V8.9.3
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -931,15 +931,21 @@ Caption: ${caption||'(none)'}`;
 
 
 function geminiModelCandidatesV892(){
-  const raw=[GEMINI_MODEL,process.env.GEMINI_FALLBACK_MODEL,'gemini-2.5-flash','gemini-2.5-flash-lite']
-    .filter(Boolean).map(x=>String(x).trim()).filter(Boolean);
+  const raw=[
+    'gemini-3.8-flash',
+    process.env.GEMINI_FALLBACK_MODEL,
+    GEMINI_MODEL,
+    'gemini-3.6-flash',
+    'gemini-3.5-flash',
+    'gemini-flash-latest'
+  ].filter(Boolean).map(x=>String(x).trim()).filter(Boolean);
   return [...new Set(raw)];
 }
 async function geminiGenerateWithFallbackV892(body,timeoutMs=45000){
   let lastErr=null;
   for(const model of geminiModelCandidatesV892()){
     const url=`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`;
-    for(let attempt=1;attempt<=2;attempt++){
+    for(let attempt=1;attempt<=1;attempt++){
       try{
         const r=await geminiFetchV890(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)},timeoutMs);
         if(r.ok) return {response:r,model};
@@ -951,7 +957,7 @@ async function geminiGenerateWithFallbackV892(body,timeoutMs=45000){
       }catch(e){
         lastErr=e; console.error('[GEMINI_MODEL_ERROR]',model,attempt,String(e));
       }
-      if(attempt===1) await new Promise(res=>setTimeout(res,900));
+      
     }
   }
   throw lastErr||new Error('All Gemini model attempts failed');
@@ -1394,7 +1400,7 @@ async function processMediaMessageV874(from,m){
     const msg=String(e.message||e);
     if(msg.startsWith('UNSUPPORTED:')) await sendText(from,'Unsupported file type. Supported test formats: PDF, TIFF/images, TXT/CSV, Word, Excel, Access MDB/ACCDB and WhatsApp voice/audio. Nothing was stored.');
     else if(/audio|ogg|opus|voice/i.test(msg)) await sendText(from,'Voice extraction failed for this audio format. Nothing was stored. Please resend the voice note; the bot will retry with the supported audio path.');
-    else await sendText(from,'AI extraction service is temporarily busy. I tried the backup model too. Nothing was stored. Please retry shortly.');
+    else await sendText(from,'AI extraction service is temporarily unavailable across the configured models. Nothing was stored. Please retry shortly.');
   }
 }
 
@@ -1673,4 +1679,4 @@ app.post('/webhook',(req,res)=>{
 });
 
 await initDB();
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.9.2 model-failover extraction listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.9.3 current-model failover listening on ${PORT}`));
