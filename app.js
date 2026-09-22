@@ -1303,7 +1303,16 @@ async function resolveHierarchyRole(employeeNumber, performedBy='SYSTEM_AUTO'){
   // Owner/Super Admin identity is authoritative.
   if(isOwner(u.whatsapp_number)){ role='SUPER_ADMIN'; source='OWNER_NUMBER'; sourceDetail='Configured owner/super-admin number'; }
 
-  // Imported/approved hierarchy master has highest non-owner priority.
+  // Explicit responsibility selected/approved in the bot is the highest non-owner authority.
+  if(!role){
+    const rr=(await pool.query(`SELECT responsibility_role FROM user_responsibilities
+      WHERE employee_number=$1 AND active=true
+        AND (valid_from IS NULL OR valid_from<=now()) AND (valid_to IS NULL OR valid_to>=now())
+      ORDER BY created_at DESC`,[employeeNumber])).rows;
+    for(const r of rr){ const c=roleCodeFromText(r.responsibility_role); if(c){role=c;source='EXPLICIT_RESPONSIBILITY';sourceDetail=r.responsibility_role;break;} }
+  }
+
+  // Imported hierarchy master is used when no explicit responsibility was assigned in the bot.
   if(!role){
     const hr=(await pool.query(`SELECT * FROM employee_hierarchy_assignments
       WHERE employee_number=$1 AND active=true
@@ -1311,15 +1320,6 @@ async function resolveHierarchyRole(employeeNumber, performedBy='SYSTEM_AUTO'){
       ORDER BY updated_at DESC,id DESC LIMIT 1`,[employeeNumber])).rows[0];
     const hc=hr && roleCodeFromText(hr.operational_role);
     if(hc){ role=hc; source='EMPLOYEE_HIERARCHY_MASTER'; sourceDetail=hr.source_reference||'Approved hierarchy assignment'; }
-  }
-
-  // Existing explicit responsibility is authoritative and supports old users.
-  if(!role){
-    const rr=(await pool.query(`SELECT responsibility_role FROM user_responsibilities
-      WHERE employee_number=$1 AND active=true
-        AND (valid_from IS NULL OR valid_from<=now()) AND (valid_to IS NULL OR valid_to>=now())
-      ORDER BY created_at DESC`,[employeeNumber])).rows;
-    for(const r of rr){ const c=roleCodeFromText(r.responsibility_role); if(c){role=c;source='EXPLICIT_RESPONSIBILITY';sourceDetail=r.responsibility_role;break;} }
   }
 
   // Existing assignment responsibility is also valid evidence.
@@ -1477,9 +1477,10 @@ async function setResponsibility(from, employeeNumber, code) {
        VALUES($1,$2,$3,$4,$5)`,
       [employeeNumber,role,section,area,from]
     );
+    const opRole=code==='NORMAL_EMPLOYEE'||code==='GENERAL_SHIFT'?'NORMAL_USER':code;
     await pool.query(
-      `UPDATE users SET responsibility=$2,updated_at=now() WHERE employee_number=$1`,
-      [employeeNumber,role]
+      `UPDATE users SET responsibility=$2,operational_role=$3,updated_at=now() WHERE employee_number=$1`,
+      [employeeNumber,role,opRole]
     );
     await pool.query(
       `INSERT INTO authority_audit
@@ -1840,6 +1841,7 @@ function naturalSearchAliases(q=''){
   x=x.replace(/\bwbf\s*[- ]?1\b/ig,'WBF-1').replace(/\bwbf\s*[- ]?2\b/ig,'WBF-2');
   x=x.replace(/\becs\s*[- ]?1\b/ig,'ECS-1').replace(/\becs\s*[- ]?2\b/ig,'ECS-2');
   x=x.replace(/\brecups?\b/ig,'recuperator');
+  x=x.replace(/\br\s*\.?\s*t\s*\.?\b/ig,'ROLLER TABLE');
   // Conservative maintenance-intent typo normalization. This changes only search intent words, never asset/part/drawing IDs.
   x=x.replace(/\b(?:dectives?|defectives?|difects?|deffects?)\b/ig,'defects');
   x=x.replace(/\b(?:viberation|vibrtion|vibratoin)s?\b/ig,'vibration');
@@ -2767,7 +2769,7 @@ async function universalSearch(q,u){
      return {text:`${equipment} — ${intent==='defect'?'Defects':intent==='history'?'History':'Jobs'}\nShowing latest ${rows.length}\n\n${formatBundledResults(rows)}`,
        buttons:await primarySearchButtons(u,rows.length===20),status:'OK'};
    }
-   return {text:`${equipment}\nNo source-backed ${intent==='defect'?'defect':intent==='history'?'history':'job'} records are available in the currently indexed ${intent==='defect'?'Defects':intent==='history'?'History':'Jobs'} data.`,buttons:await primarySearchButtons(u,false),status:'NO_MODULE_DATA'};
+   return {text:`${equipment}\nNo source-backed ${intent==='defect'?'defect':intent==='history'?'history':'job'} records are available in the currently indexed ${intent==='defect'?'Defects':intent==='history'?'History':'Jobs'} data.`,buttons:[],status:'NO_MODULE_DATA'};
  }
  ctx=await getSearchContext(u); const dr=range|| (ctx?.date_from?{from:String(ctx.date_from).slice(0,10),to:String(ctx.date_to||ctx.date_from).slice(0,10)}:null);
  if(intent==='condition' && equipment){
@@ -2801,17 +2803,19 @@ async function universalSearch(q,u){
 }
 
 async function retrieveEquipmentAboutKnowledge(equipment,u){
- const eq=String(equipment||'').trim();if(!eq)return[];const like=`%${eq}%`;
+ const eq=naturalSearchAliases(String(equipment||'').trim());if(!eq)return[];
+ const terms=eq.toUpperCase()==='ROLLER TABLE'
+   ? ['ROLLER TABLE','ROLLER TABLES','R/T']
+   : [eq];
+ const clauses=[],vals=[];
+ for(const term of terms){vals.push(`%${term}%`);const p=vals.length;clauses.push(`(LOWER(COALESCE(equipment_name,'')) LIKE LOWER($${p}) OR LOWER(COALESCE(title,'')) LIKE LOWER($${p}) OR LOWER(COALESCE(section_heading,'')) LIKE LOWER($${p}) OR LOWER(content_text) LIKE LOWER($${p}))`);}
  const r=await pool.query(`SELECT id,document_class,title,equipment_name,page_start,page_end,section_heading,content_text,source_filename
  FROM technical_document_chunks
- WHERE LOWER(COALESCE(equipment_name,''))=LOWER($1) OR LOWER(COALESCE(title,'')) LIKE LOWER($2)
- OR LOWER(COALESCE(section_heading,'')) LIKE LOWER($2) OR LOWER(content_text) LIKE LOWER($2)
- ORDER BY CASE LOWER(COALESCE(document_class,'')) WHEN 'manual' THEN 0 WHEN 'smp' THEN 1 WHEN 'sop' THEN 2 WHEN 'other_reference' THEN 3 ELSE 4 END,
- CASE WHEN LOWER(COALESCE(equipment_name,''))=LOWER($1) THEN 0 ELSE 1 END,page_start NULLS LAST,id LIMIT 24`,[eq,like]);
- if(r.rows.length)return r.rows;
- return (await pool.query(`SELECT NULL::bigint id,'knowledge'::text document_class,source_name title,NULL::text equipment_name,
- NULL::int page_start,NULL::int page_end,NULL::text section_heading,raw_text content_text,source_name source_filename
- FROM lmmm_knowledge_records WHERE LOWER(raw_text) LIKE LOWER($1) OR LOWER(normalized_text) LIKE LOWER($1) LIMIT 18`,[like])).rows;
+ WHERE (${clauses.join(' OR ')})
+   AND LOWER(COALESCE(document_class,'')) IN ('manual','smp','sop','other_reference','drawing','technical')
+ ORDER BY CASE LOWER(COALESCE(document_class,'')) WHEN 'manual' THEN 0 WHEN 'smp' THEN 1 WHEN 'sop' THEN 2 WHEN 'technical' THEN 3 WHEN 'drawing' THEN 4 ELSE 5 END,
+ page_start NULLS LAST,id LIMIT 24`,vals);
+ return r.rows;
 }
 async function retrieveReferenceKnowledge(question,u){
  const ctx=await currentShiftContext(u);
@@ -3651,9 +3655,9 @@ async function ownerCommand(from, text) {
     }
 
     if(m[1].toLowerCase()==='disable'){
-      await deactivateUserByEmployee(m[2],from,'Super Admin disabled access');
-      await sendText(exists.whatsapp_number,'Your LMMM AI Maintenance access has been disabled by Super Admin.');
-      await sendText(from, `${m[2]} disabled. Registration and maintenance history preserved.`);
+      await removeUserRegistrationForReregister(m[2],from);
+      await sendText(exists.whatsapp_number,'Your LMMM AI Maintenance registration has been disabled. Send Hi to register again.');
+      await sendText(from, `${m[2]} disabled. Registration access removed; historical maintenance records preserved. User can register again.`);
     }else{
       await reactivateUserByEmployee(m[2],from,'Super Admin reactivated access');
       await sendText(exists.whatsapp_number,'Your LMMM AI Maintenance access has been reactivated.');
@@ -3889,7 +3893,9 @@ async function processMessage(from, text, rawMessage = null) {
   // and never fall through to the normal "How can I help you?" path.
   if (u.approval_status === 'removed') {
     const d=parseReg(clean);
-    if(!d){await sendText(from,T('register',te));return;}
+    if(!d){await sendText(from, te
+      ? 'మీ పాత registration inactive అయింది. మళ్లీ register చేయండి:\nName / Employee Number / Designation / Section / Area'
+      : 'Your previous registration is inactive. Please re-register:\nName / Employee Number / Designation / Section / Area');return;}
     await deleteRegistrationByWA(from);
     const saved=await saveFreshRegistration(from,d);
     if(!saved.ok){await sendText(from,'Employee Number already active.');return;}
@@ -4275,7 +4281,7 @@ async function processMessage(from, text, rawMessage = null) {
         : await retrieveReferenceKnowledge(kq,u);
       if(knowledgeRows.length){
         const aq=us?.referenceIntent==='about'
-          ? `About ${us.strictEquipment}: give its source-backed technical description, function/working, major assemblies/components and relevant maintenance information from the supplied manuals/reference documents. Do not substitute unrelated equipment.`
+          ? `About ${naturalSearchAliases(us.strictEquipment)}: use ONLY the supplied authorised manual/reference chunks that explicitly refer to this equipment or its exact approved search alias. Give only details explicitly present in those chunks. Do not infer associations, do not merge Cold Shear/Run-out/other equipment merely because Roller Table is mentioned nearby, and do not invent function/working/components. If a requested detail is absent, say that detail is not available in the indexed manuals.`
           : kq;
         const answer=await geminiAnswerFromKnowledge(aq,knowledgeRows,u);
         if(answer){await sendText(from,answer);return;}
