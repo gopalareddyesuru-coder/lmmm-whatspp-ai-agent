@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.9.6
+// LMMM AI Maintenance V8.9.7
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -1067,6 +1067,33 @@ Caption: ${caption||'(none)'}`;
 }
 
 
+async function extractPdfBatchesV897(bytes,mime,filename,caption){
+  const m=String(filename).match(/(\d+)\s*-\s*(\d+)/), totalHint=Number((m||[])[2]||0);
+  const maxPages=totalHint>0&&totalHint<=200?totalHint:50, batchSize=2, all=[];
+  let emptyStreak=0;
+  for(let start=1;start<=maxPages;start+=batchSize){
+    const end=Math.min(start+batchSize-1,maxPages);
+    const prompt=`Transcribe ONLY PDF pages ${start}-${end}. Return only data lines, no explanation.
+For EVERY legible list/table row: ROW|page|item|exact identifier|exact designation/description|quantity|unit|remarks
+Preserve identifiers exactly; leave absent fields empty; never invent. If no rows: NO_ROWS`;
+    const body={contents:[{parts:[{text:prompt},{inline_data:{mime_type:mime,data:bytes.toString('base64')}}]}],generationConfig:{maxOutputTokens:4096}};
+    const gx=await geminiGenerateWithFallbackV892(body,60000),r=gx.response;
+    console.log('[PDF_BATCH]',filename,start,end,gx.model);
+    const j=await r.json(),txt=(j.candidates?.[0]?.content?.parts||[]).map(x=>x.text||'').join('').trim();
+    let added=0;
+    for(const raw of txt.split(/\r?\n/)){
+      const line=raw.trim(); if(!/^ROW\|/i.test(line)) continue;
+      const p=line.split('|'),row={page:(p[1]||'').trim()||String(start),item_no:(p[2]||'').trim()||null,identifier:(p[3]||'').trim()||null,description:(p[4]||'').trim()||null,quantity:(p[5]||'').trim()||null,unit:(p[6]||'').trim()||null,remarks:(p.slice(7).join('|')||'').trim()||null};
+      if(row.identifier||row.description){all.push(row);added++;}
+    }
+    emptyStreak=added?0:emptyStreak+1;
+    if(!totalHint&&start>=6&&emptyStreak>=3) break;
+  }
+  const clean=all.filter((x,i,a)=>{const k=[x.page,x.item_no,x.identifier,x.description,x.quantity,x.unit].join('|').toLowerCase();return a.findIndex(y=>[y.page,y.item_no,y.identifier,y.description,y.quantity,y.unit].join('|').toLowerCase()===k)===i;});
+  if(!clean.length) throw new Error('PDF batch extraction returned zero rows');
+  const preview=clean.map(x=>[x.page&&`P${x.page}`,x.item_no,x.identifier,x.description,x.quantity,x.unit,x.remarks].filter(Boolean).join(' | ')).join('\n');
+  return {document_type:'DRAWING_LIST',detected_languages:['English'],document_summary:`Drawing/reference list extracted in page batches (${clean.length} rows).`,full_text:preview,review_text_english:preview,extracted_items:clean,records:[],_extraction_mode:'PDF_PAGE_BATCHES'};
+}
 async function extractPlainTechnicalV891(bytes,mime,filename,caption){
   if(!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY missing');
   const prompt=`You are a document transcription engine, not a conversational assistant.
@@ -1104,20 +1131,13 @@ Preserve identifiers character-for-character. Do not invent values. Continue unt
 }
 
 async function extractMaintenanceV874(bytes,mime,filename,caption){
-  if(/pdf|tiff|image/i.test(String(mime||''))){
-    try{return await extractPlainTechnicalV891(bytes,mime,filename,caption);}
-    catch(docErr){
-      console.error('[FULL_DOCUMENT_EXTRACT]',docErr);
-      try{return await extractMaintenanceCoreV887(bytes,mime,filename,caption,false);}
-      catch(structErr){console.error('[STRUCTURED_FALLBACK]',structErr);throw structErr;}
-    }
+  if(/pdf/i.test(String(mime||''))){
+    try{return await extractPdfBatchesV897(bytes,mime,filename,caption);}
+    catch(e){console.error('[PDF_BATCH_EXTRACT]',e);return await extractPlainTechnicalV891(bytes,mime,filename,caption);}
   }
+  if(/tiff|image/i.test(String(mime||''))) return await extractPlainTechnicalV891(bytes,mime,filename,caption);
   try{return await extractMaintenanceCoreV887(bytes,mime,filename,caption,false);}
-  catch(firstErr){
-    console.error('[EXTRACT_PRIMARY]',firstErr);
-    try{return await extractMaintenanceCoreV887(bytes,mime,filename,caption,true);}
-    catch(retryErr){console.error('[EXTRACT_RETRY]',retryErr);throw retryErr;}
-  }
+  catch(e){console.error('[EXTRACT_PRIMARY]',e);return await extractMaintenanceCoreV887(bytes,mime,filename,caption,true);}
 }
 
 function ingestPackV878(p){
@@ -1746,4 +1766,4 @@ app.post('/webhook',(req,res)=>{
 });
 
 await initDB();
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.9.6 complete-reference extraction listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.9.7 PDF-page-batch extraction listening on ${PORT}`));
