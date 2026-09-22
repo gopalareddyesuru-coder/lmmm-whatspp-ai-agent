@@ -367,6 +367,13 @@ async function initDB(){
     CREATE INDEX IF NOT EXISTS idx_ingest_equipment ON maintenance_ingest_records(equipment);
     CREATE INDEX IF NOT EXISTS idx_ingest_module_date ON maintenance_ingest_records(module,event_date);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_ingest_source_fingerprint ON maintenance_ingest_records(submitted_by_whatsapp,source_sha256,module,COALESCE(event_date,'1900-01-01'::date),COALESCE(equipment,''),COALESCE(description,''));
+    CREATE TABLE IF NOT EXISTS pending_file_ingests(
+      id BIGSERIAL PRIMARY KEY, submitted_by_whatsapp TEXT NOT NULL, submitted_by_employee_number TEXT,
+      source_media_id TEXT, source_filename TEXT, source_mime_type TEXT, source_caption TEXT, source_sha256 TEXT,
+      extracted_rows JSONB NOT NULL DEFAULT '[]'::jsonb, status TEXT NOT NULL DEFAULT 'PENDING_CONFIRMATION',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS idx_pending_ingest_user ON pending_file_ingests(submitted_by_whatsapp,status,created_at);
   `);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS employment_category TEXT`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS employee_type TEXT`);
@@ -853,7 +860,7 @@ if((a=text.match(/^AUTH_ADV:(\d+)$/))){await sendList(from,'Advanced Authorities
     if(normWA(from)!==u.whatsapp_number) await sendText(from,`${m[1]} registration removed. Maintenance history preserved.`);
     return true;
   }
-  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.7.6 AUTO FILE INGEST');return true;}
+  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.7.7 CONFIRM BEFORE STORE');return true;}
   return false;
 }
 async function hasAuthorityV874(u, authority){
@@ -890,42 +897,81 @@ async function extractMaintenanceV874(bytes,mime,filename,caption){
   const supportedExt=new Set(Object.keys(extMime));
   if(!supportedExt.has(ext) && !['application/pdf','image/jpeg','image/png','image/webp','image/tiff','text/plain','text/csv'].some(x=>mime0.startsWith(x))) throw new Error(`UNSUPPORTED:${mime0}`);
   const sendMime=(mime0==='application/octet-stream'||mime0==='binary/octet-stream')?(extMime[ext]||mime0):mime0;
-  const prompt=`You are extracting authorised LMMM Dept-35 maintenance TEST data from a WhatsApp file. The source may be English, Telugu, Hindi, Tenglish, or mixed language. Understand the source language; normalize maintenance meaning into concise technical English while preserving exact original equipment/SAP/sub-equipment/drawing/part numbers, numeric readings and source meaning. Return ONLY a JSON array. Split independent dates/equipment/events into separate objects. Map each event to its respective equipment only when supported by the source. Never invent identifiers, dates, equipment, readings, actions or status. If equipment/date/module mapping is ambiguous use null and confidence NEEDS_REVIEW rather than guessing. Classify module only as LOG_BOOK, BREAKDOWN_DELAY, DEFECT, JOB, PM, INSPECTION, CBM_VIBRATION, HISTORY, SPARES, SHUTDOWN, ATTENDANCE, MANPOWER, or NEEDS_REVIEW. Fields: module, area, equipment, sub_equipment, event_date (YYYY-MM-DD or null), event_time (HH:MM:SS or null), shift, description, action_taken, status, remarks, confidence (HIGH/MEDIUM/NEEDS_REVIEW). For tables/databases, process rows/records independently and preserve relationships that are explicit in the source. Caption: ${caption||'(none)'}. Filename: ${filename||'(unknown)'}. Source format: ${ext||sendMime}.`;
-  const body={contents:[{parts:[{text:prompt},{inline_data:{mime_type:sendMime,data:bytes.toString('base64')}}]}],generationConfig:{temperature:0.1,responseMimeType:'application/json'}};
+  const prompt=`You are the cautious ingestion extractor for RINL/VSP LMMM Dept-35. FIRST classify the WHOLE document before extracting rows. The source may be English, Telugu, Hindi, Tenglish, handwriting, tables or mixed language. Never treat arbitrary text lines, exam/question-paper content, headers, BOQ lines, drawing-list rows, or general reference material as maintenance events merely because text was extracted.\n\nReturn ONLY a JSON array. For genuine event/transaction data, split only real independent events by explicit date/equipment. For reference documents such as BOQ, drawing lists, manuals or technical reference, return a small number of document-level records, not one record per text line; use module DRAWING_DOCS or MANUAL_REFERENCE as appropriate. For content unrelated to LMMM maintenance, return one NEEDS_REVIEW record with description explaining that the source is not confidently maintenance data.\n\nNormalize maintenance meaning into concise technical English, but preserve exact original Equipment/SAP/Sub-equipment/Drawing/Part numbers, numeric readings and source meaning. Never invent identifiers, equipment, dates, readings, actions, status or relationships. Ambiguous equipment/date/module => null and confidence NEEDS_REVIEW. Allowed module values: LOG_BOOK, BREAKDOWN_DELAY, DEFECT, JOB, PM, INSPECTION, CBM_VIBRATION, HISTORY, SPARES, DRAWING_DOCS, MANUAL_REFERENCE, SHUTDOWN, ATTENDANCE, MANPOWER, NEEDS_REVIEW. Fields: module, area, equipment, sub_equipment, event_date (YYYY-MM-DD or null), event_time (HH:MM:SS or null), shift, description, action_taken, status, remarks, confidence (HIGH/MEDIUM/NEEDS_REVIEW). Caption: ${caption||'(none)'}. Filename: ${filename||'(unknown)'}. Source format: ${ext||sendMime}.`;
+  const body={contents:[{parts:[{text:prompt},{inline_data:{mime_type:sendMime,data:bytes.toString('base64')}}]}],generationConfig:{temperature:0.05,responseMimeType:'application/json'}};
   const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   if(!r.ok) throw new Error(`Gemini extraction failed ${r.status}: ${(await r.text()).slice(0,500)}`);
   const j=await r.json(),txt=(j.candidates?.[0]?.content?.parts||[]).map(x=>x.text||'').join('');
-  const out=safeJsonV874(txt); if(!Array.isArray(out)) throw new Error('Extraction JSON invalid'); return out;
+  const out=safeJsonV874(txt); if(!Array.isArray(out)) throw new Error('Extraction JSON invalid'); return out.slice(0,250);
+}
+function ingestPreviewV877(rows,filename){
+  const review=rows.filter(x=>String(x.confidence||'').toUpperCase()==='NEEDS_REVIEW').length;
+  const lines=rows.slice(0,6).map((x,i)=>`${i+1}. ${String(x.module||'NEEDS_REVIEW').toUpperCase()} | ${x.equipment||'Equipment: not confirmed'} | ${x.event_date||'Date: not confirmed'}\n${String(x.description||'-').slice(0,180)}`);
+  return `File extracted — NOT STORED yet\nSource: ${filename}\nRecords found: ${rows.length}\nNeeds Review: ${review}\n\n${lines.join('\n\n')}${rows.length>6?`\n\n+${rows.length-6} more record(s)`:''}\n\nPlease choose what to do with this extraction.`;
+}
+async function setPendingIngestSessionV877(from,id){
+  await pool.query(`INSERT INTO ui_sessions(whatsapp_number,session_key,session_value,updated_at) VALUES($1,'PENDING_FILE_INGEST',$2::jsonb,now()) ON CONFLICT(whatsapp_number,session_key) DO UPDATE SET session_value=EXCLUDED.session_value,updated_at=now()`,[normWA(from),JSON.stringify({id})]);
+}
+async function getPendingIngestV877(from){
+  const s=await pool.query(`SELECT session_value FROM ui_sessions WHERE whatsapp_number=$1 AND session_key='PENDING_FILE_INGEST'`,[normWA(from)]);
+  const id=s.rows[0]?.session_value?.id;if(!id)return null;
+  return (await pool.query(`SELECT * FROM pending_file_ingests WHERE id=$1 AND submitted_by_whatsapp=$2 AND status='PENDING_CONFIRMATION'`,[id,normWA(from)])).rows[0]||null;
+}
+async function clearPendingIngestV877(from,id,status='DISCARDED'){
+  if(id)await pool.query(`UPDATE pending_file_ingests SET status=$2,updated_at=now() WHERE id=$1`,[id,status]);
+  await pool.query(`DELETE FROM ui_sessions WHERE whatsapp_number=$1 AND session_key='PENDING_FILE_INGEST'`,[normWA(from)]);
+}
+async function showIngestOptionsV877(from,p){
+  const rows=Array.isArray(p.extracted_rows)?p.extracted_rows:[];
+  await sendText(from,ingestPreviewV877(rows,p.source_filename));
+  await sendList(from,'Select action for this file','Choose',[{id:'INGEST_STORE_VERIFIED',title:'Store Verified',description:'Store confirmed rows only; review rows stay out'},{id:'INGEST_REVIEW',title:'Review / Edit',description:'Show uncertain/missing fields before storage'},{id:'INGEST_READ_ONLY',title:'Read Only',description:'Use extraction only; do not store'},{id:'INGEST_DISCARD',title:'Discard',description:'Discard this pending extraction'}],'File Action');
+}
+async function storePendingVerifiedV877(from,p){
+  const u=await byWA(from); if(!u||!(await hasAuthorityV874(u,'ENTRY'))){await sendText(from,'Permission denied. ENTRY authority is required to store data.');return;}
+  const rows=Array.isArray(p.extracted_rows)?p.extracted_rows:[];let saved=0,review=0,dupe=0;
+  for(const x of rows){
+    const confidence=['HIGH','MEDIUM'].includes(String(x.confidence||'').toUpperCase())?String(x.confidence).toUpperCase():'NEEDS_REVIEW';
+    if(confidence==='NEEDS_REVIEW'){review++;continue;}
+    try{const q=await pool.query(`INSERT INTO maintenance_ingest_records(data_class,source_type,source_media_id,source_filename,source_mime_type,source_caption,source_sha256,submitted_by_employee_number,submitted_by_whatsapp,module,area,equipment,sub_equipment,event_date,event_time,shift,description,action_taken,status,remarks,confidence,raw_extraction) VALUES('TEST','WHATSAPP_FILE',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::date,$13::time,$14,$15,$16,$17,$18,$19,$20::jsonb) ON CONFLICT DO NOTHING RETURNING id`,[p.source_media_id,p.source_filename,p.source_mime_type,p.source_caption,p.source_sha256,u.employee_number,normWA(from),String(x.module||'NEEDS_REVIEW').toUpperCase(),x.area||null,x.equipment||null,x.sub_equipment||null,x.event_date||null,x.event_time||null,x.shift||null,x.description||null,x.action_taken||null,x.status||null,x.remarks||null,confidence,JSON.stringify(x)]);if(q.rowCount)saved++;else dupe++;}catch(e){console.error('[INGEST_STORE]',e.message);review++;}
+  }
+  await clearPendingIngestV877(from,p.id,review?'PARTIAL_REVIEW':'STORED');
+  await sendText(from,`✅ Confirmed TEST data stored\nStored: ${saved}\nHeld back for review: ${review}\nDuplicates skipped: ${dupe}\nSource: ${p.source_filename}\n\nUncertain records were not stored.`);
+}
+async function handlePendingIngestCommandV877(from,cmd){
+  if(!/^INGEST_/.test(cmd) && !/^EDIT\s+\d+\s*\|/i.test(cmd))return false;
+  const p=await getPendingIngestV877(from);if(!p){await sendText(from,'No pending file extraction. Please send the file again.');return true;}
+  if(cmd==='INGEST_STORE_VERIFIED'){await storePendingVerifiedV877(from,p);return true;}
+  if(cmd==='INGEST_READ_ONLY'){await clearPendingIngestV877(from,p.id,'READ_ONLY');await sendText(from,'Read-only selected. Nothing from this file was stored.');return true;}
+  if(cmd==='INGEST_DISCARD'){await clearPendingIngestV877(from,p.id,'DISCARDED');await sendText(from,'Pending extraction discarded. Nothing was stored.');return true;}
+  if(cmd==='INGEST_REVIEW'){
+    const rows=Array.isArray(p.extracted_rows)?p.extracted_rows:[];const bad=rows.map((x,i)=>({x,i})).filter(o=>String(o.x.confidence||'').toUpperCase()==='NEEDS_REVIEW'||!o.x.equipment||!o.x.event_date);
+    if(!bad.length){await sendText(from,'No uncertain/missing records detected. Choose Store Verified if the preview is correct.');return true;}
+    const msg=bad.slice(0,8).map(o=>`${o.i+1}. ${o.x.module||'NEEDS_REVIEW'} | Equipment: ${o.x.equipment||'MISSING'} | Date: ${o.x.event_date||'MISSING'}\n${String(o.x.description||'-').slice(0,160)}`).join('\n\n');
+    await sendText(from,`Review required — nothing uncertain is stored.\n\n${msg}\n\nTo correct a record send, for example:\nEDIT 1 | Equipment=WBF-2 | Date=2026-09-22 | Module=DEFECT\n\nOnly provide values supported by the source.`);return true;
+  }
+  const m=cmd.match(/^EDIT\s+(\d+)\s*\|\s*(.+)$/i);if(m){
+    const rows=Array.isArray(p.extracted_rows)?p.extracted_rows:[];const idx=Number(m[1])-1;if(idx<0||idx>=rows.length){await sendText(from,'Invalid record number.');return true;}
+    const allowed={equipment:'equipment',date:'event_date',module:'module',area:'area','sub-equipment':'sub_equipment',subequipment:'sub_equipment',shift:'shift'};
+    for(const part of m[2].split('|')){const z=part.split('=');if(z.length<2)continue;const k=allowed[z[0].trim().toLowerCase()];if(k)rows[idx][k]=z.slice(1).join('=').trim()||null;}
+    rows[idx].confidence=(rows[idx].equipment && rows[idx].module && rows[idx].module!=='NEEDS_REVIEW')?'MEDIUM':'NEEDS_REVIEW';
+    await pool.query(`UPDATE pending_file_ingests SET extracted_rows=$2::jsonb,updated_at=now() WHERE id=$1`,[p.id,JSON.stringify(rows)]);
+    const fresh={...p,extracted_rows:rows};await showIngestOptionsV877(from,fresh);return true;
+  }
+  return false;
 }
 async function processMediaMessageV874(from,m){
   try{
     const u=await byWA(from);
-    if(!u||u.approval_status!=='approved'||!u.is_active){await sendText(from,'Approved registration required before maintenance file ingestion.');return;}
-    if(!(await hasAuthorityV874(u,'ENTRY'))){await sendText(from,'Permission denied. ENTRY authority is required to store maintenance data.');return;}
+    if(!u||u.approval_status!=='approved'||!u.is_active){await sendText(from,'Approved registration required before file processing.');return;}
     const obj=m[m.type]||{},caption=String(obj.caption||'').trim();
-    // V8.7.6: maintenance files auto-ingest by default for approved users with ENTRY authority.
-    // Explicit read/extract/convert-only intent is the only no-store path.
-    const noStore=/\b(?:read|view|extract|analyse|analyze|convert)(?:\s+only)?\b|\b(?:do not|don't|dont)\s+(?:save|store|record)\b|\bno\s+(?:save|store)\b/i.test(caption);
-    if(noStore){
-      await sendText(from,'Read/extract-only request received. Permanent storage skipped. Send the file with Store/Save when you want it added to maintenance data.');
-      await setIngestModeV874(from,false);
-      return;
-    }
     const mediaId=obj.id;if(!mediaId){await sendText(from,'File media ID not available. Please resend.');return;}
-    await sendText(from,'File received. Extracting maintenance data…');
-    const d=await downloadWhatsAppMediaV874(mediaId), mime=String(obj.mime_type||d.mime||'application/octet-stream').toLowerCase();
-    const filename=obj.filename||`${m.type}_${mediaId}`;
-    const crypto=await import('node:crypto'); const sha=crypto.createHash('sha256').update(d.bytes).digest('hex');
+    await sendText(from,'File received. Extracting for preview… Nothing will be stored until you confirm.');
+    const d=await downloadWhatsAppMediaV874(mediaId),mime=String(obj.mime_type||d.mime||'application/octet-stream').toLowerCase();
+    const filename=obj.filename||`${m.type}_${mediaId}`;const crypto=await import('node:crypto');const sha=crypto.createHash('sha256').update(d.bytes).digest('hex');
     const rows=await extractMaintenanceV874(d.bytes,mime,filename,caption);
-    let saved=0,review=0,dupe=0;
-    for(const x of rows.slice(0,250)){
-      const confidence=['HIGH','MEDIUM'].includes(String(x.confidence||'').toUpperCase())?String(x.confidence).toUpperCase():'NEEDS_REVIEW';
-      if(confidence==='NEEDS_REVIEW')review++;
-      try{const q=await pool.query(`INSERT INTO maintenance_ingest_records(data_class,source_type,source_media_id,source_filename,source_mime_type,source_caption,source_sha256,submitted_by_employee_number,submitted_by_whatsapp,module,area,equipment,sub_equipment,event_date,event_time,shift,description,action_taken,status,remarks,confidence,raw_extraction) VALUES('TEST','WHATSAPP_FILE',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::date,$13::time,$14,$15,$16,$17,$18,$19,$20::jsonb) ON CONFLICT DO NOTHING RETURNING id`,[mediaId,filename,mime,caption,sha,u.employee_number,normWA(from),String(x.module||'NEEDS_REVIEW').toUpperCase(),x.area||null,x.equipment||null,x.sub_equipment||null,x.event_date||null,x.event_time||null,x.shift||null,x.description||null,x.action_taken||null,x.status||null,x.remarks||null,confidence,JSON.stringify(x)]);if(q.rowCount)saved++;else dupe++;}catch(e){console.error('[INGEST_ROW]',e.message);review++;}
-    }
-    await setIngestModeV874(from,false);
-    await sendText(from,`✅ TEST data ingestion complete\nExtracted: ${rows.length}\nStored: ${saved}\nNeeds Review: ${review}\nDuplicates skipped: ${dupe}\nSource: ${filename}\n\nNo uncertain identifier was guessed.`);
-  }catch(e){console.error('[MEDIA_INGEST]',e); const msg=String(e.message||e); if(msg.startsWith('UNSUPPORTED:')) await sendText(from,'Unsupported file type. Enabled test formats: PDF, TIFF/images, TXT/CSV, Word DOC/DOCX, Excel XLS/XLSX/XLSM, and Access MDB/ACCDB. File was not stored.'); else await sendText(from,'File extraction failed. Nothing was stored. Please retry or send a supported file.');}
+    const q=await pool.query(`INSERT INTO pending_file_ingests(submitted_by_whatsapp,submitted_by_employee_number,source_media_id,source_filename,source_mime_type,source_caption,source_sha256,extracted_rows) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb) RETURNING *`,[normWA(from),u.employee_number,mediaId,filename,mime,caption,sha,JSON.stringify(rows)]);
+    await setPendingIngestSessionV877(from,q.rows[0].id);await setIngestModeV874(from,false);await showIngestOptionsV877(from,q.rows[0]);
+  }catch(e){console.error('[MEDIA_INGEST]',e);const msg=String(e.message||e);if(msg.startsWith('UNSUPPORTED:'))await sendText(from,'Unsupported file type. Enabled test formats: PDF, TIFF/images, TXT/CSV, Word, Excel and Access MDB/ACCDB. Nothing was stored.');else await sendText(from,'File extraction failed. Nothing was stored. Please retry or send a supported file.');}
 }
 
 async function processMessage(from,text,payload=''){
@@ -1108,6 +1154,7 @@ Office Extension: ${r.office_extension||'-'}`);
   }
   const clean=String(payload||text||'').trim();
   if(!clean) return;
+  if(await handlePendingIngestCommandV877(from,clean)) return;
   if(await adminCommand(from,clean)) return;
 
   const greeting=/^(hi+|hello+|hey+|start)[.! ]*$/i.test(clean);
@@ -1118,7 +1165,7 @@ Office Extension: ${r.office_extension||'-'}`);
     if(!u){await sendText(from,'You are not registered. Send Hi to register.');return;}
     if(!(await hasAuthorityV874(u,'ENTRY'))){await sendText(from,'Permission denied. ENTRY authority is required.');return;}
     await setIngestModeV874(from,true);
-    await sendText(from,'Add Entry mode ready. Send maintenance data as PDF, TIFF/image, TXT/CSV, Word, Excel or Access MDB/ACCDB. English/Telugu/Hindi/mixed content is accepted. Data is stored as TEST data; uncertain equipment/date mappings go to Needs Review.');return;
+    await sendText(from,'Add Entry mode ready. Send maintenance data as PDF, TIFF/image, TXT/CSV, Word, Excel or Access MDB/ACCDB. English/Telugu/Hindi/mixed content is accepted. The file is extracted to a preview first. Nothing is stored until you confirm. Uncertain data stays in Review and is never auto-stored.');return;
   }
   if(clean==='MENU_ACCOUNT'){
     if(!u){await sendText(from,'You are not registered. Send Hi to register.');return;}
@@ -1202,4 +1249,4 @@ app.post('/webhook',(req,res)=>{
 });
 
 await initDB();
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.7.6 auto file ingest listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.7.7 confirm-before-store listening on ${PORT}`));
