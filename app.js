@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.1.0
+// LMMM AI Maintenance V8.2.0
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -59,13 +59,20 @@ function canonicalSection(v=''){
 }
 function canonicalShift(v=''){
   const raw=String(v||'').trim(); if(!raw) return null;
-  const k=raw.toLowerCase().replace(/[\s_-]+/g,'');
+  const k=raw.toLowerCase().replace(/[\s._-]+/g,'');
   if(['a','ashift','1','first'].includes(k)) return 'A';
   if(['b','bshift','2','second'].includes(k)) return 'B';
-  if(['c','cshift','3','third','night'].includes(k)) return 'C';
-  if(['g','gs','gen','general','generalshift'].includes(k)) return 'General';
+  if(['c','cshift','3','third','night','nightshift'].includes(k)) return 'C';
+  if(['g','gs','gshift','gen','genrl','generl','general','generalshift','generalshft'].includes(k)) return 'General';
   return raw;
 }
+const SHIFT_TIMINGS={
+  A:{start:'06:00',end:'14:30'},
+  B:{start:'14:00',end:'22:30'},
+  C:{start:'22:00',end:'06:30'},
+  General:{start:'09:00',end:'17:30'}
+};
+
 function roleFromDesignation(desig){
   const d=String(desig||'').toLowerCase();
   if(/chief general manager|executive director|\bcmd\b|general manager|deputy general manager/.test(d)) return 'FULL_ACCESS';
@@ -170,6 +177,13 @@ async function initDB(){
       assignment_source TEXT NOT NULL DEFAULT 'AUTO', assigned_by TEXT,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
+    CREATE TABLE IF NOT EXISTS employee_roster(
+      id BIGSERIAL PRIMARY KEY, employee_number TEXT NOT NULL,
+      duty_date DATE NOT NULL, duty_type TEXT NOT NULL,
+      shift TEXT, source TEXT NOT NULL DEFAULT 'ENTRY',
+      entered_by TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      UNIQUE(employee_number,duty_date)
+    );
     CREATE TABLE IF NOT EXISTS system_migrations(
       migration_key TEXT PRIMARY KEY,
       applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -234,7 +248,11 @@ async function ensureProfile(u,by='SYSTEM'){
   let role='NORMAL_USER',access='RELEVANT_MODULE_ENTRY';
   if(/deputy general manager|general manager|chief general manager|executive director|\bcmd\b/.test(d)){role='FULL_ACCESS';access='FULL_ACCESS';}
   else if(/assistant general manager|senior manager|manager|deputy manager|assistant manager|junior manager|management trainee/.test(d)){role='EXECUTIVE';access='ENTRY_VIEW';}
-  const resp=[u.area_of_working,u.section_department].filter(Boolean).join(' ')||'General';
+  const area=String(u.area_of_working||'').toUpperCase(), section=String(u.section_department||'').toLowerCase();
+  let resp=[u.area_of_working,u.section_department].filter(Boolean).join(' ')||'General';
+  if(area==='BDM' && section==='mechanical') resp='BDM Equipment Maintenance & Availability; Support uninterrupted production';
+  if(u.shift==='General') resp += '; General Shift coordination';
+  else if(['A','B','C'].includes(u.shift)) resp += `; ${u.shift} Shift maintenance coverage`;
   await pool.query(`INSERT INTO user_access_profile(employee_number,assigned_role,access_level,responsibility,assigned_by)
     VALUES($1,$2,$3,$4,$5) ON CONFLICT(employee_number) DO NOTHING`,[u.employee_number,role,access,resp,by]);
 }
@@ -247,7 +265,7 @@ Employee No: ${u.employee_number}
 Designation: ${u.designation||'-'}
 Area: ${u.area_of_working||'-'}
 Section: ${u.section_department||'-'}
-Shift: ${u.shift||'-'}
+Shift: ${u.shift||'-'}${SHIFT_TIMINGS[u.shift]?` (${SHIFT_TIMINGS[u.shift].start}-${SHIFT_TIMINGS[u.shift].end})`:''}
 Status: ${u.approval_status}${u.is_active?' / Active':''}
 
 Role: ${p?.assigned_role||'-'}
@@ -267,6 +285,34 @@ async function toggleAuth(emp,val,by){
   const r=await pool.query('SELECT authorities FROM user_access_profile WHERE employee_number=$1',[emp]);
   const a=new Set(r.rows[0]?.authorities||[]); a.has(val)?a.delete(val):a.add(val);
   await pool.query(`UPDATE user_access_profile SET authorities=$2,assignment_source='SUPER_ADMIN',assigned_by=$3,updated_at=now() WHERE employee_number=$1`,[emp,[...a],by]);
+}
+
+async function validateRosterEntry(emp,date,dutyType,shift=null){
+  const typ=String(dutyType||'').toUpperCase();
+  if(!['DUTY','WEEK_OFF','LEAVE'].includes(typ)) return {ok:false,msg:'Invalid duty type.'};
+  if(typ==='DUTY' && !['A','B','C','General'].includes(canonicalShift(shift))) return {ok:false,msg:'Valid shift required for duty.'};
+  if(typ==='WEEK_OFF'){
+    // Minimum three DUTY days must exist after the most recent WEEK_OFF or LEAVE block
+    // before another WEEK_OFF can be accepted.
+    const r=await pool.query(`SELECT duty_type,duty_date FROM employee_roster
+      WHERE employee_number=$1 AND duty_date<$2 ORDER BY duty_date DESC LIMIT 14`,[emp,date]);
+    let dutyDays=0;
+    for(const x of r.rows){
+      if(x.duty_type==='DUTY') dutyDays++;
+      else if(x.duty_type==='WEEK_OFF' || x.duty_type==='LEAVE') break;
+    }
+    if(dutyDays<3) return {ok:false,msg:`Week Off not accepted: minimum 3 duty days required after previous Week Off/Leave. Duty days found: ${dutyDays}.`};
+  }
+  return {ok:true};
+}
+async function saveRosterEntry(emp,date,dutyType,shift,by){
+  const sh=dutyType==='DUTY'?canonicalShift(shift):null;
+  const v=await validateRosterEntry(emp,date,dutyType,sh); if(!v.ok)return v;
+  await pool.query(`INSERT INTO employee_roster(employee_number,duty_date,duty_type,shift,entered_by)
+    VALUES($1,$2,$3,$4,$5)
+    ON CONFLICT(employee_number,duty_date) DO UPDATE SET duty_type=EXCLUDED.duty_type,shift=EXCLUDED.shift,entered_by=EXCLUDED.entered_by`,
+    [emp,date,String(dutyType).toUpperCase(),sh,by]);
+  return {ok:true};
 }
 async function notifyAdmins(u){
   for(const a of SUPER_ADMINS){
@@ -336,7 +382,7 @@ async function adminCommand(from,text){
     if(normWA(from)!==u.whatsapp_number) await sendText(from,`${m[1]} registration removed. Maintenance history preserved.`);
     return true;
   }
-  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.1.0 REGISTRATION ACCEPTANCE');return true;}
+  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.2.0 REGISTRATION ACCEPTANCE');return true;}
   return false;
 }
 async function processMessage(from,text,payload=''){
@@ -425,4 +471,4 @@ app.post('/webhook',(req,res)=>{
 });
 
 await initDB();
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.1.0 registration foundation listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.2.0 registration foundation listening on ${PORT}`));
