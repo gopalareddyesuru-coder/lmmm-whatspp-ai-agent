@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.12.4 PROVIDER ESCAPE FIX
+// LMMM AI Maintenance V8.12.5 RELEVANCE GUARD
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -937,6 +937,16 @@ function safeJsonV874(t=''){
   const x=String(t).replace(/^```(?:json)?\s*/i,'').replace(/```\s*$/,'').trim();
   try{return JSON.parse(x)}catch{const a=x.indexOf('['),b=x.lastIndexOf(']');if(a>=0&&b>a)try{return JSON.parse(x.slice(a,b+1))}catch{};return null;}
 }
+
+function strongTechnicalReferenceEvidenceV8125(text='',filename=''){
+  const t=`${filename}\n${text}`.toLowerCase();
+  const strongTitle=/\b(list\s+of\s+.*drawings?|drawing\s+list|mechanical\s+drawings?|technical\s+data|parts?\s+list|spares?\s+list|bill\s+of\s+materials?|boq|equipment\s+manual|maintenance\s+manual|service\s+manual)\b/i.test(t);
+  const drawingColumns=/drawing\s*(?:no|number|nos|numbers)\b/i.test(t) && /\bdesignation\b/i.test(t);
+  const repeatedDrawingIds=(t.match(/\b(?:[a-z]?\d[\d.-]{3,}\d)\b/gi)||[]).length>=2;
+  const examSignals=/\b(question\s*paper|objective\s*questions?|multiple\s*choice|ncvt|rrb|iti\s+exam|trade\s+test)\b/i.test(t);
+  if(examSignals && !strongTitle && !drawingColumns) return false;
+  return strongTitle || (drawingColumns && repeatedDrawingIds);
+}
 async function classifyTechnicalRelevanceV886(bytes,mime,filename,caption){
   if(!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY missing');
   const prompt=`You are the intake gate for the RINL/VSP LMMM maintenance knowledge system.
@@ -1529,12 +1539,13 @@ async function extractQueuedIngestV895(from,row){
     const bytes=Buffer.from(row.source_bytes||[]);
     if(!bytes.length) throw new Error('Queued source bytes unavailable');
     const pack=await extractMaintenanceV874(bytes,row.source_mime_type||'application/octet-stream',row.source_filename||'upload',row.source_caption||'');
-    if(String(pack.document_type||'').toUpperCase()==='UNRELATED'){
+    const strongRefV8125=strongTechnicalReferenceEvidenceV8125(`${filename||''}\n${JSON.stringify(extracted||rows||'')}`,filename||'');
+    if(String(pack.document_type||'').toUpperCase()==='UNRELATED' && !strongRefV8125){
       await pool.query(`UPDATE pending_file_ingests SET status='UNRELATED',extracted_rows=$2::jsonb,updated_at=now() WHERE id=$1`,[row.id,JSON.stringify(packForDBV878(pack))]);
       await sendText(from,'This upload is not relevant to LMMM plant / maintenance knowledge. Nothing was stored.');
       return true;
     }
-    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.12.4',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack))]);
+    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.12.5',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack))]);
     await armTemporarySourceExpiryV8120(row.id);
     await reliabilityEventV8100(row,'AI_EXTRACTION','SUCCEEDED',pack?._provider||null);
     await pool.query(`UPDATE pending_file_ingests SET workflow_state='SOURCE_SECURED',updated_at=now() WHERE id=$1`,[row.id]).catch(()=>{});
@@ -2001,4 +2012,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.12.4 PROVIDER ESCAPE FIX listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.12.5 RELEVANCE GUARD listening on ${PORT}`));
