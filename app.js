@@ -3541,7 +3541,7 @@ async function ownerCommand(from, text) {
     .replace(/^CANCEL_RESET$/i, 'cancel reset registrations');
 
   let rx;
-  if(/^version$/i.test(text.trim())){await sendText(from,'LMMM AI Maintenance V7.7.66 • registration baseline fix');return true;}
+  if(/^version$/i.test(text.trim())){await sendText(from,'LMMM AI Maintenance V7.7.67 • registration flow acceptance fix');return true;}
   if ((rx=text.match(/^(?:ACCESS|ACCESS CONTROL|USER|USER CONTROL)\s+(.+)$/i))) {
     const rows=await findAdminEmployees(rx[1]);
     if(!rows.length){await sendText(from,'Employee not found.');return true;}
@@ -3892,6 +3892,51 @@ async function processMessage(from, text, rawMessage = null) {
     return;
   }
 
+  // V7.7.67 REGISTRATION LIFECYCLE GATE — runs before admin/search/event routing.
+  // This makes greeting and self-removal deterministic for normal users and Super Admin alike.
+  const greetingCmd = /^(?:hi+|hello+|hey+|start)[.! ]*$/i.test(clean);
+  const selfRemoveCmd = /^(?:remove|remov|delete|deactivate)\s*(?:me|my\s+(?:account|registration))?[.! ]*$/i.test(clean)
+    || /^(?:exit|quit)[.! ]*$/i.test(clean);
+
+  if (selfRemoveCmd) {
+    const self = await byWA(from);
+    if (!self || self.approval_status === 'removed' || self.is_active === false) {
+      await sendText(from, 'Your registration is already inactive. Send Hi to re-register.');
+      return;
+    }
+    const removed = await removeUserRegistrationForReregister(self.employee_number, self.employee_number);
+    if (!removed) {
+      await sendText(from, 'Registration could not be removed. Please retry.');
+      return;
+    }
+    await sendText(from, 'Your LMMM Maintenance registration has been removed. Maintenance history is preserved. Send Hi to re-register.');
+    return;
+  }
+
+  if (greetingCmd) {
+    const self = await byWA(from);
+    if (!self) {
+      await sendText(from, T('register', te));
+      return;
+    }
+    if (self.approval_status === 'removed' || self.is_active === false) {
+      await sendText(from, 'Re-register for LMMM Maintenance:\nName:\nEmployee No:\nDesignation:\nArea:\nSection:\nShift:\n\nName and Employee No are compulsory.');
+      return;
+    }
+    if (self.approval_status === 'pending') {
+      await sendText(from, T('pending', te));
+      return;
+    }
+    if (self.approval_status === 'rejected') {
+      await sendText(from, 'Your registration is not active. Contact Super Admin.');
+      return;
+    }
+    if (self.approval_status === 'approved') {
+      await sendText(from, T('help', te));
+      return;
+    }
+  }
+
   if (await ownerCommand(from, clean)) return;
 
   // V7.7.23 routing guard: governance commands are private to Super Admin /
@@ -3911,7 +3956,7 @@ async function processMessage(from, text, rawMessage = null) {
     return;
   }
 
-  if (/^(exit|deactivate my account|remove me|delete me|remove my registration)$/i.test(clean)) {
+  if (/^(exit|quit|deactivate my account|remove me|remov me|delete me|remove my registration)$/i.test(clean)) {
     const self=await byWA(from);
     if(!self){ await sendText(from,'You are not currently registered. Send Hi to register.'); return; }
     await removeUserRegistrationForReregister(self.employee_number,self.employee_number);
