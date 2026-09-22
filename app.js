@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.8.1
+// LMMM AI Maintenance V8.8.2
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -1114,11 +1114,59 @@ function excelHtmlV879(pack,source){
   <table><tr><td class="title" colspan="${Math.max(keys.length,1)}">LMMM AI Maintenance - Extracted Data</td></tr><tr><td class="meta" colspan="${Math.max(keys.length,1)}">Source: ${esc(source)} | Type: ${esc(pack.document_type||'OTHER')} | Orientation: ${landscape?'Landscape':'Portrait'}</td></tr>
   <thead><tr>${keys.map(k=>`<th>${esc(k.replace(/_/g,' ').toUpperCase())}</th>`).join('')}</tr></thead><tbody>${bodyRows.map(r=>`<tr>${keys.map(k=>`<td>${esc(r?.[k])}</td>`).join('')}</tr>`).join('')}</tbody></table></body></html>`;
 }
+function xmlEscV882(v){return String(v??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&apos;');}
+function colNameV882(n){let x=n+1,r='';while(x){x--;r=String.fromCharCode(65+(x%26))+r;x=Math.floor(x/26);}return r;}
+function crc32V882(buf){
+  let c=0xffffffff;
+  for(const b of buf){c^=b;for(let k=0;k<8;k++)c=(c>>>1)^((c&1)?0xedb88320:0);}
+  return (c^0xffffffff)>>>0;
+}
+function zipStoreV882(files){
+  const locals=[],centrals=[];let offset=0;
+  for(const [name,data0] of files){
+    const data=Buffer.isBuffer(data0)?data0:Buffer.from(data0,'utf8'),nb=Buffer.from(name,'utf8'),crc=crc32V882(data);
+    const lh=Buffer.alloc(30);lh.writeUInt32LE(0x04034b50,0);lh.writeUInt16LE(20,4);lh.writeUInt16LE(0x0800,6);lh.writeUInt16LE(0,8);lh.writeUInt16LE(0,10);lh.writeUInt16LE(0,12);lh.writeUInt32LE(crc,14);lh.writeUInt32LE(data.length,18);lh.writeUInt32LE(data.length,22);lh.writeUInt16LE(nb.length,26);lh.writeUInt16LE(0,28);
+    locals.push(lh,nb,data);
+    const ch=Buffer.alloc(46);ch.writeUInt32LE(0x02014b50,0);ch.writeUInt16LE(20,4);ch.writeUInt16LE(20,6);ch.writeUInt16LE(0x0800,8);ch.writeUInt16LE(0,10);ch.writeUInt16LE(0,12);ch.writeUInt16LE(0,14);ch.writeUInt32LE(crc,16);ch.writeUInt32LE(data.length,20);ch.writeUInt32LE(data.length,24);ch.writeUInt16LE(nb.length,28);ch.writeUInt16LE(0,30);ch.writeUInt16LE(0,32);ch.writeUInt16LE(0,34);ch.writeUInt16LE(0,36);ch.writeUInt32LE(0,38);ch.writeUInt32LE(offset,42);
+    centrals.push(ch,nb);offset+=lh.length+nb.length+data.length;
+  }
+  const central=Buffer.concat(centrals),local=Buffer.concat(locals),end=Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50,0);end.writeUInt16LE(0,4);end.writeUInt16LE(0,6);end.writeUInt16LE(files.length,8);end.writeUInt16LE(files.length,10);end.writeUInt32LE(central.length,12);end.writeUInt32LE(local.length,16);end.writeUInt16LE(0,20);
+  return Buffer.concat([local,central,end]);
+}
+function nativeXlsxV882(pack,source){
+  const rows=reportRowsV880(pack),cols=reportColumnsV880(rows),landscape=cols.length>7;
+  const body=rows.length?rows:[{description:pack.document_summary||pack.full_text||''}];
+  const all=[cols.map(k=>String(k).replace(/_/g,' ').toUpperCase()),...body.map(r=>cols.map(k=>r?.[k]??''))];
+  const maxWidths=cols.map((_,i)=>Math.min(45,Math.max(10,...all.slice(0,300).map(r=>String(r[i]??'').length+2))));
+  const cell=(v,ref,style=0)=>{
+    if(typeof v==='number'&&Number.isFinite(v))return `<c r="${ref}" s="${style}"><v>${v}</v></c>`;
+    return `<c r="${ref}" t="inlineStr" s="${style}"><is><t xml:space="preserve">${xmlEscV882(v)}</t></is></c>`;
+  };
+  let sheetRows='';
+  all.forEach((r,ri)=>{sheetRows+=`<row r="${ri+1}">${r.map((v,ci)=>cell(v,`${colNameV882(ci)}${ri+1}`,ri===0?1:0)).join('')}</row>`;});
+  const lastCol=colNameV882(Math.max(0,cols.length-1));
+  const colsXml=maxWidths.map((w,i)=>`<col min="${i+1}" max="${i+1}" width="${w}" customWidth="1"/>`).join('');
+  const sheet=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><dimension ref="A1:${lastCol}${Math.max(1,all.length)}"/><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><cols>${colsXml}</cols><sheetData>${sheetRows}</sheetData><autoFilter ref="A1:${lastCol}${Math.max(1,all.length)}"/><pageMargins left="0.3" right="0.3" top="0.5" bottom="0.5" header="0.2" footer="0.2"/><pageSetup orientation="${landscape?'landscape':'portrait'}" fitToWidth="1" fitToHeight="0" paperSize="9"/><headerFooter><oddHeader>&amp;CLMMM AI Maintenance</oddHeader><oddFooter>&amp;CPage &amp;P of &amp;N</oddFooter></headerFooter></worksheet>`;
+  const styles=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="10"/><name val="Arial"/></font><font><b/><sz val="10"/><name val="Arial"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="2"><border/><border><left style="thin"/><right style="thin"/><top style="thin"/><bottom style="thin"/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="1" fillId="0" borderId="1" xfId="0" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf></cellXfs></styleSheet>`;
+  const files=[
+    ['[Content_Types].xml',`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/><Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/></Types>`],
+    ['_rels/.rels',`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/></Relationships>`],
+    ['xl/workbook.xml',`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Extracted Data" sheetId="1" r:id="rId1"/></sheets></workbook>`],
+    ['xl/_rels/workbook.xml.rels',`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`],
+    ['xl/worksheets/sheet1.xml',sheet],
+    ['xl/styles.xml',styles],
+    ['docProps/core.xml',`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>LMMM AI Maintenance Extracted Data</dc:title><dc:subject>${xmlEscV882(source)}</dc:subject></cp:coreProperties>`],
+    ['docProps/app.xml',`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"><Application>LMMM AI Maintenance</Application></Properties>`]
+  ];
+  return zipStoreV882(files);
+}
+
 async function exportPendingV878(from,p,kind){
   const pack=ingestPackV878(p),base=String(p.source_filename||'extraction').replace(/\.[^.]+$/,'').replace(/[^a-zA-Z0-9._-]+/g,'_').slice(0,80)||'extraction';
   const full=`Source: ${p.source_filename}\nType: ${pack.document_type}\nLanguages: ${(pack.detected_languages||[]).join(', ')}\nSummary: ${pack.document_summary||''}\n\nFULL EXTRACTION\n${pack.full_text||''}\n\nSTRUCTURED ITEMS\n${JSON.stringify(pack.extracted_items||[],null,2)}\n\nRECORDS\n${JSON.stringify(pack.records||[],null,2)}`;
   if(kind==='PDF'){await sendGeneratedDocumentV878(from,tablePdfV880(pack,p.source_filename),`${base}_extracted.pdf`,'application/pdf');return;}
-  if(kind==='EXCEL'){await sendGeneratedDocumentV878(from,Buffer.from(excelHtmlV879(pack,p.source_filename),'utf8'),`${base}_extracted.xls`,'application/vnd.ms-excel');return;}
+  if(kind==='EXCEL'){await sendGeneratedDocumentV878(from,nativeXlsxV882(pack,p.source_filename),`${base}_extracted.xlsx`,'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');return;}
   if(kind==='TXT'){await sendGeneratedDocumentV878(from,Buffer.from(full,'utf8'),`${base}_extracted.txt`,'text/plain');return;}
   if(kind==='JSON'){await sendGeneratedDocumentV878(from,Buffer.from(JSON.stringify(pack,null,2),'utf8'),`${base}_extracted.json`,'application/json');return;}
   if(kind==='CSV'){
