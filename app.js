@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.8.6
+// LMMM AI Maintenance V8.8.7
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -922,7 +922,7 @@ Caption: ${caption||'(none)'}`;
   const j=await r.json(),txt=(j.candidates?.[0]?.content?.parts||[]).map(x=>x.text||'').join('');
   return safeJsonV874(txt)||{relevance:'UNCERTAIN',reason:'Could not confidently classify',source_kind:'OTHER'};
 }
-async function extractMaintenanceV874(bytes,mime,filename,caption){
+async function extractMaintenanceCoreV887(bytes,mime,filename,caption,compact=false){
   if(!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY missing');
   const ext=String(filename||'').toLowerCase().match(/\.([a-z0-9]+)$/)?.[1]||'';
   const mime0=String(mime||'application/octet-stream').toLowerCase();
@@ -934,7 +934,7 @@ async function extractMaintenanceV874(bytes,mime,filename,caption){
   if(sendMime.startsWith('audio/ogg')) sendMime='audio/ogg';
   if(sendMime.startsWith('audio/mp4')) sendMime='audio/mp4';
   if(sendMime.startsWith('audio/mpeg')) sendMime='audio/mpeg';
-  const prompt=`You are the source-faithful file extraction and maintenance classification engine for RINL/VSP LMMM Dept-35.
+  const prompt=`You are the source-faithful file extraction and maintenance classification engine for RINL/VSP LMMM Dept-35.\n${compact?'RETRY MODE: keep JSON compact; prioritize exact identifiers, rows, equipment, dates, technical descriptions and records. Do not add commentary.':''}
 
 The source may contain English, Telugu, Hindi, Tenglish, handwriting, scans, tables, BOQ, drawings lists, manuals, spreadsheets, maintenance records, or WhatsApp voice/audio. For audio, transcribe the complete intelligible speech first and then apply the same maintenance classification rules.
 
@@ -968,7 +968,7 @@ Caption: ${caption||'(none)'}
 Filename: ${filename||'(unknown)'}
 Source format: ${ext||sendMime}.`;
   const body={contents:[{parts:[{text:prompt},{inline_data:{mime_type:sendMime,data:bytes.toString('base64')}}]}],
-    generationConfig:{temperature:0.02,responseMimeType:'application/json',maxOutputTokens:32768}};
+    generationConfig:{temperature:0.02,responseMimeType:'application/json',maxOutputTokens:16384}};
   const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   if(!r.ok) throw new Error(`Gemini extraction failed ${r.status}: ${(await r.text()).slice(0,500)}`);
   const j=await r.json(),txt=(j.candidates?.[0]?.content?.parts||[]).map(x=>x.text||'').join('');
@@ -985,6 +985,21 @@ Source format: ${ext||sendMime}.`;
     records:out.records.slice(0,250)
   };
 }
+async function extractMaintenanceV874(bytes,mime,filename,caption){
+  try{
+    return await extractMaintenanceCoreV887(bytes,mime,filename,caption,false);
+  }catch(firstErr){
+    console.error('[EXTRACT_FIRST_ATTEMPT]',firstErr);
+    // One automatic retry only. This prevents users from having to resend a valid technical source.
+    try{
+      return await extractMaintenanceCoreV887(bytes,mime,filename,caption,true);
+    }catch(secondErr){
+      console.error('[EXTRACT_RETRY]',secondErr);
+      throw secondErr;
+    }
+  }
+}
+
 function ingestPackV878(p){
   const raw=Array.isArray(p?.extracted_rows)?p.extracted_rows:[];
   if(raw.length===1 && raw[0] && raw[0].__v878_pack) return raw[0].__v878_pack;
@@ -1271,9 +1286,7 @@ async function processMediaMessageV874(from,m){
       await sendText(from,`This upload does not appear relevant to LMMM / engineering / maintenance data.\n\nReason: ${String(relevance.reason||'Unrelated content').slice(0,240)}\n\nNothing was extracted or stored.`);
       return;
     }
-    if(String(relevance.relevance||'').toUpperCase()==='UNCERTAIN'){
-      await sendText(from,'Technical relevance is uncertain. I will inspect it carefully, but nothing will be stored unless you confirm.');
-    }
+    // UNCERTAIN is an internal routing state: continue extraction without bothering the user.
     const crypto=await import('node:crypto');const sha=crypto.createHash('sha256').update(d.bytes).digest('hex');
     const pack=await extractMaintenanceV874(d.bytes,mime,filename,caption);
     const q=await pool.query(`INSERT INTO pending_file_ingests(submitted_by_whatsapp,submitted_by_employee_number,source_media_id,source_filename,source_mime_type,source_caption,source_sha256,extracted_rows) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb) RETURNING *`,[normWA(from),u.employee_number,mediaId,filename,mime,caption,sha,JSON.stringify(packForDBV878(pack))]);
@@ -1283,7 +1296,7 @@ async function processMediaMessageV874(from,m){
     const msg=String(e.message||e);
     if(msg.startsWith('UNSUPPORTED:')) await sendText(from,'Unsupported file type. Supported test formats: PDF, TIFF/images, TXT/CSV, Word, Excel, Access MDB/ACCDB and WhatsApp voice/audio. Nothing was stored.');
     else if(/audio|ogg|opus|voice/i.test(msg)) await sendText(from,'Voice extraction failed for this audio format. Nothing was stored. Please resend the voice note; the bot will retry with the supported audio path.');
-    else await sendText(from,'Technical extraction could not be completed for this upload. Nothing was stored. Please retry the technical file/voice once; if it fails again, keep the source for review instead of storing incomplete data.');
+    else await sendText(from,'Technical content was detected, but extraction could not be completed after an automatic retry. Nothing was stored. Please keep this source for review.');
   }
 }
 
@@ -1562,4 +1575,4 @@ app.post('/webhook',(req,res)=>{
 });
 
 await initDB();
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.8.6 technical-relevance-gate listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.8.7 technical-extraction-retry listening on ${PORT}`));
