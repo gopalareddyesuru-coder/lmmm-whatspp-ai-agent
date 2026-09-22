@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.8.3
+// LMMM AI Maintenance V8.8.4
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -914,7 +914,11 @@ async function extractMaintenanceV874(bytes,mime,filename,caption){
   const extMime={pdf:'application/pdf',jpg:'image/jpeg',jpeg:'image/jpeg',png:'image/png',webp:'image/webp',tif:'image/tiff',tiff:'image/tiff',txt:'text/plain',csv:'text/csv',doc:'application/msword',docx:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',xls:'application/vnd.ms-excel',xlsx:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',xlsm:'application/vnd.ms-excel.sheet.macroenabled.12',mdb:'application/vnd.ms-access',accdb:'application/vnd.ms-access',ogg:'audio/ogg',opus:'audio/ogg',mp3:'audio/mpeg',m4a:'audio/mp4',aac:'audio/aac',wav:'audio/wav'};
   const supportedExt=new Set(Object.keys(extMime));
   if(!supportedExt.has(ext) && !['application/pdf','image/jpeg','image/png','image/webp','image/tiff','text/plain','text/csv','audio/ogg','audio/mpeg','audio/mp4','audio/aac','audio/wav'].some(x=>mime0.startsWith(x))) throw new Error(`UNSUPPORTED:${mime0}`);
-  const sendMime=(mime0==='application/octet-stream'||mime0==='binary/octet-stream')?(extMime[ext]||mime0):mime0;
+  let sendMime=(mime0==='application/octet-stream'||mime0==='binary/octet-stream')?(extMime[ext]||mime0):mime0;
+  // WhatsApp voice notes commonly arrive as audio/ogg; codecs=opus. Gemini expects the base MIME.
+  if(sendMime.startsWith('audio/ogg')) sendMime='audio/ogg';
+  if(sendMime.startsWith('audio/mp4')) sendMime='audio/mp4';
+  if(sendMime.startsWith('audio/mpeg')) sendMime='audio/mpeg';
   const prompt=`You are the source-faithful file extraction and maintenance classification engine for RINL/VSP LMMM Dept-35.
 
 The source may contain English, Telugu, Hindi, Tenglish, handwriting, scans, tables, BOQ, drawings lists, manuals, spreadsheets, maintenance records, or WhatsApp voice/audio. For audio, transcribe the complete intelligible speech first and then apply the same maintenance classification rules.
@@ -1236,13 +1240,21 @@ async function processMediaMessageV874(from,m){
     if(!u||u.approval_status!=='approved'||!u.is_active){await sendText(from,'Approved registration required before file processing.');return;}
     const obj=m[m.type]||{},caption=String(obj.caption||'').trim();
     const mediaId=obj.id;if(!mediaId){await sendText(from,'File media ID not available. Please resend.');return;}
-    await sendText(from,'File received. Extracting for preview… Nothing will be stored until you confirm.');
+    const isAudio=['audio','voice'].includes(m.type);
+    await sendText(from,isAudio?'Voice received. Detecting language and extracting maintenance data… Nothing will be stored until you confirm.':'File received. Extracting for preview… Nothing will be stored until you confirm.');
     const d=await downloadWhatsAppMediaV874(mediaId),mime=String(obj.mime_type||d.mime||'application/octet-stream').toLowerCase();
-    const filename=obj.filename||`${m.type}_${mediaId}`;const crypto=await import('node:crypto');const sha=crypto.createHash('sha256').update(d.bytes).digest('hex');
+    const guessedExt=(m.type==='audio'||m.type==='voice')?(String(obj.mime_type||'').includes('mpeg')?'.mp3':String(obj.mime_type||'').includes('mp4')?'.m4a':'.ogg'):'';
+    const filename=obj.filename||`${m.type}_${mediaId}${guessedExt}`;const crypto=await import('node:crypto');const sha=crypto.createHash('sha256').update(d.bytes).digest('hex');
     const pack=await extractMaintenanceV874(d.bytes,mime,filename,caption);
     const q=await pool.query(`INSERT INTO pending_file_ingests(submitted_by_whatsapp,submitted_by_employee_number,source_media_id,source_filename,source_mime_type,source_caption,source_sha256,extracted_rows) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb) RETURNING *`,[normWA(from),u.employee_number,mediaId,filename,mime,caption,sha,JSON.stringify(packForDBV878(pack))]);
     await setPendingIngestSessionV877(from,q.rows[0].id);await setIngestModeV874(from,false);await showIngestOptionsV877(from,q.rows[0]);
-  }catch(e){console.error('[MEDIA_INGEST]',e);const msg=String(e.message||e);if(msg.startsWith('UNSUPPORTED:'))await sendText(from,'Unsupported file type. Enabled test formats: PDF, TIFF/images, TXT/CSV, Word, Excel, Access MDB/ACCDB and WhatsApp voice/audio. Nothing was stored.');else await sendText(from,'File extraction failed. Nothing was stored. Please retry or send a supported file.');}
+   }catch(e){
+    console.error('[MEDIA_INGEST]',e);
+    const msg=String(e.message||e);
+    if(msg.startsWith('UNSUPPORTED:')) await sendText(from,'Unsupported file type. Supported test formats: PDF, TIFF/images, TXT/CSV, Word, Excel, Access MDB/ACCDB and WhatsApp voice/audio. Nothing was stored.');
+    else if(/audio|ogg|opus|voice/i.test(msg)) await sendText(from,'Voice extraction failed for this audio format. Nothing was stored. Please resend the voice note; the bot will retry with the supported audio path.');
+    else await sendText(from,'File extraction failed. Nothing was stored. Please retry or send a supported file.');
+  }
 }
 
 async function processMessage(from,text,payload=''){
@@ -1520,4 +1532,4 @@ app.post('/webhook',(req,res)=>{
 });
 
 await initDB();
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.8.3 multilingual-file-voice listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.8.4 voice-media-safe listening on ${PORT}`));
