@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.9.3
+// LMMM AI Maintenance V8.9.4
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -922,7 +922,7 @@ Return ONLY JSON:
 {"relevance":"LMMM_RELEVANT|UNRELATED|UNCERTAIN","reason":"short English reason","document_type":"DRAWING_LIST|PARTS_LIST|MANUAL_REFERENCE|BOQ|LOGBOOK|INSPECTION|DEFECT|JOB|TRAINING_REFERENCE|OTHER"}
 Filename: ${filename||'(unknown)'}
 Caption: ${caption||'(none)'}`;
-  const body={contents:[{parts:[{text:prompt},{inline_data:{mime_type:mime,data:bytes.toString('base64')}}]}],generationConfig:{temperature:0,responseMimeType:'application/json',maxOutputTokens:512}};
+  const body={contents:[{parts:[{text:prompt},{inline_data:{mime_type:mime,data:bytes.toString('base64')}}]}],generationConfig:{responseMimeType:'application/json',maxOutputTokens:512}};
   const r=await geminiFetchV890(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)},45000);
   if(!r.ok) throw new Error(`Relevance check failed ${r.status}: ${(await r.text()).slice(0,300)}`);
   const j=await r.json(),txt=(j.candidates?.[0]?.content?.parts||[]).map(x=>x.text||'').join('');
@@ -932,12 +932,10 @@ Caption: ${caption||'(none)'}`;
 
 function geminiModelCandidatesV892(){
   const raw=[
-    'gemini-3.8-flash',
-    process.env.GEMINI_FALLBACK_MODEL,
-    GEMINI_MODEL,
-    'gemini-3.6-flash',
-    'gemini-3.5-flash',
-    'gemini-flash-latest'
+    'gemini-3.8-flash','gemini-3.7-flash','gemini-3.6-flash',
+    'gemini-3.5-flash','gemini-3.5-flash-lite','gemini-3.1-flash-lite',
+    process.env.GEMINI_FALLBACK_MODEL,GEMINI_MODEL,
+    'gemini-2.5-flash-lite','gemini-2.5-flash'
   ].filter(Boolean).map(x=>String(x).trim()).filter(Boolean);
   return [...new Set(raw)];
 }
@@ -952,7 +950,7 @@ async function geminiGenerateWithFallbackV892(body,timeoutMs=45000){
         const raw=await r.text();
         const retryable=[429,500,502,503,504].includes(r.status);
         lastErr=new Error(`Gemini ${model} failed ${r.status}: ${raw.slice(0,500)}`);
-        console.error('[GEMINI_MODEL_FAIL]',model,attempt,r.status,raw.slice(0,220));
+        console.error('[GEMINI_MODEL_FAIL]',JSON.stringify({model,attempt,status:r.status,error:raw.slice(0,500)}));
         if(!retryable) break;
       }catch(e){
         lastErr=e; console.error('[GEMINI_MODEL_ERROR]',model,attempt,String(e));
@@ -1014,9 +1012,9 @@ Caption: ${caption||'(none)'}
 Filename: ${filename||'(unknown)'}
 Source format: ${ext||sendMime}.`;
   const body={contents:[{parts:[{text:prompt},{inline_data:{mime_type:sendMime,data:bytes.toString('base64')}}]}],
-    generationConfig:{temperature:0.02,responseMimeType:'application/json',maxOutputTokens:4096}};
-  const r=await geminiFetchV890(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)},45000);
-  if(!r.ok) throw new Error(`Gemini extraction failed ${r.status}: ${(await r.text()).slice(0,500)}`);
+    generationConfig:{responseMimeType:'application/json',maxOutputTokens:4096}};
+  const gx=await geminiGenerateWithFallbackV892(body,45000),r=gx.response;
+  console.log('[GEMINI_USED]',gx.model,'structured');
   const j=await r.json(),txt=(j.candidates?.[0]?.content?.parts||[]).map(x=>x.text||'').join('');
   const out=safeJsonV874(txt);
   if(Array.isArray(out)) return {document_type:'OTHER',detected_languages:[],document_summary:'',full_text:'',extracted_items:[],records:out.slice(0,250)};
@@ -1053,7 +1051,7 @@ Do not duplicate table rows in records.
 Filename: ${filename||'(unknown)'}
 Caption: ${caption||'(none)'}`;
   const body={contents:[{parts:[{text:prompt},{inline_data:{mime_type:mime,data:bytes.toString('base64')}}]}],
-    generationConfig:{temperature:0,responseMimeType:'application/json',maxOutputTokens:4096}};
+    generationConfig:{responseMimeType:'application/json',maxOutputTokens:4096}};
   const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`,{
     method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)
   });
@@ -1077,7 +1075,7 @@ Then provide concise English source-faithful extraction. For drawing/parts/BOQ t
 ROW | page | item | exact identifier | exact designation/description | quantity | unit | remarks
 Preserve identifiers exactly. Never invent equipment, dates, drawing numbers, quantities or maintenance events.
 For multi-page PDF inspect the uploaded PDF pages, not only the preview. No JSON. No markdown table.`;
-  const body={contents:[{parts:[{text:prompt},{inline_data:{mime_type:mime,data:bytes.toString('base64')}}]}],generationConfig:{temperature:0,maxOutputTokens:4096}};
+  const body={contents:[{parts:[{text:prompt},{inline_data:{mime_type:mime,data:bytes.toString('base64')}}]}],generationConfig:{maxOutputTokens:4096}};
   const gx=await geminiGenerateWithFallbackV892(body,45000),r=gx.response;
   console.log('[GEMINI_USED]',gx.model,'plain');
   const j=await r.json(),txt=(j.candidates?.[0]?.content?.parts||[]).map(x=>x.text||'').join('').trim();
@@ -1679,4 +1677,4 @@ app.post('/webhook',(req,res)=>{
 });
 
 await initDB();
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.9.3 current-model failover listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.9.4 Gemini3-compatible failover listening on ${PORT}`));
