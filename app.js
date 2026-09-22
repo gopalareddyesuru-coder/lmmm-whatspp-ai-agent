@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.3.0
+// LMMM AI Maintenance V8.3.1
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -21,16 +21,6 @@ const SUPER_ADMINS = new Set(
 const pool = DATABASE_URL ? new Pool({connectionString:DATABASE_URL, ssl:DATABASE_URL.includes('localhost')?false:{rejectUnauthorized:false}}) : null;
 const normWA = x => String(x||'').replace(/\D/g,'');
 
-function canonicalArea(v=''){
-  const raw=String(v||'').trim(); if(!raw) return null;
-  const k=raw.toLowerCase().replace(/[._-]+/g,' ').replace(/\s+/g,' ').trim();
-  const aliases = {
-    'bdm':'BDM','breakdown mill':'BDM','break down mill':'BDM','billet mill':'BDM','billetmill':'BDM',
-    'bar mill':'BAR MILL','barmill':'BAR MILL','finishing':'FINISHING','finishing mill':'FINISHING',
-    'wbf':'WBF','walking beam furnace':'WBF','furnace':'WBF'
-  };
-  return aliases[k] || raw.toUpperCase();
-}
 function canonicalDesignation(v=''){
   const raw=String(v||'').trim(); if(!raw) return null;
   const k=raw.toLowerCase().replace(/[._-]+/g,' ').replace(/\s+/g,' ').trim();
@@ -51,13 +41,6 @@ function canonicalDesignation(v=''){
   };
   return aliases[k] || raw.replace(/\b\w/g,c=>c.toUpperCase());
 }
-function canonicalSection(v=''){
-  const raw=String(v||'').trim(); if(!raw) return null;
-  const k=raw.toLowerCase().replace(/[._-]+/g,' ').replace(/\s+/g,' ').trim();
-  const aliases={'mech':'Mechanical','mechanical':'Mechanical','mm':'Mechanical','ops':'Operations','operation':'Operations','operations':'Operations','production':'Operations','elec':'Electrical','electrical':'Electrical','inst':'Instrumentation','instrumentation':'Instrumentation','etl':'ETL','telecom':'Telecommunications','water':'Water Management','dnw':'DNW','enmd':'EnMD','red':'RED'};
-  return aliases[k] || raw.replace(/\b\w/g,c=>c.toUpperCase());
-}
-
 const LMMM_ORG = {
   department_code:'35',
   areas:['BDM','BAR MILL','FINISHING'],
@@ -196,7 +179,7 @@ function parseRegistration(text=''){
   return {
     name:d.name.trim(),
     employee_number:String(d.employee_number).trim(),
-    designation:canonicalDesignation(d.designation),
+    designation:canonicalDesignationV83(d.designation),
     area:canonicalArea(d.area),
     section:canonicalSection(d.section),
     shift:canonicalShift(d.shift)
@@ -460,7 +443,7 @@ async function adminCommand(from,text){
     if(normWA(from)!==u.whatsapp_number) await sendText(from,`${m[1]} registration removed. Maintenance history preserved.`);
     return true;
   }
-  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.3.0 REGISTRATION ACCEPTANCE');return true;}
+  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.3.1 REGISTRATION ACCEPTANCE');return true;}
   return false;
 }
 async function processMessage(from,text,payload=''){
@@ -549,4 +532,4 @@ app.post('/webhook',(req,res)=>{
 });
 
 await initDB();
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.3.0 registration foundation listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.3.1 registration foundation listening on ${PORT}`));
