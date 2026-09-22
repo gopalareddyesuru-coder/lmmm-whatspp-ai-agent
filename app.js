@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.12.3 QUOTA SWITCH FIX
+// LMMM AI Maintenance V8.12.4 PROVIDER ESCAPE FIX
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -1029,6 +1029,8 @@ if(r.ok) return {response:r,model};
         console.error('[GEMINI_MODEL_FAIL]',JSON.stringify({model,attempt,status:r.status,error:raw.slice(0,500)}));
         if(!retryable) break;
       }catch(e){
+      if(e?.code==='GEMINI_QUOTA' || e?.status===429){ throw e; }
+
         lastErr=e; console.error('[GEMINI_MODEL_ERROR]',model,attempt,String(e));
       }
       
@@ -1532,7 +1534,7 @@ async function extractQueuedIngestV895(from,row){
       await sendText(from,'This upload is not relevant to LMMM plant / maintenance knowledge. Nothing was stored.');
       return true;
     }
-    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.12.3',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack))]);
+    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.12.4',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack))]);
     await armTemporarySourceExpiryV8120(row.id);
     await reliabilityEventV8100(row,'AI_EXTRACTION','SUCCEEDED',pack?._provider||null);
     await pool.query(`UPDATE pending_file_ingests SET workflow_state='SOURCE_SECURED',updated_at=now() WHERE id=$1`,[row.id]).catch(()=>{});
@@ -1999,4 +2001,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.12.3 QUOTA SWITCH FIX listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.12.4 PROVIDER ESCAPE FIX listening on ${PORT}`));
