@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.1 ACCESS MDBTOOLS DOCKER RUNTIME
+// LMMM AI Maintenance V8.15.2 ACCESS PURE-JS READER
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -1651,7 +1651,56 @@ function extractXlsxCompleteV8147(bytes,filename){
   return {document_type:'SPREADSHEET',detected_languages:['English'],document_summary:`Complete spreadsheet extraction: ${sheets.length} sheet(s), ${items.length} data row(s).`,full_text:preview.slice(0,120000),review_text_english:preview.slice(0,120000),extracted_items:items,records:[{module:'NEEDS_REVIEW',area:null,equipment:null,sub_equipment:null,event_date:null,event_time:null,shift:null,description:`Spreadsheet ${filename||''}: ${items.length} source rows extracted completely. Review before storage.`,action_taken:null,status:null,remarks:null,confidence:'NEEDS_REVIEW'}],_extraction_mode:'NATIVE_XLSX_ALL_ROWS'};
 }
 
+async function extractAccessDatabasePureJsV8152(bytes,filename){
+  try{
+    const mod=await import('mdb-reader');
+    const MDBReader=mod.default||mod.MDBReader||mod;
+    if(typeof MDBReader!=='function') throw new Error('mdb-reader module has no constructor');
+    const reader=new MDBReader(Buffer.from(bytes));
+    const tables=(reader.getTableNames?.()||[]).filter(Boolean);
+    if(!tables.length){const x=new Error('Access database contains no readable tables.');x.code='ACCESS_NO_TABLES';throw x;}
+    const items=[]; let rowNo=0; const summaries=[];
+    const cell=(v)=>{
+      if(v===null||v===undefined)return '';
+      if(typeof v==='bigint')return v.toString();
+      if(v instanceof Date)return v.toISOString();
+      if(Buffer.isBuffer(v))return `[BINARY ${v.length} bytes]`;
+      if(Array.isArray(v))return v.map(x=>cell(x)).join(' | ');
+      if(typeof v==='object'){
+        try{return JSON.stringify(v,(_,x)=>typeof x==='bigint'?x.toString():Buffer.isBuffer(x)?`[BINARY ${x.length} bytes]`:x);}
+        catch{return String(v);}
+      }
+      return String(v);
+    };
+    for(const tableName of tables){
+      try{
+        const table=reader.getTable(tableName);
+        const cols=table.getColumnNames?.()||[];
+        const rows=table.getData?.()||[];
+        let count=0;
+        for(let i=0;i<rows.length;i++){
+          const row=rows[i]||{}; rowNo++; count++;
+          const keys=cols.length?cols:Object.keys(row);
+          const line=keys.map(k=>`${k}=${cell(row[k])}`).join(' | ');
+          items.push({page:`Table: ${tableName}`,item_no:rowNo,identifier:'',description:line,quantity:null,unit:null,remarks:'Source row from Microsoft Access database',source_table:tableName,source_row:i+1});
+        }
+        summaries.push(`${tableName}: ${count} row(s)`);
+      }catch(e){console.error('[ACCESS_JS_TABLE_FAIL]',tableName,String(e?.message||e).slice(0,300));}
+    }
+    if(!items.length){const x=new Error('Access tables were found but no readable rows could be extracted.');x.code='ACCESS_NO_ROWS';throw x;}
+    const preview=items.map(x=>`${x.page} | Row ${x.source_row} | ${x.description}`).join('\n');
+    console.log('[ACCESS_JS_READER_OK]',filename,`tables=${tables.length}`,`rows=${items.length}`);
+    return {document_type:'SPREADSHEET',detected_languages:['English'],document_summary:`Microsoft Access database extraction: ${tables.length} table(s), ${items.length} data row(s). ${summaries.join('; ')}`.slice(0,2000),full_text:preview.slice(0,120000),review_text_english:preview.slice(0,120000),extracted_items:items,records:[{module:'NEEDS_REVIEW',area:null,equipment:null,sub_equipment:null,event_date:null,event_time:null,shift:null,description:`Access database ${filename||''}: ${items.length} source rows extracted from ${tables.length} table(s). Review before storage.`,action_taken:null,status:null,remarks:null,confidence:'NEEDS_REVIEW'}],_extraction_mode:'ACCESS_MDB_READER_JS_ALL_ROWS'};
+  }catch(e){
+    if(e?.code==='ACCESS_NO_TABLES'||e?.code==='ACCESS_NO_ROWS') throw e;
+    console.warn('[ACCESS_JS_READER_UNAVAILABLE]',String(e?.message||e).slice(0,300));
+    return null;
+  }
+}
+
 async function extractAccessDatabaseV8150(bytes,filename){
+  const js=await extractAccessDatabasePureJsV8152(bytes,filename);
+  if(js) return js;
   const {mkdtemp,writeFile,rm}=await import('node:fs/promises');
   const {tmpdir}=await import('node:os');
   const {join}=await import('node:path');
@@ -2492,4 +2541,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.1 ACCESS MDBTOOLS DOCKER RUNTIME listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.14.5 TIFF FFMPEG LOW-MEM FALLBACK listening on ${PORT}`));
