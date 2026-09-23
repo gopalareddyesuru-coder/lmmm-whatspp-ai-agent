@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.14.3 TIFF FFMPEG LOW-MEM FALLBACK
+// LMMM AI Maintenance V8.14.4 FREE-AI FAST FAILOVER
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -1482,7 +1482,24 @@ async function extractLargeTiffV8133(bytes,mime,filename,caption){
         jpg=await tiffOnePageJpegV8137(file,page);
         const pageMime=(jpg?.[0]===0x89&&jpg?.[1]===0x50&&jpg?.[2]===0x4e&&jpg?.[3]===0x47)?'image/png':'image/jpeg';
         const batch=[{page,bytes:jpg,mime:pageMime}];
-        if(GEMINI_API_KEY){try{out=await geminiImageBatchV8133(batch,filename,caption);console.log('[TIFF_PAGE_OK] GEMINI',page);}catch(e){last=e;console.error('[TIFF_PAGE_FAIL] GEMINI',page,e.message);}}
+        // V8.14.4: Gemini stays first while healthy. A 429/5xx/timeout starts the
+        // existing cooldown; later pages skip Gemini completely during cooldown instead
+        // of generating the same 503 failure again. Free backups continue immediately.
+        if(GEMINI_API_KEY && Date.now()>=geminiCooldownUntilV8128){
+          try{out=await geminiImageBatchV8133(batch,filename,caption);console.log('[TIFF_PAGE_OK] GEMINI',page);}
+          catch(e){last=e;console.error('[TIFF_PAGE_FAIL] GEMINI',page,e.code||'',e.status||'',e.message);}
+        }else if(GEMINI_API_KEY){
+          console.log('[TIFF_PROVIDER_SKIP] GEMINI cooldown',page);
+        }
+        if(!out&&GROQ_API_KEY){
+          try{
+            const parts=[{text:`Extract every legible technical row from SOURCE PAGE ${page} of ${filename}. Preserve exact identifiers, descriptions, quantities and units. Output DOC|TECHNICAL_REFERENCE|<factual title> then ROW|${page}|item no|exact identifier|exact description/designation|quantity|unit|remarks. Never guess.`},{inline_data:{mime_type:pageMime,data:jpg.toString('base64')}}];
+            const gx=await groqGenerateV8110({contents:[{parts}],generationConfig:{maxOutputTokens:8192}},20000);
+            const gj=await gx.response.json(); out={text:(gj.candidates?.[0]?.content?.parts||[]).map(x=>x.text||'').join(''),provider:'GROQ',model:gx.model};
+            if(!out.text.trim()) throw new Error('Groq TIFF empty response');
+            console.log('[TIFF_PAGE_OK] GROQ',page);
+          }catch(e){out=null;last=e;console.error('[TIFF_PAGE_FAIL] GROQ',page,e.message);}
+        }
         if(!out&&OPENROUTER_API_KEY){try{out=await openRouterImageBatchV8134(batch,filename,caption);console.log('[TIFF_PAGE_OK] OPENROUTER_FREE',page);}catch(e){last=e;console.error('[TIFF_PAGE_FAIL] OPENROUTER_FREE',page,e.message);}}
         if(!out) throw last||new Error('No free AI provider available for TIFF page');
         const parsed=parseDelimitedRowsV8133(out.text,page);
@@ -1500,7 +1517,7 @@ async function extractLargeTiffV8133(bytes,mime,filename,caption){
     const clean=all.filter((x,i,a)=>{const k=[x.page,x.item_no,x.identifier,x.description,x.quantity,x.unit].join('|').toLowerCase();return a.findIndex(y=>[y.page,y.item_no,y.identifier,y.description,y.quantity,y.unit].join('|').toLowerCase()===k)===i;});
     if(!clean.length) throw new Error('TIFF extraction returned zero structured rows');
     const preview=clean.map(x=>[x.page&&`P${x.page}`,x.item_no,x.identifier,x.description,x.quantity,x.unit,x.remarks].filter(Boolean).join(' | ')).join('\n');
-    return {document_type:docType,detected_languages:['English'],document_summary:`${title}. ${total}-page TIFF; ${clean.length} extracted items.`,full_text:preview,review_text_english:preview,extracted_items:clean,records:[],expected_pages:total,page_extraction_status:stats,needs_review_pages:[],needs_review:false,_provider:'FREE_MULTI_PROVIDER',_extraction_mode:'TIFF_TIMEOUT_FAILOVER_V8143'};
+    return {document_type:docType,detected_languages:['English'],document_summary:`${title}. ${total}-page TIFF; ${clean.length} extracted items.`,full_text:preview,review_text_english:preview,extracted_items:clean,records:[],expected_pages:total,page_extraction_status:stats,needs_review_pages:[],needs_review:false,_provider:'FREE_MULTI_PROVIDER',_extraction_mode:'TIFF_FREE_FAST_FAILOVER_V8144'};
   });
 }
 
@@ -2313,4 +2330,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.14.3 TIFF FFMPEG LOW-MEM FALLBACK listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.14.4 TIFF FFMPEG LOW-MEM FALLBACK listening on ${PORT}`));
