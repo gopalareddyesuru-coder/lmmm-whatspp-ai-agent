@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.14.9 ACCESS MULTI-READER FALLBACK
+// LMMM AI Maintenance V8.15.0 ACCESS MDBTOOLS RUNTIME
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -1651,7 +1651,7 @@ function extractXlsxCompleteV8147(bytes,filename){
   return {document_type:'SPREADSHEET',detected_languages:['English'],document_summary:`Complete spreadsheet extraction: ${sheets.length} sheet(s), ${items.length} data row(s).`,full_text:preview.slice(0,120000),review_text_english:preview.slice(0,120000),extracted_items:items,records:[{module:'NEEDS_REVIEW',area:null,equipment:null,sub_equipment:null,event_date:null,event_time:null,shift:null,description:`Spreadsheet ${filename||''}: ${items.length} source rows extracted completely. Review before storage.`,action_taken:null,status:null,remarks:null,confidence:'NEEDS_REVIEW'}],_extraction_mode:'NATIVE_XLSX_ALL_ROWS'};
 }
 
-async function extractAccessDatabaseV8149(bytes,filename){
+async function extractAccessDatabaseV8150(bytes,filename){
   const {mkdtemp,writeFile,rm}=await import('node:fs/promises');
   const {tmpdir}=await import('node:os');
   const {join}=await import('node:path');
@@ -1715,7 +1715,7 @@ async function extractAccessDatabaseV8149(bytes,filename){
 async function extractMaintenanceV874(bytes,mime,filename,caption){
   if(/\.(mdb|accdb)$/i.test(String(filename||'')) || /ms-access/i.test(String(mime||''))){
     console.log('[ACCESS_NATIVE_COMPLETE]',filename);
-    return await extractAccessDatabaseV8149(bytes,filename);
+    return await extractAccessDatabaseV8150(bytes,filename);
   }
   if(/\.xlsx$/i.test(String(filename||'')) || /spreadsheetml/i.test(String(mime||''))){
     console.log('[XLSX_NATIVE_COMPLETE]',filename);
