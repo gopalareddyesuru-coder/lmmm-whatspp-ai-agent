@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.13.6 LOW-MEM TIFF + WEBHOOK IDEMPOTENCY
+// LMMM AI Maintenance V8.13.7 TIFF DISK-CACHE MEMORY GUARD + WEBHOOK IDEMPOTENCY
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -1383,23 +1383,32 @@ async function withTiffTempV8136(bytes,fn){
   const dir=await fs.mkdtemp(path.join(os.tmpdir(),'lmmm-tiff-')); const file=path.join(dir,`src-${crypto.randomUUID()}.tiff`);
   try{await fs.writeFile(file,bytes); return await fn(file);} finally{await fs.rm(dir,{recursive:true,force:true}).catch(()=>{});}
 }
-async function runImageMagickV8136(cmd,args,timeout=60000,maxOut=12*1024*1024){
+async function runImageMagickV8137(cmd,args,timeout=60000,maxOut=8*1024*1024){
   const {spawn}=await import('node:child_process');
-  return await new Promise((resolve,reject)=>{const cp=spawn(cmd,args,{stdio:['ignore','pipe','pipe']});const out=[],err=[];let size=0,done=false;
+  const guarded=['-limit','thread','1','-limit','memory','64MiB','-limit','map','96MiB','-limit','disk','768MiB',...args];
+  const env={...process.env,MAGICK_MEMORY_LIMIT:'64MiB',MAGICK_MAP_LIMIT:'96MiB',MAGICK_DISK_LIMIT:'768MiB',MAGICK_THREAD_LIMIT:'1',MAGICK_TEMPORARY_PATH:process.env.MAGICK_TEMPORARY_PATH||'/tmp'};
+  return await new Promise((resolve,reject)=>{const cp=spawn(cmd,guarded,{stdio:['ignore','pipe','pipe'],env});const out=[],err=[];let size=0,errSize=0,done=false;
     const finish=(e,v)=>{if(done)return;done=true;clearTimeout(timer);e?reject(e):resolve(v)};
     const timer=setTimeout(()=>{cp.kill('SIGKILL');finish(new Error(`${cmd} timeout`));},timeout);
     cp.stdout.on('data',d=>{size+=d.length;if(size>maxOut){cp.kill('SIGKILL');finish(new Error('Converted TIFF page exceeded memory-safe output limit'));}else out.push(d)});
-    cp.stderr.on('data',d=>{if(Buffer.concat(err).length<65536)err.push(d)});cp.on('error',e=>finish(e));
+    cp.stderr.on('data',d=>{if(errSize<65536){err.push(d);errSize+=d.length;}});cp.on('error',e=>finish(e));
     cp.on('close',code=>code===0?finish(null,Buffer.concat(out)):finish(new Error(`${cmd} failed ${code}: ${Buffer.concat(err).toString().slice(0,500)}`)));
   });
 }
-async function tiffInfoV8136(file,maxPages=250){
-  let raw;try{raw=await runImageMagickV8136('identify',['-format','%p\\n',file],30000,1024*1024);}catch(e){const x=new Error(`TIFF adapter unavailable: ${e.message}`);x.code='TIFF_ADAPTER_UNAVAILABLE';throw x;}
-  const list=raw.toString().trim().split(/\s+/).filter(Boolean);return {total:Math.min(list.length||1,maxPages)};
+async function tiffPageCountV8137(file,maxPages=250){
+  const fs=await import('node:fs/promises'); const fh=await fs.open(file,'r');
+  try{
+    const h=Buffer.alloc(16); const hr=await fh.read(h,0,16,0); if(hr.bytesRead<8) throw new Error('TIFF header too short');
+    const order=h.toString('ascii',0,2),le=order==='II'; if(!le&&order!=='MM')throw new Error('Invalid TIFF byte order');
+    const u16=(b,o)=>le?b.readUInt16LE(o):b.readUInt16BE(o),u32=(b,o)=>le?b.readUInt32LE(o):b.readUInt32BE(o); const magic=u16(h,2);let off=0,count=0;
+    if(magic===42){off=u32(h,4);while(off&&count<maxPages){const b=Buffer.alloc(2);if((await fh.read(b,0,2,off)).bytesRead<2)break;const n=u16(b,0),next=off+2+n*12,nx=Buffer.alloc(4);if((await fh.read(nx,0,4,next)).bytesRead<4)break;off=u32(nx,0);count++;}}
+    else if(magic===43){if(u16(h,4)!==8)throw new Error('Unsupported BigTIFF offset size');const u64=(b,o)=>Number(le?b.readBigUInt64LE(o):b.readBigUInt64BE(o));off=u64(h,8);while(off&&count<maxPages){const b=Buffer.alloc(8);if((await fh.read(b,0,8,off)).bytesRead<8)break;const n=u64(b,0),next=off+8+n*20,nx=Buffer.alloc(8);if((await fh.read(nx,0,8,next)).bytesRead<8)break;off=u64(nx,0);count++;}}
+    else throw new Error(`Unsupported TIFF magic ${magic}`);
+    return {total:Math.max(1,count),capped:count>=maxPages};
+  }finally{await fh.close();}
 }
-async function tiffOnePageJpegV8136(file,page){
-  // IMPORTANT: read only one frame from disk. Never materialise every TIFF page in JS memory.
-  return await runImageMagickV8136('convert',[`${file}[${page-1}]`,'-background','white','-alpha','remove','-resize','1400x1400>','-quality','78','jpeg:-'],60000,8*1024*1024);
+async function tiffOnePageJpegV8137(file,page){
+  return await runImageMagickV8137('convert',[`${file}[${page-1}]`,'-background','white','-alpha','remove','-resize','1200x1200>','-strip','-quality','72','jpeg:-'],90000,6*1024*1024);
 }
 function parseDelimitedRowsV8133(txt,forcedPage=null){
   const rows=[]; let docType='TECHNICAL_REFERENCE',title='Technical reference document';
@@ -1442,13 +1451,13 @@ Then EVERY legible row as ROW|page|item no|exact identifier|exact description/de
 }
 async function extractLargeTiffV8133(bytes,mime,filename,caption){
   return await withTiffTempV8136(bytes,async file=>{
-    const {total}=await tiffInfoV8136(file,250); console.log('[TIFF_PAGES]',filename,total,'mode=LOW_MEM_ONE_PAGE');
+    const {total,capped}=await tiffPageCountV8137(file,250); console.log('[TIFF_PAGES]',filename,total,'mode=DISK_CACHE_ONE_PAGE','capped=',capped);
     const all=[],stats=[]; let docType='TECHNICAL_REFERENCE',title='Technical reference document';
     // Render free instance has 512 MiB RAM. One TIFF page at a time prevents decompressed multi-frame accumulation.
     for(let page=1;page<=total;page++){
       let jpg=null,out=null,last=null;
       try{
-        jpg=await tiffOnePageJpegV8136(file,page); const batch=[{page,bytes:jpg,mime:'image/jpeg'}];
+        jpg=await tiffOnePageJpegV8137(file,page); const batch=[{page,bytes:jpg,mime:'image/jpeg'}];
         if(GEMINI_API_KEY){try{out=await geminiImageBatchV8133(batch,filename,caption);console.log('[TIFF_PAGE_OK] GEMINI',page);}catch(e){last=e;console.error('[TIFF_PAGE_FAIL] GEMINI',page,e.message);}}
         if(!out&&OPENROUTER_API_KEY){try{out=await openRouterImageBatchV8134(batch,filename,caption);console.log('[TIFF_PAGE_OK] OPENROUTER_FREE',page);}catch(e){last=e;console.error('[TIFF_PAGE_FAIL] OPENROUTER_FREE',page,e.message);}}
         if(!out){stats.push({page,status:'NEEDS_REVIEW',rows:0,error:String(last?.message||'AI unavailable')});continue;}
@@ -1460,7 +1469,7 @@ async function extractLargeTiffV8133(bytes,mime,filename,caption){
     const clean=all.filter((x,i,a)=>{const k=[x.page,x.item_no,x.identifier,x.description,x.quantity,x.unit].join('|').toLowerCase();return a.findIndex(y=>[y.page,y.item_no,y.identifier,y.description,y.quantity,y.unit].join('|').toLowerCase()===k)===i;});
     const review=stats.filter(x=>x.status==='NEEDS_REVIEW').map(x=>x.page); if(!clean.length)throw new Error(`TIFF extraction returned zero rows; pages retained for retry (${review.join(',')||'all'})`);
     const preview=clean.map(x=>[x.page&&`P${x.page}`,x.item_no,x.identifier,x.description,x.quantity,x.unit,x.remarks].filter(Boolean).join(' | ')).join('\n');
-    return {document_type:docType,detected_languages:['English'],document_summary:`${title}. ${total}-page TIFF; ${clean.length} extracted items${review.length?`; pages needing review: ${review.join(', ')}`:''}.`,full_text:preview,review_text_english:preview,extracted_items:clean,records:[],expected_pages:total,page_extraction_status:stats,needs_review_pages:review,needs_review:review.length>0,_provider:'FREE_MULTI_PROVIDER',_extraction_mode:'LOW_MEMORY_TIFF_ONE_PAGE'};
+    return {document_type:docType,detected_languages:['English'],document_summary:`${title}. ${total}-page TIFF; ${clean.length} extracted items${review.length?`; pages needing review: ${review.join(', ')}`:''}.`,full_text:preview,review_text_english:preview,extracted_items:clean,records:[],expected_pages:total,page_extraction_status:stats,needs_review_pages:review,needs_review:review.length>0,_provider:'FREE_MULTI_PROVIDER',_extraction_mode:'TIFF_DISK_CACHE_ONE_PAGE_V8137'};
   });
 }
 
@@ -1832,7 +1841,7 @@ async function extractQueuedIngestV895(from,row){
       await sendText(from,'This upload is not relevant to LMMM plant / maintenance knowledge. Nothing was stored.');
       return true;
     }
-    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.13.6',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack))]);
+    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.13.7',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack))]);
     await armTemporarySourceExpiryV8120(row.id);
     await reliabilityEventV8100(row,'AI_EXTRACTION','SUCCEEDED',pack?._provider||null);
     await pool.query(`UPDATE pending_file_ingests SET workflow_state='SOURCE_SECURED',updated_at=now() WHERE id=$1`,[row.id]).catch(()=>{});
@@ -2310,4 +2319,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.13.6 LOW-MEM TIFF + WEBHOOK IDEMPOTENCY listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.13.7 TIFF DISK-CACHE MEMORY GUARD + WEBHOOK IDEMPOTENCY listening on ${PORT}`));
