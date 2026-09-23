@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.14.0 STABLE TEST BASE + TIFF HARD FAIL-FAST
+// LMMM AI Maintenance V8.14.1 TIFF BILEVEL LOW-MEM ENGINE
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -1408,15 +1408,17 @@ async function tiffPageCountV8137(file,maxPages=250){
   }finally{await fh.close();}
 }
 async function tiffOnePageJpegV8137(file,page){
-  // Keep decoded pixels out of Node heap. ImageMagick may spill its pixel cache to /tmp.
-  // 2 GiB disk cache is intentional: scanned engineering TIFF pages can require far more cache
-  // than their compressed file size while RAM remains capped well below Render's 512 MiB limit.
+  // V8.14.1: engineering scans are commonly bilevel/Group4. Avoid sRGB/alpha expansion,
+  // which can multiply the decoded pixel cache on 512 MiB hosts. Decode one frame only,
+  // keep it grayscale/8-bit, thumbnail before JPEG encoding, then exit the child process.
+  const frame=`${file}[${page-1}]`;
   try{
-    return await runImageMagickV8137('convert',[`${file}[${page-1}]`,'-background','white','-alpha','remove','-colorspace','sRGB','-resize','1100x1100>','-strip','-quality','68','jpeg:-'],120000,5*1024*1024);
+    return await runImageMagickV8137('convert',[frame,'-alpha','off','-colorspace','Gray','-depth','8','-thumbnail','1050x1050>','-strip','-quality','66','jpeg:-'],90000,4*1024*1024);
   }catch(e){
-    if(!/cache resources exhausted|OpenPixelCache/i.test(String(e?.message||e))) throw e;
-    console.warn('[TIFF_CACHE_RETRY]',page,'retrying with smaller output and disk-backed cache');
-    return await runImageMagickV8137('convert',[`${file}[${page-1}]`,'-background','white','-alpha','remove','-colorspace','Gray','-resize','850x850>','-strip','-quality','60','jpeg:-'],120000,4*1024*1024);
+    if(!/cache resources exhausted|OpenPixelCache|memory allocation/i.test(String(e?.message||e))) throw e;
+    console.warn('[TIFF_BILEVEL_RETRY]',page,'retrying 1-bit low-memory render');
+    // Last local attempt: force bilevel output and a smaller thumbnail. No page loop/retry storm.
+    return await runImageMagickV8137('convert',[frame,'-alpha','off','-colorspace','Gray','-threshold','60%','-depth','1','-thumbnail','760x760>','-strip','png:-'],90000,3*1024*1024);
   }
 }
 function parseDelimitedRowsV8133(txt,forcedPage=null){
@@ -1436,7 +1438,7 @@ First line MUST be DOC|<MANUAL|PARTS_LIST|DRAWING_LIST|EQUIPMENT_DATA|JOB|HISTOR
 Then extract EVERY legible row/maintenance line as ROW|page|item no|exact identifier|exact description/designation|quantity|unit|remarks.
 Preserve exact IDs, drawing/part numbers, dates and quantities. Do not guess. Do not copy filename numbers into data fields. Unreadable=[UNREADABLE].`;
   const content=[{type:'input_text',text:prompt}];
-  for(const p of batch){content.push({type:'input_text',text:`SOURCE PAGE ${p.page}`});content.push({type:'input_image',image_url:`data:image/jpeg;base64,${p.bytes.toString('base64')}`,detail:'high'});}
+  for(const p of batch){content.push({type:'input_text',text:`SOURCE PAGE ${p.page}`});content.push({type:'input_image',image_url:`data:${p.mime||'image/jpeg'};base64,${p.bytes.toString('base64')}`,detail:'high'});}
   const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),timeoutMs);
   try{const r=await fetch('https://api.openai.com/v1/responses',{method:'POST',signal:ctrl.signal,headers:{Authorization:`Bearer ${OPENAI_API_KEY}`,'Content-Type':'application/json'},body:JSON.stringify({model:OPENAI_MODEL,input:[{role:'user',content}],max_output_tokens:16384})});
     if(!r.ok)throw new Error(`OpenAI TIFF ${r.status}: ${(await r.text()).slice(0,700)}`);const j=await r.json();const text=String(j.output_text||'')||(j.output||[]).flatMap(o=>o.content||[]).map(c=>c.text||'').join('\n');if(!text.trim())throw new Error('OpenAI TIFF empty response');return {text,provider:'OPENAI',model:j.model||OPENAI_MODEL};
@@ -1446,7 +1448,7 @@ async function openRouterImageBatchV8134(batch,filename,caption,timeoutMs=90000)
   if(!OPENROUTER_API_KEY) throw new Error('OPENROUTER_API_KEY missing');
   const prompt=`Classify and extract these consecutive pages from one LMMM industrial source. Filename: ${filename}. Caption: ${caption||'(none)'}. First line DOC|<MANUAL|PARTS_LIST|DRAWING_LIST|EQUIPMENT_DATA|JOB|HISTORY|DEFECT|FORMAT|PERMIT|BOQ|LOGBOOK|INSPECTION|TECHNICAL_REFERENCE|OTHER>|<short factual title>. Then EVERY legible row as ROW|page|item no|exact identifier|exact description/designation|quantity|unit|remarks. Preserve exact values; never guess.`;
   const content=[{type:'text',text:prompt}];
-  for(const p of batch){content.push({type:'text',text:`SOURCE PAGE ${p.page}`});content.push({type:'image_url',image_url:{url:`data:image/jpeg;base64,${p.bytes.toString('base64')}`}});}
+  for(const p of batch){content.push({type:'text',text:`SOURCE PAGE ${p.page}`});content.push({type:'image_url',image_url:{url:`data:${p.mime||'image/jpeg'};base64,${p.bytes.toString('base64')}`}});}
   const r=await geminiFetchV890('https://openrouter.ai/api/v1/chat/completions',{method:'POST',headers:{Authorization:`Bearer ${OPENROUTER_API_KEY}`,'Content-Type':'application/json','X-Title':'LMMM AI Maintenance'},body:JSON.stringify({model:process.env.OPENROUTER_FREE_VISION_MODEL||'openrouter/free',messages:[{role:'user',content}],max_tokens:16384})},timeoutMs);
   if(!r.ok) throw new Error(`OpenRouter TIFF ${r.status}: ${(await r.text()).slice(0,600)}`);
   const j=await r.json(),text=j?.choices?.[0]?.message?.content;if(!text)throw new Error('OpenRouter TIFF empty response');return {text,provider:'OPENROUTER',model:j.model||'openrouter/free'};
@@ -1455,20 +1457,21 @@ async function geminiImageBatchV8133(batch,filename,caption){
   const prompt=`Classify and extract these consecutive pages from one LMMM industrial source. Filename: ${filename}. Caption: ${caption||'(none)'}.
 First line DOC|<MANUAL|PARTS_LIST|DRAWING_LIST|EQUIPMENT_DATA|JOB|HISTORY|DEFECT|FORMAT|PERMIT|BOQ|LOGBOOK|INSPECTION|TECHNICAL_REFERENCE|OTHER>|<short factual title based on heading/content>.
 Then EVERY legible row as ROW|page|item no|exact identifier|exact description/designation|quantity|unit|remarks. Preserve exact source values; never guess.`;
-  const parts=[{text:prompt}]; for(const p of batch){parts.push({text:`SOURCE PAGE ${p.page}`});parts.push({inline_data:{mime_type:'image/jpeg',data:p.bytes.toString('base64')}});}
+  const parts=[{text:prompt}]; for(const p of batch){parts.push({text:`SOURCE PAGE ${p.page}`});parts.push({inline_data:{mime_type:p.mime||'image/jpeg',data:p.bytes.toString('base64')}});}
   const gx=await geminiOnlyGenerateWithFallbackV8110({contents:[{parts}],generationConfig:{maxOutputTokens:16384}},120000);const j=await gx.response.json();return {text:(j.candidates?.[0]?.content?.parts||[]).map(x=>x.text||'').join(''),provider:'GEMINI',model:gx.model};
 }
 async function extractLargeTiffV8133(bytes,mime,filename,caption){
   return await withTiffTempV8136(bytes,async file=>{
     const {total,capped}=await tiffPageCountV8137(file,250);
-    console.log('[TIFF_PAGES]',filename,total,'mode=ONE_PAGE_HARD_FAIL_FAST','capped=',capped);
+    console.log('[TIFF_PAGES]',filename,total,'mode=BILEVEL_LOW_MEM_ONE_PAGE','capped=',capped);
     const all=[],stats=[]; let docType='TECHNICAL_REFERENCE',title='Technical reference document';
     for(let page=1;page<=total;page++){
       let jpg=null,out=null,last=null;
       try{
         // Never keep more than one rendered TIFF page in memory.
         jpg=await tiffOnePageJpegV8137(file,page);
-        const batch=[{page,bytes:jpg,mime:'image/jpeg'}];
+        const pageMime=(jpg?.[0]===0x89&&jpg?.[1]===0x50&&jpg?.[2]===0x4e&&jpg?.[3]===0x47)?'image/png':'image/jpeg';
+        const batch=[{page,bytes:jpg,mime:pageMime}];
         if(GEMINI_API_KEY){try{out=await geminiImageBatchV8133(batch,filename,caption);console.log('[TIFF_PAGE_OK] GEMINI',page);}catch(e){last=e;console.error('[TIFF_PAGE_FAIL] GEMINI',page,e.message);}}
         if(!out&&OPENROUTER_API_KEY){try{out=await openRouterImageBatchV8134(batch,filename,caption);console.log('[TIFF_PAGE_OK] OPENROUTER_FREE',page);}catch(e){last=e;console.error('[TIFF_PAGE_FAIL] OPENROUTER_FREE',page,e.message);}}
         if(!out) throw last||new Error('No free AI provider available for TIFF page');
@@ -1487,7 +1490,7 @@ async function extractLargeTiffV8133(bytes,mime,filename,caption){
     const clean=all.filter((x,i,a)=>{const k=[x.page,x.item_no,x.identifier,x.description,x.quantity,x.unit].join('|').toLowerCase();return a.findIndex(y=>[y.page,y.item_no,y.identifier,y.description,y.quantity,y.unit].join('|').toLowerCase()===k)===i;});
     if(!clean.length) throw new Error('TIFF extraction returned zero structured rows');
     const preview=clean.map(x=>[x.page&&`P${x.page}`,x.item_no,x.identifier,x.description,x.quantity,x.unit,x.remarks].filter(Boolean).join(' | ')).join('\n');
-    return {document_type:docType,detected_languages:['English'],document_summary:`${title}. ${total}-page TIFF; ${clean.length} extracted items.`,full_text:preview,review_text_english:preview,extracted_items:clean,records:[],expected_pages:total,page_extraction_status:stats,needs_review_pages:[],needs_review:false,_provider:'FREE_MULTI_PROVIDER',_extraction_mode:'TIFF_ONE_PAGE_HARD_FAIL_FAST_V8140'};
+    return {document_type:docType,detected_languages:['English'],document_summary:`${title}. ${total}-page TIFF; ${clean.length} extracted items.`,full_text:preview,review_text_english:preview,extracted_items:clean,records:[],expected_pages:total,page_extraction_status:stats,needs_review_pages:[],needs_review:false,_provider:'FREE_MULTI_PROVIDER',_extraction_mode:'TIFF_BILEVEL_LOW_MEM_V8141'};
   });
 }
 
@@ -2300,4 +2303,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.14.0 STABLE TEST BASE + TIFF HARD FAIL-FAST listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.14.1 TIFF BILEVEL LOW-MEM ENGINE listening on ${PORT}`));
