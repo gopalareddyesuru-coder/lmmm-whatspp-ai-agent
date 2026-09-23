@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.12.8 FAST PROVIDER FAILOVER
+// LMMM AI Maintenance V8.12.9 FAST EXTRACTION FAILOVER
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -971,7 +971,8 @@ Caption: ${caption||'(none)'}`;
 
 
 function geminiModelCandidatesV892(){
-  const raw=['gemini-3.8-flash','gemini-3.7-flash','gemini-3.6-flash','gemini-3.5-flash-lite','gemini-3.5-flash',process.env.GEMINI_FALLBACK_MODEL,GEMINI_MODEL]
+  // Use only models explicitly configured for this deployment. Do not waste time on guessed model names.
+  const raw=[GEMINI_MODEL,process.env.GEMINI_FALLBACK_MODEL]
     .filter(Boolean).map(x=>String(x).trim()).filter(Boolean);
   return [...new Set(raw)];
 }
@@ -1037,7 +1038,7 @@ async function geminiOnlyGenerateWithFallbackV8110(body,timeoutMs=45000){
     const model=models[i];
     const url=`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`;
     try{
-      const r=await geminiFetchV890(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)},Math.min(timeoutMs,18000));
+      const r=await geminiFetchV890(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)},Math.min(timeoutMs,8000));
       if(r.ok) return {response:r,model};
       const raw=await r.text();
       console.error('[GEMINI_MODEL_FAIL]',JSON.stringify({model,attempt:1,status:r.status,error:raw.slice(0,500)}));
@@ -1046,7 +1047,7 @@ async function geminiOnlyGenerateWithFallbackV8110(body,timeoutMs=45000){
       // 429/5xx = provider temporarily unavailable. Fail over NOW instead of trying
       // every Gemini model. Cooldown prevents every PDF page hammering Gemini again.
       if([429,500,502,503,504].includes(r.status)){
-        geminiCooldownUntilV8128=Date.now()+120000;
+        geminiCooldownUntilV8128=Date.now()+300000;
         lastErr.code=r.status===429?'GEMINI_QUOTA':'GEMINI_TEMP_UNAVAILABLE';
         throw lastErr;
       }
@@ -1054,7 +1055,7 @@ async function geminiOnlyGenerateWithFallbackV8110(body,timeoutMs=45000){
       if(i>=1) throw lastErr;
     }catch(e){
       if(e?.name==='AbortError'){
-        geminiCooldownUntilV8128=Date.now()+120000;
+        geminiCooldownUntilV8128=Date.now()+300000;
         const te=new Error('Gemini timeout; immediate provider failover'); te.code='GEMINI_TIMEOUT'; throw te;
       }
       if(e?.code||[429,500,502,503,504].includes(e?.status)) throw e;
@@ -1086,7 +1087,7 @@ async function geminiGenerateWithFallbackV892(body,timeoutMs=45000){
   if(!hasFile && !hasAudio){
     try{
       console.log('[AI_PROVIDER_TRY] GROQ');
-      const x=await groqGenerateV8110(body,Math.min(timeoutMs,30000));
+      const x=await groqGenerateV8110(body,Math.min(timeoutMs,20000));
       console.log('[AI_PROVIDER_OK] GROQ',x.model); return x;
     }catch(e){
       failures.push(`GROQ:${e.message}`);
@@ -1098,7 +1099,7 @@ async function geminiGenerateWithFallbackV892(body,timeoutMs=45000){
 
   try{
     console.log('[AI_PROVIDER_TRY] OPENROUTER');
-    const x=await openRouterGenerateV8110(body,Math.min(Math.max(timeoutMs,45000),60000));
+    const x=await openRouterGenerateV8110(body,Math.min(Math.max(timeoutMs,25000),35000));
     console.log('[AI_PROVIDER_OK] OPENROUTER',x.model); return x;
   }catch(e){
     failures.push(`OPENROUTER:${e.message}`);
@@ -1114,7 +1115,7 @@ async function geminiFetchV890(url,options,timeoutMs=45000){
   finally{clearTimeout(t);}
 }
 async function extractMaintenanceCoreV887(bytes,mime,filename,caption,compact=false){
-  if(!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY missing');
+  if(!GEMINI_API_KEY && !GROQ_API_KEY && !OPENROUTER_API_KEY) throw new Error('No AI provider key configured');
   const ext=String(filename||'').toLowerCase().match(/\.([a-z0-9]+)$/)?.[1]||'';
   const mime0=String(mime||'application/octet-stream').toLowerCase();
   const extMime={pdf:'application/pdf',jpg:'image/jpeg',jpeg:'image/jpeg',png:'image/png',webp:'image/webp',tif:'image/tiff',tiff:'image/tiff',txt:'text/plain',csv:'text/csv',doc:'application/msword',docx:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',xls:'application/vnd.ms-excel',xlsx:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',xlsm:'application/vnd.ms-excel.sheet.macroenabled.12',mdb:'application/vnd.ms-access',accdb:'application/vnd.ms-access',ogg:'audio/ogg',opus:'audio/ogg',mp3:'audio/mpeg',m4a:'audio/mp4',aac:'audio/aac',wav:'audio/wav'};
@@ -1223,7 +1224,7 @@ async function extractPdfBatchesV897(bytes,mime,filename,caption){
   // and lets us retry an individual page without repeating successful pages.
   for(let page=1;page<=maxPages;page++){
     let pageRows=[], lastErr=null;
-    for(let attempt=1;attempt<=2;attempt++){
+    for(let attempt=1;attempt<=1;attempt++){
       try{
         const prompt=`Read ONLY PDF page ${page}. Ignore every other page.
 Return EVERY legible table/list row from page ${page}; do not summarize and do not omit repeated-looking rows.
@@ -1289,7 +1290,7 @@ If page ${page} is unavailable/unreadable, output PAGE_UNREADABLE.`;
 }
 
 async function extractPlainTechnicalV891(bytes,mime,filename,caption){
-  if(!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY missing');
+  if(!GEMINI_API_KEY && !GROQ_API_KEY && !OPENROUTER_API_KEY) throw new Error('No AI provider key configured');
   const prompt=`You are a document transcription engine, not a conversational assistant.
 Read the ENTIRE uploaded industrial document, including every available PDF page.
 Return ONLY data lines. Never explain your work, never repeat these instructions, never say "and so on", "wait", or "let's".
@@ -1637,7 +1638,7 @@ async function extractQueuedIngestV895(from,row){
       await sendText(from,'This upload is not relevant to LMMM plant / maintenance knowledge. Nothing was stored.');
       return true;
     }
-    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.12.8',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack))]);
+    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.12.9',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack))]);
     await armTemporarySourceExpiryV8120(row.id);
     await reliabilityEventV8100(row,'AI_EXTRACTION','SUCCEEDED',pack?._provider||null);
     await pool.query(`UPDATE pending_file_ingests SET workflow_state='SOURCE_SECURED',updated_at=now() WHERE id=$1`,[row.id]).catch(()=>{});
@@ -2109,4 +2110,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.12.8 FAST PROVIDER FAILOVER listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.12.9 FAST EXTRACTION FAILOVER listening on ${PORT}`));
