@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.13.9 NO-SOURCE-RETENTION + TIFF FAIL-FAST
+// LMMM AI Maintenance V8.14.0 STABLE TEST BASE + TIFF HARD FAIL-FAST
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -1460,25 +1460,34 @@ Then EVERY legible row as ROW|page|item no|exact identifier|exact description/de
 }
 async function extractLargeTiffV8133(bytes,mime,filename,caption){
   return await withTiffTempV8136(bytes,async file=>{
-    const {total,capped}=await tiffPageCountV8137(file,250); console.log('[TIFF_PAGES]',filename,total,'mode=DISK_CACHE_ONE_PAGE','capped=',capped);
+    const {total,capped}=await tiffPageCountV8137(file,250);
+    console.log('[TIFF_PAGES]',filename,total,'mode=ONE_PAGE_HARD_FAIL_FAST','capped=',capped);
     const all=[],stats=[]; let docType='TECHNICAL_REFERENCE',title='Technical reference document';
-    // Render free instance has 512 MiB RAM. One TIFF page at a time prevents decompressed multi-frame accumulation.
     for(let page=1;page<=total;page++){
       let jpg=null,out=null,last=null;
       try{
-        jpg=await tiffOnePageJpegV8137(file,page); const batch=[{page,bytes:jpg,mime:'image/jpeg'}];
+        // Never keep more than one rendered TIFF page in memory.
+        jpg=await tiffOnePageJpegV8137(file,page);
+        const batch=[{page,bytes:jpg,mime:'image/jpeg'}];
         if(GEMINI_API_KEY){try{out=await geminiImageBatchV8133(batch,filename,caption);console.log('[TIFF_PAGE_OK] GEMINI',page);}catch(e){last=e;console.error('[TIFF_PAGE_FAIL] GEMINI',page,e.message);}}
         if(!out&&OPENROUTER_API_KEY){try{out=await openRouterImageBatchV8134(batch,filename,caption);console.log('[TIFF_PAGE_OK] OPENROUTER_FREE',page);}catch(e){last=e;console.error('[TIFF_PAGE_FAIL] OPENROUTER_FREE',page,e.message);}}
-        if(!out){stats.push({page,status:'NEEDS_REVIEW',rows:0,error:String(last?.message||'AI unavailable')});continue;}
-        const parsed=parseDelimitedRowsV8133(out.text,page); if(page===1){docType=parsed.docType||docType;title=parsed.title||title;} all.push(...parsed.rows);
+        if(!out) throw last||new Error('No free AI provider available for TIFF page');
+        const parsed=parseDelimitedRowsV8133(out.text,page);
+        if(page===1){docType=parsed.docType||docType;title=parsed.title||title;}
+        all.push(...parsed.rows);
         stats.push({page,status:parsed.rows.length?'OK':'NO_ROWS',rows:parsed.rows.length,provider:out.provider,model:out.model});
-      }catch(e){console.error('[TIFF_PAGE_ERROR]',page,e.message);stats.push({page,status:'NEEDS_REVIEW',rows:0,error:String(e.message||e)});}
-      finally{jpg=null;}
+      }catch(e){
+        console.error('[TIFF_HARD_FAIL]',filename,'page',page,String(e?.message||e));
+        // Important on 512 MiB hosting: do not continue through the remaining frames after
+        // ImageMagick/cache failure. The original upload is intentionally not retained.
+        const x=new Error(`TIFF page ${page} could not be processed safely: ${String(e?.message||e).slice(0,300)}`);
+        x.code='TIFF_PAGE_FAILED'; throw x;
+      }finally{jpg=null;out=null;}
     }
     const clean=all.filter((x,i,a)=>{const k=[x.page,x.item_no,x.identifier,x.description,x.quantity,x.unit].join('|').toLowerCase();return a.findIndex(y=>[y.page,y.item_no,y.identifier,y.description,y.quantity,y.unit].join('|').toLowerCase()===k)===i;});
-    const review=stats.filter(x=>x.status==='NEEDS_REVIEW').map(x=>x.page); if(!clean.length)throw new Error(`TIFF extraction returned zero rows; pages retained for retry (${review.join(',')||'all'})`);
+    if(!clean.length) throw new Error('TIFF extraction returned zero structured rows');
     const preview=clean.map(x=>[x.page&&`P${x.page}`,x.item_no,x.identifier,x.description,x.quantity,x.unit,x.remarks].filter(Boolean).join(' | ')).join('\n');
-    return {document_type:docType,detected_languages:['English'],document_summary:`${title}. ${total}-page TIFF; ${clean.length} extracted items${review.length?`; pages needing review: ${review.join(', ')}`:''}.`,full_text:preview,review_text_english:preview,extracted_items:clean,records:[],expected_pages:total,page_extraction_status:stats,needs_review_pages:review,needs_review:review.length>0,_provider:'FREE_MULTI_PROVIDER',_extraction_mode:'TIFF_ADAPTIVE_DISK_CACHE_V8138'};
+    return {document_type:docType,detected_languages:['English'],document_summary:`${title}. ${total}-page TIFF; ${clean.length} extracted items.`,full_text:preview,review_text_english:preview,extracted_items:clean,records:[],expected_pages:total,page_extraction_status:stats,needs_review_pages:[],needs_review:false,_provider:'FREE_MULTI_PROVIDER',_extraction_mode:'TIFF_ONE_PAGE_HARD_FAIL_FAST_V8140'};
   });
 }
 
@@ -1845,14 +1854,14 @@ async function extractQueuedIngestV895(from,row,bytesOverride=null){
       await pool.query(`UPDATE pending_file_ingests SET status='UNRELATED',workflow_state='COMPLETED',source_bytes=NULL,source_purged_at=now(),extracted_rows=$2::jsonb,locked_at=NULL,updated_at=now() WHERE id=$1`,[row.id,JSON.stringify(packForDBV878(pack))]);
       await sendText(from,'This upload is not relevant to LMMM plant / maintenance knowledge. Nothing was stored.'); return true;
     }
-    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',source_bytes=NULL,source_purged_at=now(),extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.13.9',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack))]);
+    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',source_bytes=NULL,source_purged_at=now(),extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.14.0',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack))]);
     await reliabilityEventV8100(row,'AI_EXTRACTION','SUCCEEDED',pack?._provider||null);
     await setPendingIngestSessionV877(from,row.id); await setIngestModeV874(from,false); await showIngestOptionsV877(from,q.rows[0]); return true;
   }catch(e){
     const msg=String(e?.message||e).slice(0,1500); console.error('[EXTRACT_FAILED_NO_RETENTION]',row.id,e);
-    await pool.query(`UPDATE pending_file_ingests SET status='FAILED',workflow_state='FAILED',source_bytes=NULL,source_purged_at=now(),last_error=$2,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.13.9',updated_at=now() WHERE id=$1`,[row.id,msg]).catch(()=>{});
+    await pool.query(`UPDATE pending_file_ingests SET status='FAILED',workflow_state='FAILED',source_bytes=NULL,source_purged_at=now(),last_error=$2,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.14.0',updated_at=now() WHERE id=$1`,[row.id,msg]).catch(()=>{});
     await reliabilityEventV8100(row,'AI_EXTRACTION','FAILED',null,e).catch(()=>{});
-    await sendText(from,'Extraction failed. Original file was not stored. Please upload the file again if you want to retry.');
+    await sendText(from,'Extraction failed. Original file was not stored. Please upload it again only if you want to retry.');
     return false;
   }
 }
@@ -1966,7 +1975,7 @@ async function queuedStatusV895(from){
   await sendText(from,`Upload: ${r.source_filename||'source'}
 Status: ${r.status}
 Attempts: ${r.retry_count}
-Engine: ${r.extraction_engine_version||'V8.13.9'}
+Engine: ${r.extraction_engine_version||'V8.14.0'}
 Original source: not retained`);
   return true;
 }
@@ -1986,7 +1995,7 @@ async function processMediaMessageV874(from,m){
     // Store metadata/hash only. Never persist the user's original upload bytes.
     const q=await pool.query(`INSERT INTO pending_file_ingests
       (submitted_by_whatsapp,submitted_by_employee_number,source_media_id,source_filename,source_mime_type,source_caption,source_sha256,source_bytes,extracted_rows,status,workflow_state,extraction_engine_version)
-      VALUES($1,$2,$3,$4,$5,$6,$7,NULL,$8::jsonb,'RECEIVED','RECEIVED','V8.13.9') RETURNING *`,
+      VALUES($1,$2,$3,$4,$5,$6,$7,NULL,$8::jsonb,'RECEIVED','RECEIVED','V8.14.0') RETURNING *`,
       [normWA(from),u.employee_number,mediaId,filename,mime,caption,sha,JSON.stringify({})]);
     const row=q.rows[0]; await setPendingIngestSessionV877(from,row.id);
     await extractQueuedIngestV895(from,row,d.bytes);
@@ -2291,4 +2300,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.13.9 NO-SOURCE-RETENTION + TIFF FAIL-FAST listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.14.0 STABLE TEST BASE + TIFF HARD FAIL-FAST listening on ${PORT}`));
