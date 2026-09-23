@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.13.1 GEMINI 90S + OPENAI PDF FALLBACK
+// LMMM AI Maintenance V8.13.2 GEMINI PRIMARY + OPENAI UNIVERSAL BACKUP
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -996,6 +996,47 @@ function geminiBodyToOpenAIContentV8110(body){
 function openAITextAsGeminiResponseV8110(text){
   return {ok:true,status:200,json:async()=>({candidates:[{content:{parts:[{text:String(text||'')}]}}]})};
 }
+async function openAIUniversalGenerateV8132(body,timeoutMs=90000){
+  if(!OPENAI_API_KEY) throw new Error('OPENAI_API_KEY missing');
+  const parts=body?.contents?.flatMap(x=>x.parts||[])||[];
+  const prompts=parts.filter(p=>p.text).map(p=>String(p.text));
+  const audioPart=parts.find(p=>{const d=p.inline_data||p.inlineData;return d?.data&&/^audio\//i.test(String(d.mime_type||d.mimeType||''));});
+  let transcript='';
+  if(audioPart){
+    const d=audioPart.inline_data||audioPart.inlineData, mime=String(d.mime_type||d.mimeType||'audio/ogg').split(';')[0];
+    const ext=mime.includes('mpeg')?'mp3':mime.includes('wav')?'wav':mime.includes('mp4')?'m4a':'ogg';
+    const fd=new FormData();
+    fd.append('file',new Blob([Buffer.from(d.data,'base64')],{type:mime}),`voice.${ext}`);
+    fd.append('model',process.env.OPENAI_TRANSCRIBE_MODEL||'gpt-4o-transcribe');
+    const ac=new AbortController(), at=setTimeout(()=>ac.abort(),Math.min(Math.max(timeoutMs,60000),120000));
+    try{
+      const ar=await fetch('https://api.openai.com/v1/audio/transcriptions',{method:'POST',signal:ac.signal,headers:{Authorization:`Bearer ${OPENAI_API_KEY}`},body:fd});
+      if(!ar.ok) throw new Error(`OpenAI transcription ${ar.status}: ${(await ar.text()).slice(0,500)}`);
+      const aj=await ar.json(); transcript=String(aj.text||'').trim();
+      if(!transcript) throw new Error('OpenAI transcription empty');
+    }finally{clearTimeout(at);}
+  }
+  const content=[];
+  if(prompts.length||transcript) content.push({type:'input_text',text:[...prompts,transcript?`\nSOURCE AUDIO TRANSCRIPT:\n${transcript}`:''].filter(Boolean).join('\n')});
+  for(const p of parts){
+    const d=p.inline_data||p.inlineData; if(!d?.data) continue;
+    const mime=String(d.mime_type||d.mimeType||'application/octet-stream').split(';')[0];
+    const data=`data:${mime};base64,${d.data}`;
+    if(/^image\//i.test(mime)) content.push({type:'input_image',image_url:data,detail:'high'});
+    else if(/pdf/i.test(mime)) content.push({type:'input_file',filename:'lmmm-source.pdf',file_data:data});
+    else if(!/^audio\//i.test(mime)) content.push({type:'input_file',filename:'lmmm-source.bin',file_data:data});
+  }
+  if(!content.length) throw new Error('OpenAI fallback received no usable input');
+  const ctrl=new AbortController(), timer=setTimeout(()=>ctrl.abort(),Math.min(Math.max(timeoutMs,60000),120000));
+  try{
+    const r=await fetch('https://api.openai.com/v1/responses',{method:'POST',signal:ctrl.signal,headers:{Authorization:`Bearer ${OPENAI_API_KEY}`,'Content-Type':'application/json'},body:JSON.stringify({model:OPENAI_MODEL,input:[{role:'user',content}],max_output_tokens:body?.generationConfig?.maxOutputTokens||8192})});
+    if(!r.ok) throw new Error(`OpenAI ${r.status}: ${(await r.text()).slice(0,700)}`);
+    const j=await r.json();
+    const txt=String(j.output_text||'')||(j.output||[]).flatMap(o=>o.content||[]).map(c=>c.text||'').join('\n');
+    if(!txt.trim()) throw new Error('OpenAI empty response');
+    return {model:j.model||OPENAI_MODEL,response:openAITextAsGeminiResponseV8110(txt.trim()),provider:'OPENAI'};
+  }catch(e){if(e?.name==='AbortError'){const x=new Error('OpenAI fallback timeout');x.code='OPENAI_TIMEOUT';throw x;}throw e;}finally{clearTimeout(timer);}
+}
 async function openRouterGenerateV8110(body,timeoutMs=60000){
   if(!OPENROUTER_API_KEY) throw new Error('OPENROUTER_API_KEY missing');
   const content=geminiBodyToOpenAIContentV8110(body);
@@ -1083,9 +1124,22 @@ async function geminiGenerateWithFallbackV892(body,timeoutMs=45000){
     console.error('[AI_PROVIDER_FAIL] GEMINI',e.code||'',e.status||'',e.message);
   }
 
-  // Capability-aware failover:
-  // PDF/file -> OpenRouter directly (Groq path does not support PDF/file here).
-  // Text/image -> Groq first, then OpenRouter.
+  // V8.13.2: OpenAI is the universal quality backup after Gemini for
+  // translation, classification, extraction, text, images, PDFs and voice/audio.
+  // Lower-quality providers remain tertiary fallbacks for non-file/non-audio tasks only.
+  if(OPENAI_API_KEY){
+    try{
+      console.log('[AI_PROVIDER_TRY] OPENAI');
+      const x=await openAIUniversalGenerateV8132(body,Math.max(timeoutMs,90000));
+      console.log('[AI_PROVIDER_OK] OPENAI',x.model); return x;
+    }catch(e){
+      failures.push(`OPENAI:${e.message}`);
+      console.error('[AI_PROVIDER_FAIL] OPENAI',e.code||'',e.message);
+    }
+  }else failures.push('OPENAI:key missing');
+
+  // Tertiary failover is allowed only for text/image. Raw PDF/file/audio must not
+  // silently fall to random/less accurate models; keep source durable for retry.
   if(!hasFile && !hasAudio){
     try{
       console.log('[AI_PROVIDER_TRY] GROQ');
@@ -1099,14 +1153,16 @@ async function geminiGenerateWithFallbackV892(body,timeoutMs=45000){
     console.log('[AI_PROVIDER_SKIP] GROQ unsupported modality');
   }
 
-  try{
-    console.log('[AI_PROVIDER_TRY] OPENROUTER');
-    const x=await openRouterGenerateV8110(body,Math.min(Math.max(timeoutMs,25000),35000));
-    console.log('[AI_PROVIDER_OK] OPENROUTER',x.model); return x;
-  }catch(e){
-    failures.push(`OPENROUTER:${e.message}`);
-    console.error('[AI_PROVIDER_FAIL] OPENROUTER',e.message);
-  }
+  if(!hasFile && !hasAudio){
+    try{
+      console.log('[AI_PROVIDER_TRY] OPENROUTER');
+      const x=await openRouterGenerateV8110(body,Math.min(Math.max(timeoutMs,25000),35000));
+      console.log('[AI_PROVIDER_OK] OPENROUTER',x.model); return x;
+    }catch(e){
+      failures.push(`OPENROUTER:${e.message}`);
+      console.error('[AI_PROVIDER_FAIL] OPENROUTER',e.message);
+    }
+  }else console.log('[AI_PROVIDER_SKIP] OPENROUTER quality-sensitive file/audio path');
 
   throw new Error(`All capable AI providers failed | ${failures.join(' | ')}`);
 }
@@ -1117,7 +1173,7 @@ async function geminiFetchV890(url,options,timeoutMs=45000){
   finally{clearTimeout(t);}
 }
 async function extractMaintenanceCoreV887(bytes,mime,filename,caption,compact=false){
-  if(!GEMINI_API_KEY && !GROQ_API_KEY && !OPENROUTER_API_KEY) throw new Error('No AI provider key configured');
+  if(!GEMINI_API_KEY && !OPENAI_API_KEY && !GROQ_API_KEY && !OPENROUTER_API_KEY) throw new Error('No AI provider key configured');
   const ext=String(filename||'').toLowerCase().match(/\.([a-z0-9]+)$/)?.[1]||'';
   const mime0=String(mime||'application/octet-stream').toLowerCase();
   const extMime={pdf:'application/pdf',jpg:'image/jpeg',jpeg:'image/jpeg',png:'image/png',webp:'image/webp',tif:'image/tiff',tiff:'image/tiff',txt:'text/plain',csv:'text/csv',doc:'application/msword',docx:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',xls:'application/vnd.ms-excel',xlsx:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',xlsm:'application/vnd.ms-excel.sheet.macroenabled.12',mdb:'application/vnd.ms-access',accdb:'application/vnd.ms-access',ogg:'audio/ogg',opus:'audio/ogg',mp3:'audio/mpeg',m4a:'audio/mp4',aac:'audio/aac',wav:'audio/wav'};
@@ -1343,7 +1399,7 @@ Use the actual PDF page number (1,2,3...). Continue through the final page.${exp
 }
 
 async function extractPlainTechnicalV891(bytes,mime,filename,caption){
-  if(!GEMINI_API_KEY && !GROQ_API_KEY && !OPENROUTER_API_KEY) throw new Error('No AI provider key configured');
+  if(!GEMINI_API_KEY && !OPENAI_API_KEY && !GROQ_API_KEY && !OPENROUTER_API_KEY) throw new Error('No AI provider key configured');
   const prompt=`You are a document transcription engine, not a conversational assistant.
 Read the ENTIRE uploaded industrial document, including every available PDF page.
 Return ONLY data lines. Never explain your work, never repeat these instructions, never say "and so on", "wait", or "let's".
@@ -2164,4 +2220,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.13.1 GEMINI 90S + OPENAI PDF FALLBACK listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.13.2 GEMINI PRIMARY + OPENAI UNIVERSAL BACKUP listening on ${PORT}`));
