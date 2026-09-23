@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.14.8 ACCESS DATABASE EXTRACTION
+// LMMM AI Maintenance V8.14.9 ACCESS MULTI-READER FALLBACK
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -1651,7 +1651,7 @@ function extractXlsxCompleteV8147(bytes,filename){
   return {document_type:'SPREADSHEET',detected_languages:['English'],document_summary:`Complete spreadsheet extraction: ${sheets.length} sheet(s), ${items.length} data row(s).`,full_text:preview.slice(0,120000),review_text_english:preview.slice(0,120000),extracted_items:items,records:[{module:'NEEDS_REVIEW',area:null,equipment:null,sub_equipment:null,event_date:null,event_time:null,shift:null,description:`Spreadsheet ${filename||''}: ${items.length} source rows extracted completely. Review before storage.`,action_taken:null,status:null,remarks:null,confidence:'NEEDS_REVIEW'}],_extraction_mode:'NATIVE_XLSX_ALL_ROWS'};
 }
 
-async function extractAccessDatabaseV8148(bytes,filename){
+async function extractAccessDatabaseV8149(bytes,filename){
   const {mkdtemp,writeFile,rm}=await import('node:fs/promises');
   const {tmpdir}=await import('node:os');
   const {join}=await import('node:path');
@@ -1667,8 +1667,35 @@ async function extractAccessDatabaseV8148(bytes,filename){
   });
   try{
     await writeFile(src,bytes);
-    let tablesText;
-    try{tablesText=await run('mdb-tables',['-1',src],20000);}catch(e){const x=new Error('Access database reader is not available on this server.');x.code='ACCESS_READER_UNAVAILABLE';throw x;}
+    let tablesText=''; let accessReader='MDBTOOLS';
+    try{tablesText=await run('mdb-tables',['-1',src],12000);}catch(primaryErr){
+      console.warn('[ACCESS_MDBTOOLS_UNAVAILABLE]',String(primaryErr?.message||primaryErr).slice(0,220));
+      // Some Render images expose mdbtools through alternate binary names/paths.
+      const candidates=[['/usr/bin/mdb-tables',['-1',src]],['/usr/local/bin/mdb-tables',['-1',src]]];
+      for(const [cmd,args] of candidates){try{tablesText=await run(cmd,args,12000);accessReader=cmd;if(tablesText.trim())break;}catch(_){} }
+      if(!tablesText.trim()){
+        // Last safe server-side fallback: LibreOffice Base can read some Jet/ACE files when its DB driver is present.
+        // It is attempted only as a reader probe; no guessed rows are ever produced.
+        try{
+          const probe=await run('libreoffice',['--headless','--convert-to','csv','--outdir',dir,src],25000);
+          console.log('[ACCESS_LIBREOFFICE_PROBE]',String(probe||'').slice(0,180));
+          const {readdir,readFile}=await import('node:fs/promises');
+          const fs=await readdir(dir); const csvName=fs.find(x=>/\.csv$/i.test(x));
+          if(csvName){
+            const csv=await readFile(join(dir,csvName),'utf8');
+            const lines=csv.split(/\r?\n/).filter(x=>x.trim());
+            if(lines.length>1){
+              const header=lines[0],items=[];
+              for(let i=1;i<lines.length;i++)items.push({page:'Access export',item_no:i,identifier:'',description:`${header}\n${lines[i]}`,quantity:null,unit:null,remarks:'Source row from Microsoft Access database',source_table:'Access export',source_row:i});
+              const preview=items.map(x=>`${x.page} | Row ${x.source_row} | ${x.description}`).join('\n');
+              return {document_type:'SPREADSHEET',detected_languages:['English'],document_summary:`Microsoft Access database extraction: ${items.length} data row(s) extracted by server database fallback.`,full_text:preview.slice(0,120000),review_text_english:preview.slice(0,120000),extracted_items:items,records:[{module:'NEEDS_REVIEW',area:null,equipment:null,sub_equipment:null,event_date:null,event_time:null,shift:null,description:`Access database ${filename||''}: ${items.length} source rows extracted. Review before storage.`,action_taken:null,status:null,remarks:null,confidence:'NEEDS_REVIEW'}],_extraction_mode:'ACCESS_LIBREOFFICE_FALLBACK'};
+            }
+          }
+        }catch(loErr){console.warn('[ACCESS_LIBREOFFICE_UNAVAILABLE]',String(loErr?.message||loErr).slice(0,220));}
+        const x=new Error('Access extraction failed: no compatible MDB/ACCDB reader is installed on this server. Original file was not stored.');x.code='ACCESS_READER_UNAVAILABLE';throw x;
+      }
+    }
+    console.log('[ACCESS_READER_OK]',accessReader);
     const tables=tablesText.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
     if(!tables.length){const x=new Error('Access database contains no readable tables.');x.code='ACCESS_NO_TABLES';throw x;}
     const items=[]; let rowNo=0; const summaries=[];
@@ -1688,7 +1715,7 @@ async function extractAccessDatabaseV8148(bytes,filename){
 async function extractMaintenanceV874(bytes,mime,filename,caption){
   if(/\.(mdb|accdb)$/i.test(String(filename||'')) || /ms-access/i.test(String(mime||''))){
     console.log('[ACCESS_NATIVE_COMPLETE]',filename);
-    return await extractAccessDatabaseV8148(bytes,filename);
+    return await extractAccessDatabaseV8149(bytes,filename);
   }
   if(/\.xlsx$/i.test(String(filename||'')) || /spreadsheetml/i.test(String(mime||''))){
     console.log('[XLSX_NATIVE_COMPLETE]',filename);
@@ -2160,7 +2187,7 @@ async function processMediaMessageV874(from,m){
     // Store metadata/hash only. Never persist the user's original upload bytes.
     const q=await pool.query(`INSERT INTO pending_file_ingests
       (submitted_by_whatsapp,submitted_by_employee_number,source_media_id,source_filename,source_mime_type,source_caption,source_sha256,source_bytes,extracted_rows,status,workflow_state,extraction_engine_version)
-      VALUES($1,$2,$3,$4,$5,$6,$7,NULL,$8::jsonb,'RECEIVED','RECEIVED','V8.14.8') RETURNING *`,
+      VALUES($1,$2,$3,$4,$5,$6,$7,NULL,$8::jsonb,'RECEIVED','RECEIVED','V8.14.9') RETURNING *`,
       [normWA(from),u.employee_number,mediaId,filename,mime,caption,sha,JSON.stringify({})]);
     const row=q.rows[0]; await setPendingIngestSessionV877(from,row.id);
     await extractQueuedIngestV895(from,row,d.bytes);
