@@ -1,8 +1,9 @@
-// LMMM AI Maintenance V8.14.6 TIFF FAST-FAIL GATE
+// LMMM AI Maintenance V8.14.7 COMPLETE XLSX ROW EXTRACTION
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
 import pg from 'pg';
+import { inflateRawSync } from 'node:zlib';
 
 const { Pool } = pg;
 const app = express();
@@ -1585,7 +1586,76 @@ function isTiffSourceV8135(bytes,mime='',filename=''){
   const magic=b.length>=4 && ((b[0]===0x49&&b[1]===0x49&&b[2]===0x2a&&b[3]===0x00)||(b[0]===0x4d&&b[1]===0x4d&&b[2]===0x00&&b[3]===0x2a));
   return magic || /tiff/i.test(String(mime||'')) || /\.tiff?$/i.test(String(filename||''));
 }
+
+function xmlDecodeV8147(v=''){
+  return String(v).replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&apos;/g,"'").replace(/&amp;/g,'&').replace(/&#(\d+);/g,(_,n)=>String.fromCodePoint(Number(n))).replace(/&#x([0-9a-f]+);/gi,(_,n)=>String.fromCodePoint(parseInt(n,16)));
+}
+function unzipEntriesV8147(buf){
+  const out=new Map(); let eocd=-1;
+  for(let i=buf.length-22;i>=Math.max(0,buf.length-65557);i--){if(buf.readUInt32LE(i)===0x06054b50){eocd=i;break;}}
+  if(eocd<0) throw new Error('XLSX ZIP directory not found');
+  const count=buf.readUInt16LE(eocd+10), cd=buf.readUInt32LE(eocd+16); let p=cd;
+  for(let n=0;n<count;n++){
+    if(buf.readUInt32LE(p)!==0x02014b50) break;
+    const method=buf.readUInt16LE(p+10), csize=buf.readUInt32LE(p+20), nlen=buf.readUInt16LE(p+28), xlen=buf.readUInt16LE(p+30), clen=buf.readUInt16LE(p+32), off=buf.readUInt32LE(p+42);
+    const name=buf.subarray(p+46,p+46+nlen).toString('utf8');
+    const ln=buf.readUInt16LE(off+26), lx=buf.readUInt16LE(off+28), start=off+30+ln+lx, raw=buf.subarray(start,start+csize);
+    if(method===0) out.set(name,Buffer.from(raw)); else if(method===8) out.set(name,inflateRawSync(raw));
+    p+=46+nlen+xlen+clen;
+  }
+  return out;
+}
+function colIndexV8147(ref='A1'){
+  const a=(String(ref).match(/^[A-Z]+/i)||['A'])[0].toUpperCase(); let n=0; for(const c of a)n=n*26+c.charCodeAt(0)-64; return n-1;
+}
+function excelDateV8147(v){
+  const n=Number(v); if(!Number.isFinite(n)||n<1||n>100000) return String(v??'');
+  const d=new Date(Date.UTC(1899,11,30)+Math.round(n*86400000)); return d.toISOString().slice(0,10);
+}
+function extractXlsxCompleteV8147(bytes,filename){
+  const z=unzipEntriesV8147(bytes), text=n=>z.get(n)?.toString('utf8')||'';
+  const ss=[]; const ssx=text('xl/sharedStrings.xml');
+  for(const m of ssx.matchAll(/<si\b[^>]*>([\s\S]*?)<\/si>/g)) ss.push(xmlDecodeV8147([...m[1].matchAll(/<t\b[^>]*>([\s\S]*?)<\/t>/g)].map(x=>x[1]).join('')));
+  const wb=text('xl/workbook.xml'), rel=text('xl/_rels/workbook.xml.rels'), rels={};
+  for(const m of rel.matchAll(/<Relationship\b[^>]*Id="([^"]+)"[^>]*Target="([^"]+)"[^>]*\/?\s*>/g)) rels[m[1]]=m[2];
+  const sheets=[];
+  for(const m of wb.matchAll(/<sheet\b[^>]*name="([^"]+)"[^>]*r:id="([^"]+)"[^>]*\/?\s*>/g)){
+    let target=rels[m[2]]||''; if(target.startsWith('/')) target=target.slice(1); else if(!target.startsWith('xl/')) target='xl/'+target.replace(/^\.\//,'');
+    sheets.push({name:xmlDecodeV8147(m[1]),target});
+  }
+  if(!sheets.length) for(const k of [...z.keys()].filter(k=>/^xl\/worksheets\/sheet\d+\.xml$/.test(k)).sort()) sheets.push({name:k.split('/').pop().replace('.xml',''),target:k});
+  const styles=text('xl/styles.xml'); const dateStyle=new Set();
+  const customDateFmt=new Set([...styles.matchAll(/<numFmt\b[^>]*numFmtId="(\d+)"[^>]*formatCode="([^"]+)"/g)].filter(m=>/[dmyhs]/i.test(xmlDecodeV8147(m[2]).replace(/\[[^\]]+\]/g,''))).map(m=>Number(m[1])));
+  const xfs=(styles.match(/<cellXfs\b[^>]*>([\s\S]*?)<\/cellXfs>/)||[])[1]||''; let si=0;
+  for(const m of xfs.matchAll(/<xf\b[^>]*numFmtId="(\d+)"[^>]*\/?\s*>/g)){const id=Number(m[1]); if((id>=14&&id<=22)||id===45||id===46||id===47||customDateFmt.has(id))dateStyle.add(si);si++;}
+  const items=[]; let totalRows=0;
+  for(const sh of sheets){
+    const sx=text(sh.target); let header=[];
+    for(const rm of sx.matchAll(/<row\b[^>]*r="?(\d+)?"?[^>]*>([\s\S]*?)<\/row>/g)){
+      const vals=[];
+      for(const cm of rm[2].matchAll(/<c\b([^>]*)>([\s\S]*?)<\/c>/g)){
+        const attrs=cm[1], body=cm[2], ref=(attrs.match(/\br="([^"]+)"/)||[])[1]||'A1', type=(attrs.match(/\bt="([^"]+)"/)||[])[1]||'', style=Number((attrs.match(/\bs="(\d+)"/)||[])[1]||-1);
+        let v=''; if(type==='inlineStr') v=[...body.matchAll(/<t\b[^>]*>([\s\S]*?)<\/t>/g)].map(x=>x[1]).join(''); else v=(body.match(/<v\b[^>]*>([\s\S]*?)<\/v>/)||[])[1]??'';
+        v=xmlDecodeV8147(v); if(type==='s')v=ss[Number(v)]??v; else if(type==='b')v=v==='1'?'TRUE':'FALSE'; else if(dateStyle.has(style)&&v!=='')v=excelDateV8147(v);
+        vals[colIndexV8147(ref)]=String(v).trim();
+      }
+      if(!vals.some(v=>String(v||'').trim())) continue; totalRows++;
+      if(!header.length){header=vals.map((v,i)=>v||`Column ${i+1}`); continue;}
+      const pairs=[]; for(let i=0;i<Math.max(header.length,vals.length);i++) if(String(vals[i]||'').trim()) pairs.push(`${header[i]||`Column ${i+1}`}: ${vals[i]}`);
+      if(!pairs.length) continue;
+      items.push({page:sh.name,item_no:String(rm[1]||totalRows),identifier:null,description:pairs.join(' | '),quantity:null,unit:null,remarks:null});
+    }
+  }
+  if(!items.length) throw new Error('Spreadsheet contains no readable data rows');
+  const preview=items.map(x=>`${x.page} | Row ${x.item_no} | ${x.description}`).join('\n');
+  return {document_type:'SPREADSHEET',detected_languages:['English'],document_summary:`Complete spreadsheet extraction: ${sheets.length} sheet(s), ${items.length} data row(s).`,full_text:preview.slice(0,120000),review_text_english:preview.slice(0,120000),extracted_items:items,records:[{module:'NEEDS_REVIEW',area:null,equipment:null,sub_equipment:null,event_date:null,event_time:null,shift:null,description:`Spreadsheet ${filename||''}: ${items.length} source rows extracted completely. Review before storage.`,action_taken:null,status:null,remarks:null,confidence:'NEEDS_REVIEW'}],_extraction_mode:'NATIVE_XLSX_ALL_ROWS'};
+}
+
 async function extractMaintenanceV874(bytes,mime,filename,caption){
+  if(/\.xlsx$/i.test(String(filename||'')) || /spreadsheetml/i.test(String(mime||''))){
+    console.log('[XLSX_NATIVE_COMPLETE]',filename);
+    return extractXlsxCompleteV8147(bytes,filename);
+  }
   if(/pdf/i.test(String(mime||''))){
     return await extractPdfBatchesV897(bytes,mime,filename,caption);
   }
