@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.13.5 TIFF RELEVANCE GUARD
+// LMMM AI Maintenance V8.13.6 LOW-MEM TIFF + WEBHOOK IDEMPOTENCY
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -425,6 +425,11 @@ async function initDB(){
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_reliability_ingest ON reliability_events(ingest_id,created_at DESC)`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS whatsapp_message_dedupe(
+    message_id TEXT PRIMARY KEY, whatsapp TEXT, message_type TEXT, received_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_wa_dedupe_received ON whatsapp_message_dedupe(received_at)`);
+  await pool.query(`DELETE FROM whatsapp_message_dedupe WHERE received_at < now()-interval '7 days'`).catch(()=>{});
 
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_pending_ingest_retry ON pending_file_ingests(status,next_retry_at,created_at)`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS employment_category TEXT`);
@@ -1373,25 +1378,28 @@ Use the actual PDF page number (1,2,3...). Continue through the final page.${exp
 }
 
 
-async function tiffPageJpegsV8133(bytes,maxPages=250){
+async function withTiffTempV8136(bytes,fn){
+  const fs=await import('node:fs/promises'),os=await import('node:os'),path=await import('node:path'),crypto=await import('node:crypto');
+  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'lmmm-tiff-')); const file=path.join(dir,`src-${crypto.randomUUID()}.tiff`);
+  try{await fs.writeFile(file,bytes); return await fn(file);} finally{await fs.rm(dir,{recursive:true,force:true}).catch(()=>{});}
+}
+async function runImageMagickV8136(cmd,args,timeout=60000,maxOut=12*1024*1024){
   const {spawn}=await import('node:child_process');
-  const run=(cmd,args,input,timeout=45000)=>new Promise((resolve,reject)=>{
-    const cp=spawn(cmd,args,{stdio:['pipe','pipe','pipe']}); const out=[],err=[]; let size=0;
-    const timer=setTimeout(()=>{cp.kill('SIGKILL');reject(new Error(`${cmd} timeout`));},timeout);
-    cp.stdout.on('data',d=>{size+=d.length;if(size>25*1024*1024){cp.kill('SIGKILL');reject(new Error('TIFF converted page too large'));}else out.push(d);});
-    cp.stderr.on('data',d=>err.push(d)); cp.on('error',e=>{clearTimeout(timer);reject(e)});
-    cp.on('close',code=>{clearTimeout(timer);if(code===0)resolve(Buffer.concat(out));else reject(new Error(`${cmd} failed ${code}: ${Buffer.concat(err).toString().slice(0,500)}`));});
-    cp.stdin.end(input);
+  return await new Promise((resolve,reject)=>{const cp=spawn(cmd,args,{stdio:['ignore','pipe','pipe']});const out=[],err=[];let size=0,done=false;
+    const finish=(e,v)=>{if(done)return;done=true;clearTimeout(timer);e?reject(e):resolve(v)};
+    const timer=setTimeout(()=>{cp.kill('SIGKILL');finish(new Error(`${cmd} timeout`));},timeout);
+    cp.stdout.on('data',d=>{size+=d.length;if(size>maxOut){cp.kill('SIGKILL');finish(new Error('Converted TIFF page exceeded memory-safe output limit'));}else out.push(d)});
+    cp.stderr.on('data',d=>{if(Buffer.concat(err).length<65536)err.push(d)});cp.on('error',e=>finish(e));
+    cp.on('close',code=>code===0?finish(null,Buffer.concat(out)):finish(new Error(`${cmd} failed ${code}: ${Buffer.concat(err).toString().slice(0,500)}`)));
   });
-  let list;
-  try{list=(await run('identify',['-format','%p\\n','tiff:-'],bytes,30000)).toString().trim().split(/\s+/).filter(Boolean);}
-  catch(e){const x=new Error(`TIFF adapter unavailable: ${e.message}`);x.code='TIFF_ADAPTER_UNAVAILABLE';throw x;}
-  const total=Math.min(list.length||1,maxPages), pages=[];
-  for(let i=0;i<total;i++){
-    const jpg=await run('convert',[`tiff:-[${i}]`,'-background','white','-alpha','remove','-resize','1800x1800>','-quality','88','jpeg:-'],bytes,45000);
-    pages.push({page:i+1,bytes:jpg,mime:'image/jpeg'});
-  }
-  return {total,pages};
+}
+async function tiffInfoV8136(file,maxPages=250){
+  let raw;try{raw=await runImageMagickV8136('identify',['-format','%p\\n',file],30000,1024*1024);}catch(e){const x=new Error(`TIFF adapter unavailable: ${e.message}`);x.code='TIFF_ADAPTER_UNAVAILABLE';throw x;}
+  const list=raw.toString().trim().split(/\s+/).filter(Boolean);return {total:Math.min(list.length||1,maxPages)};
+}
+async function tiffOnePageJpegV8136(file,page){
+  // IMPORTANT: read only one frame from disk. Never materialise every TIFF page in JS memory.
+  return await runImageMagickV8136('convert',[`${file}[${page-1}]`,'-background','white','-alpha','remove','-resize','1400x1400>','-quality','78','jpeg:-'],60000,8*1024*1024);
 }
 function parseDelimitedRowsV8133(txt,forcedPage=null){
   const rows=[]; let docType='TECHNICAL_REFERENCE',title='Technical reference document';
@@ -1433,19 +1441,27 @@ Then EVERY legible row as ROW|page|item no|exact identifier|exact description/de
   const gx=await geminiOnlyGenerateWithFallbackV8110({contents:[{parts}],generationConfig:{maxOutputTokens:16384}},120000);const j=await gx.response.json();return {text:(j.candidates?.[0]?.content?.parts||[]).map(x=>x.text||'').join(''),provider:'GEMINI',model:gx.model};
 }
 async function extractLargeTiffV8133(bytes,mime,filename,caption){
-  const {total,pages}=await tiffPageJpegsV8133(bytes,250); console.log('[TIFF_PAGES]',filename,total);
-  const all=[],stats=[]; let docType='TECHNICAL_REFERENCE',title='Technical reference document'; const batchSize=Math.max(1,Math.min(4,Number(process.env.TIFF_AI_BATCH_PAGES||4)));
-  for(let i=0;i<pages.length;i+=batchSize){const batch=pages.slice(i,i+batchSize);let out=null,last=null;
-    if(OPENAI_ENABLED){try{out=await openAIImageBatchV8133(batch,filename,caption);console.log('[TIFF_BATCH_OK] OPENAI',batch[0].page,'-',batch.at(-1).page);}catch(e){last=e;console.error('[TIFF_BATCH_FAIL] OPENAI',batch[0].page,'-',batch.at(-1).page,e.message);}}
-    if(!out&&GEMINI_API_KEY){try{out=await geminiImageBatchV8133(batch,filename,caption);console.log('[TIFF_BATCH_OK] GEMINI',batch[0].page,'-',batch.at(-1).page);}catch(e){last=e;console.error('[TIFF_BATCH_FAIL] GEMINI',batch[0].page,'-',batch.at(-1).page,e.message);}}
-    if(!out&&OPENROUTER_API_KEY){try{out=await openRouterImageBatchV8134(batch,filename,caption);console.log('[TIFF_BATCH_OK] OPENROUTER_FREE',batch[0].page,'-',batch.at(-1).page);}catch(e){last=e;console.error('[TIFF_BATCH_FAIL] OPENROUTER_FREE',batch[0].page,'-',batch.at(-1).page,e.message);}}
-    if(!out){for(const p of batch)stats.push({page:p.page,status:'NEEDS_REVIEW',rows:0,error:String(last?.message||'AI unavailable')});continue;}
-    const parsed=parseDelimitedRowsV8133(out.text); if(i===0){docType=parsed.docType||docType;title=parsed.title||title;} all.push(...parsed.rows); const represented=new Set(parsed.rows.map(x=>Number(x.page)).filter(Boolean)); for(const p of batch)stats.push({page:p.page,status:represented.has(p.page)?'OK':'NEEDS_REVIEW',rows:parsed.rows.filter(x=>Number(x.page)===p.page).length,provider:out.provider,model:out.model});
-  }
-  const clean=all.filter((x,i,a)=>{const k=[x.page,x.item_no,x.identifier,x.description,x.quantity,x.unit].join('|').toLowerCase();return a.findIndex(y=>[y.page,y.item_no,y.identifier,y.description,y.quantity,y.unit].join('|').toLowerCase()===k)===i;});
-  const review=stats.filter(x=>x.status==='NEEDS_REVIEW').map(x=>x.page); if(!clean.length)throw new Error(`TIFF extraction returned zero rows; pages retained for retry (${review.join(',')||'all'})`);
-  const preview=clean.map(x=>[x.page&&`P${x.page}`,x.item_no,x.identifier,x.description,x.quantity,x.unit,x.remarks].filter(Boolean).join(' | ')).join('\n');
-  return {document_type:docType,detected_languages:['English'],document_summary:`${title}. ${total}-page TIFF; ${clean.length} extracted items${review.length?`; pages needing review: ${review.join(', ')}`:''}.`,full_text:preview,review_text_english:preview,extracted_items:clean,records:[],expected_pages:total,page_extraction_status:stats,needs_review_pages:review,needs_review:review.length>0,_provider:'FREE_MULTI_PROVIDER',_extraction_mode:'MULTIPAGE_TIFF_IMAGE_BATCHES'};
+  return await withTiffTempV8136(bytes,async file=>{
+    const {total}=await tiffInfoV8136(file,250); console.log('[TIFF_PAGES]',filename,total,'mode=LOW_MEM_ONE_PAGE');
+    const all=[],stats=[]; let docType='TECHNICAL_REFERENCE',title='Technical reference document';
+    // Render free instance has 512 MiB RAM. One TIFF page at a time prevents decompressed multi-frame accumulation.
+    for(let page=1;page<=total;page++){
+      let jpg=null,out=null,last=null;
+      try{
+        jpg=await tiffOnePageJpegV8136(file,page); const batch=[{page,bytes:jpg,mime:'image/jpeg'}];
+        if(GEMINI_API_KEY){try{out=await geminiImageBatchV8133(batch,filename,caption);console.log('[TIFF_PAGE_OK] GEMINI',page);}catch(e){last=e;console.error('[TIFF_PAGE_FAIL] GEMINI',page,e.message);}}
+        if(!out&&OPENROUTER_API_KEY){try{out=await openRouterImageBatchV8134(batch,filename,caption);console.log('[TIFF_PAGE_OK] OPENROUTER_FREE',page);}catch(e){last=e;console.error('[TIFF_PAGE_FAIL] OPENROUTER_FREE',page,e.message);}}
+        if(!out){stats.push({page,status:'NEEDS_REVIEW',rows:0,error:String(last?.message||'AI unavailable')});continue;}
+        const parsed=parseDelimitedRowsV8133(out.text,page); if(page===1){docType=parsed.docType||docType;title=parsed.title||title;} all.push(...parsed.rows);
+        stats.push({page,status:parsed.rows.length?'OK':'NO_ROWS',rows:parsed.rows.length,provider:out.provider,model:out.model});
+      }catch(e){console.error('[TIFF_PAGE_ERROR]',page,e.message);stats.push({page,status:'NEEDS_REVIEW',rows:0,error:String(e.message||e)});}
+      finally{jpg=null;}
+    }
+    const clean=all.filter((x,i,a)=>{const k=[x.page,x.item_no,x.identifier,x.description,x.quantity,x.unit].join('|').toLowerCase();return a.findIndex(y=>[y.page,y.item_no,y.identifier,y.description,y.quantity,y.unit].join('|').toLowerCase()===k)===i;});
+    const review=stats.filter(x=>x.status==='NEEDS_REVIEW').map(x=>x.page); if(!clean.length)throw new Error(`TIFF extraction returned zero rows; pages retained for retry (${review.join(',')||'all'})`);
+    const preview=clean.map(x=>[x.page&&`P${x.page}`,x.item_no,x.identifier,x.description,x.quantity,x.unit,x.remarks].filter(Boolean).join(' | ')).join('\n');
+    return {document_type:docType,detected_languages:['English'],document_summary:`${title}. ${total}-page TIFF; ${clean.length} extracted items${review.length?`; pages needing review: ${review.join(', ')}`:''}.`,full_text:preview,review_text_english:preview,extracted_items:clean,records:[],expected_pages:total,page_extraction_status:stats,needs_review_pages:review,needs_review:review.length>0,_provider:'FREE_MULTI_PROVIDER',_extraction_mode:'LOW_MEMORY_TIFF_ONE_PAGE'};
+  });
 }
 
 async function extractPlainTechnicalV891(bytes,mime,filename,caption){
@@ -1816,7 +1832,7 @@ async function extractQueuedIngestV895(from,row){
       await sendText(from,'This upload is not relevant to LMMM plant / maintenance knowledge. Nothing was stored.');
       return true;
     }
-    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.13.5',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack))]);
+    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.13.6',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack))]);
     await armTemporarySourceExpiryV8120(row.id);
     await reliabilityEventV8100(row,'AI_EXTRACTION','SUCCEEDED',pack?._provider||null);
     await pool.query(`UPDATE pending_file_ingests SET workflow_state='SOURCE_SECURED',updated_at=now() WHERE id=$1`,[row.id]).catch(()=>{});
@@ -1830,7 +1846,8 @@ async function extractQueuedIngestV895(from,row){
     console.error('[QUEUED_EXTRACT]',row.id,e);
     await markRetryV8100(row,'AI_EXTRACTION',e).catch(()=>{});
     await setPendingIngestSessionV877(from,row.id).catch(()=>{});
-    await sendButtons(from,'Source is safely queued. AI is temporarily unavailable; no re-upload needed.',[
+    // Notify only on the first failure. Automatic retry workers stay silent to avoid annoying duplicate WhatsApp messages.
+    if(String(row?.status||'').toUpperCase()!=='RETRY_PENDING') await sendButtons(from,'Source is safely queued. AI is temporarily unavailable; no re-upload needed.',[
       {id:'RETRY_LAST_UPLOAD',title:'Retry Extraction'},
       {id:'INGEST_STATUS',title:'Check Status'}
     ]);
@@ -2258,21 +2275,26 @@ app.get('/webhook',(req,res)=>{
   if(mode==='subscribe' && token===VERIFY_TOKEN) return res.status(200).send(challenge);
   return res.sendStatus(403);
 });
+async function claimWhatsAppMessageV8136(m){
+  const id=String(m?.id||'').trim(); if(!id) return true;
+  try{const q=await pool.query(`INSERT INTO whatsapp_message_dedupe(message_id,whatsapp,message_type) VALUES($1,$2,$3) ON CONFLICT DO NOTHING RETURNING message_id`,[id,normWA(m.from||''),String(m.type||'')]);return q.rowCount===1;}
+  catch(e){console.error('[WA_DEDUPE]',e.message);return true;}
+}
+async function dispatchWebhookMessageV8136(m){
+  if(!(await claimWhatsAppMessageV8136(m))){console.log('[WA_DUPLICATE_IGNORED]',m.id);return;}
+  let text='', payload='';
+  if(m.type==='text') text=m.text?.body||'';
+  else if(m.type==='interactive' && m.interactive?.type==='button_reply'){text=m.interactive.button_reply?.title||'';payload=m.interactive.button_reply?.id||'';}
+  else if(m.type==='interactive' && m.interactive?.type==='list_reply'){text=m.interactive.list_reply?.title||'';payload=m.interactive.list_reply?.id||'';}
+  else if(['document','image','audio','voice'].includes(m.type)){await processMediaMessageV874(normWA(m.from),m);return;}
+  else return;
+  await processMessage(normWA(m.from),text,payload);
+}
 app.post('/webhook',(req,res)=>{
   res.sendStatus(200);
   const entries=req.body?.entry||[];
   for(const e of entries) for(const c of e.changes||[]) for(const m of c.value?.messages||[]){
-    let text='', payload='';
-    if(m.type==='text') text=m.text?.body||'';
-    else if(m.type==='interactive' && m.interactive?.type==='button_reply'){
-      text=m.interactive.button_reply?.title||''; payload=m.interactive.button_reply?.id||'';
-    } else if(m.type==='interactive' && m.interactive?.type==='list_reply'){
-      text=m.interactive.list_reply?.title||''; payload=m.interactive.list_reply?.id||'';
-    } else if(['document','image','audio','voice'].includes(m.type)){
-      processMediaMessageV874(normWA(m.from),m).catch(err=>console.error('[MEDIA_MESSAGE]',err));
-      continue;
-    } else continue;
-    processMessage(normWA(m.from),text,payload).catch(err=>console.error('[MESSAGE]',err));
+    dispatchWebhookMessageV8136(m).catch(err=>console.error('[WEBHOOK_MESSAGE]',err));
   }
 });
 
@@ -2288,4 +2310,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.13.5 TIFF RELEVANCE GUARD listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.13.6 LOW-MEM TIFF + WEBHOOK IDEMPOTENCY listening on ${PORT}`));
