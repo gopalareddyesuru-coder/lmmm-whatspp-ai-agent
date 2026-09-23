@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.13.2 GEMINI PRIMARY + OPENAI UNIVERSAL BACKUP
+// LMMM AI Maintenance V8.13.3 OPENAI PRIMARY + GEMINI BACKUP + LARGE TIFF ADAPTER
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -1115,63 +1115,34 @@ async function geminiGenerateWithFallbackV892(body,timeoutMs=45000){
   const hasFile=content.some(x=>x.type==='file');
   const hasAudio=content.some(x=>x.type==='input_audio');
 
-  try{
-    console.log('[AI_PROVIDER_TRY] GEMINI');
-    const x=await geminiOnlyGenerateWithFallbackV8110(body,timeoutMs);
-    console.log('[AI_PROVIDER_OK] GEMINI',x.model); return {...x,provider:'GEMINI'};
-  }catch(e){
-    failures.push(`GEMINI:${e.message}`);
-    console.error('[AI_PROVIDER_FAIL] GEMINI',e.code||'',e.status||'',e.message);
-  }
-
-  // V8.13.2: OpenAI is the universal quality backup after Gemini for
-  // translation, classification, extraction, text, images, PDFs and voice/audio.
-  // Lower-quality providers remain tertiary fallbacks for non-file/non-audio tasks only.
+  // V8.13.3: OpenAI is primary wherever the modality is supported because the
+  // current LMMM technical-document tests are more accurate with it. Gemini is
+  // the immediate quality backup. Tertiary providers are text/image-only.
   if(OPENAI_API_KEY){
     try{
       console.log('[AI_PROVIDER_TRY] OPENAI');
       const x=await openAIUniversalGenerateV8132(body,Math.max(timeoutMs,90000));
       console.log('[AI_PROVIDER_OK] OPENAI',x.model); return x;
-    }catch(e){
-      failures.push(`OPENAI:${e.message}`);
-      console.error('[AI_PROVIDER_FAIL] OPENAI',e.code||'',e.message);
-    }
+    }catch(e){failures.push(`OPENAI:${e.message}`);console.error('[AI_PROVIDER_FAIL] OPENAI',e.code||'',e.message);}
   }else failures.push('OPENAI:key missing');
 
-  // Tertiary failover is allowed only for text/image. Raw PDF/file/audio must not
-  // silently fall to random/less accurate models; keep source durable for retry.
-  if(!hasFile && !hasAudio){
-    try{
-      console.log('[AI_PROVIDER_TRY] GROQ');
-      const x=await groqGenerateV8110(body,Math.min(timeoutMs,20000));
-      console.log('[AI_PROVIDER_OK] GROQ',x.model); return x;
-    }catch(e){
-      failures.push(`GROQ:${e.message}`);
-      console.error('[AI_PROVIDER_FAIL] GROQ',e.message);
-    }
-  }else{
-    console.log('[AI_PROVIDER_SKIP] GROQ unsupported modality');
+  try{
+    console.log('[AI_PROVIDER_TRY] GEMINI');
+    const x=await geminiOnlyGenerateWithFallbackV8110(body,Math.max(timeoutMs,90000));
+    console.log('[AI_PROVIDER_OK] GEMINI',x.model); return {...x,provider:'GEMINI'};
+  }catch(e){failures.push(`GEMINI:${e.message}`);console.error('[AI_PROVIDER_FAIL] GEMINI',e.code||'',e.status||'',e.message);}
+
+  if(!hasFile&&!hasAudio&&GROQ_API_KEY){
+    try{console.log('[AI_PROVIDER_TRY] GROQ');const x=await groqGenerateV8110(body,20000);console.log('[AI_PROVIDER_OK] GROQ',x.model);return x;}
+    catch(e){failures.push(`GROQ:${e.message}`);console.error('[AI_PROVIDER_FAIL] GROQ',e.message);}
   }
-
-  if(!hasFile && !hasAudio){
-    try{
-      console.log('[AI_PROVIDER_TRY] OPENROUTER');
-      const x=await openRouterGenerateV8110(body,Math.min(Math.max(timeoutMs,25000),35000));
-      console.log('[AI_PROVIDER_OK] OPENROUTER',x.model); return x;
-    }catch(e){
-      failures.push(`OPENROUTER:${e.message}`);
-      console.error('[AI_PROVIDER_FAIL] OPENROUTER',e.message);
-    }
-  }else console.log('[AI_PROVIDER_SKIP] OPENROUTER quality-sensitive file/audio path');
-
-  throw new Error(`All capable AI providers failed | ${failures.join(' | ')}`);
+  if(!hasFile&&!hasAudio&&OPENROUTER_API_KEY){
+    try{console.log('[AI_PROVIDER_TRY] OPENROUTER');const x=await openRouterGenerateV8110(body,30000);console.log('[AI_PROVIDER_OK] OPENROUTER',x.model);return x;}
+    catch(e){failures.push(`OPENROUTER:${e.message}`);console.error('[AI_PROVIDER_FAIL] OPENROUTER',e.message);}
+  }
+  const e=new Error(`All capable AI providers failed: ${failures.join(' | ')}`); e.code='AI_ALL_PROVIDERS_FAILED'; throw e;
 }
 
-async function geminiFetchV890(url,options,timeoutMs=45000){
-  const c=new AbortController(),t=setTimeout(()=>c.abort(),timeoutMs);
-  try{return await fetch(url,{...options,signal:c.signal});}
-  finally{clearTimeout(t);}
-}
 async function extractMaintenanceCoreV887(bytes,mime,filename,caption,compact=false){
   if(!GEMINI_API_KEY && !OPENAI_API_KEY && !GROQ_API_KEY && !OPENROUTER_API_KEY) throw new Error('No AI provider key configured');
   const ext=String(filename||'').toLowerCase().match(/\.([a-z0-9]+)$/)?.[1]||'';
@@ -1327,32 +1298,27 @@ ROW|printed page number|item number|exact identifier|exact designation/descripti
 Preserve drawing/part identifiers character-for-character. Leave absent fields empty. Never copy the filename into quantity/unit/remarks.
 Use the actual PDF page number (1,2,3...). Continue through the final page.${expected?` Expected PDF pages: ${expected}.`:''}`;
   const body={contents:[{parts:[{text:prompt},{inline_data:{mime_type:mime,data:bytes.toString('base64')}}]}],generationConfig:{maxOutputTokens:32768}};
-  let gx;
-  try{
-    gx=await geminiOnlyGenerateWithFallbackV8110(body,90000);
-    console.log('[PDF_FAST_GEMINI_OK]',filename,gx.model);
-  }catch(e){
-    console.error('[PDF_FAST_GEMINI_FAIL]',filename,e?.code||'',e?.message||e);
-    if(OPENAI_API_KEY){
-      try{
-        console.log('[PDF_OPENAI_FALLBACK_TRY]',filename,OPENAI_MODEL);
-        const ox=await openAIPdfExtractV8131(bytes,mime,prompt,120000);
-        console.log('[PDF_OPENAI_FALLBACK_OK]',filename,ox.model);
-        all.push(...parseRows(ox.text));
-        gx=null;
-      }catch(oe){
-        console.error('[PDF_OPENAI_FALLBACK_FAIL]',filename,oe?.code||'',oe?.message||oe);
-        const q=new Error(`Gemini and OpenAI PDF extraction temporarily unavailable; source retained for retry. ${oe?.message||e?.message||''}`);
-        q.code=oe?.code||e?.code||'PDF_AI_RETRY'; throw q;
-      }
-    }else{
-      const q=new Error(`Gemini PDF extraction temporarily unavailable; OPENAI_API_KEY not configured; source retained for retry. ${e?.message||''}`);
-      q.code=e?.code||'GEMINI_PDF_RETRY'; throw q;
-    }
+  let gx=null;
+  // OpenAI primary for PDF accuracy; Gemini is immediate quality backup.
+  if(OPENAI_API_KEY){
+    try{
+      console.log('[PDF_OPENAI_PRIMARY_TRY]',filename,OPENAI_MODEL);
+      const ox=await openAIPdfExtractV8131(bytes,mime,prompt,150000);
+      console.log('[PDF_OPENAI_PRIMARY_OK]',filename,ox.model);
+      all.push(...parseRows(ox.text));
+    }catch(oe){console.error('[PDF_OPENAI_PRIMARY_FAIL]',filename,oe?.code||'',oe?.message||oe);}
   }
-  if(gx){
-    const j=await gx.response.json(), txt=(j.candidates?.[0]?.content?.parts||[]).map(x=>x.text||'').join('').trim();
-    all.push(...parseRows(txt));
+  if(!all.length){
+    try{
+      gx=await geminiOnlyGenerateWithFallbackV8110(body,120000);
+      console.log('[PDF_GEMINI_BACKUP_OK]',filename,gx.model);
+      const j=await gx.response.json(), txt=(j.candidates?.[0]?.content?.parts||[]).map(x=>x.text||'').join('').trim();
+      all.push(...parseRows(txt));
+    }catch(e){
+      console.error('[PDF_GEMINI_BACKUP_FAIL]',filename,e?.code||'',e?.message||e);
+      const q=new Error(`OpenAI and Gemini PDF extraction temporarily unavailable; source retained for retry. ${e?.message||''}`);
+      q.code=e?.code||'PDF_AI_RETRY'; throw q;
+    }
   }
 
   let represented=[...new Set(all.map(x=>Number(x.page)).filter(Boolean))].sort((a,b)=>a-b);
@@ -1398,6 +1364,72 @@ Use the actual PDF page number (1,2,3...). Continue through the final page.${exp
   return {document_type:'DRAWING_LIST',detected_languages:['English'],document_summary:reviewed.length?`Partial drawing/reference extraction (${clean.length} rows). Pages needing review: ${reviewed.join(', ')}.`:`Drawing/reference list extracted with Gemini (${clean.length} rows).`,full_text:preview,review_text_english:preview,extracted_items:clean,records:[],page_extraction_status:pageStats,expected_pages:expected,pages_with_rows:represented,needs_review_pages:reviewed,completeness_warning:reviewed.length?`Pages needing review: ${reviewed.join(', ')}`:null,needs_review:reviewed.length>0,_extraction_mode:'GEMINI_90S_PRIMARY_OPENAI_QUALITY_FALLBACK'};
 }
 
+
+async function tiffPageJpegsV8133(bytes,maxPages=250){
+  const {spawn}=await import('node:child_process');
+  const run=(cmd,args,input,timeout=45000)=>new Promise((resolve,reject)=>{
+    const cp=spawn(cmd,args,{stdio:['pipe','pipe','pipe']}); const out=[],err=[]; let size=0;
+    const timer=setTimeout(()=>{cp.kill('SIGKILL');reject(new Error(`${cmd} timeout`));},timeout);
+    cp.stdout.on('data',d=>{size+=d.length;if(size>25*1024*1024){cp.kill('SIGKILL');reject(new Error('TIFF converted page too large'));}else out.push(d);});
+    cp.stderr.on('data',d=>err.push(d)); cp.on('error',e=>{clearTimeout(timer);reject(e)});
+    cp.on('close',code=>{clearTimeout(timer);if(code===0)resolve(Buffer.concat(out));else reject(new Error(`${cmd} failed ${code}: ${Buffer.concat(err).toString().slice(0,500)}`));});
+    cp.stdin.end(input);
+  });
+  let list;
+  try{list=(await run('identify',['-format','%p\\n','tiff:-'],bytes,30000)).toString().trim().split(/\s+/).filter(Boolean);}
+  catch(e){const x=new Error(`TIFF adapter unavailable: ${e.message}`);x.code='TIFF_ADAPTER_UNAVAILABLE';throw x;}
+  const total=Math.min(list.length||1,maxPages), pages=[];
+  for(let i=0;i<total;i++){
+    const jpg=await run('convert',[`tiff:-[${i}]`,'-background','white','-alpha','remove','-resize','1800x1800>','-quality','88','jpeg:-'],bytes,45000);
+    pages.push({page:i+1,bytes:jpg,mime:'image/jpeg'});
+  }
+  return {total,pages};
+}
+function parseDelimitedRowsV8133(txt,forcedPage=null){
+  const rows=[]; let docType='TECHNICAL_REFERENCE',title='Technical reference document';
+  for(const raw of String(txt||'').split(/\r?\n/)){
+    const line=raw.trim();
+    if(/^DOC\|/i.test(line)){const p=line.split('|');docType=(p[1]||docType).trim().toUpperCase().replace(/\s+/g,'_');title=(p.slice(2).join('|')||title).trim();continue;}
+    if(!/^ROW\|/i.test(line))continue; const p=line.split('|');
+    rows.push({page:String(forcedPage||Number(String(p[1]||'').replace(/\D/g,''))||'')||null,item_no:(p[2]||'').trim()||null,identifier:(p[3]||'').trim()||null,description:(p[4]||'').trim()||null,quantity:(p[5]||'').trim()||null,unit:(p[6]||'').trim()||null,remarks:(p.slice(7).join('|')||'').trim()||null});
+  }
+  return {rows,docType,title};
+}
+async function openAIImageBatchV8133(batch,filename,caption,timeoutMs=150000){
+  if(!OPENAI_API_KEY) throw new Error('OPENAI_API_KEY missing');
+  const prompt=`Classify and extract these consecutive pages from one LMMM industrial source. Filename: ${filename}. Caption: ${caption||'(none)'}.
+First line MUST be DOC|<MANUAL|PARTS_LIST|DRAWING_LIST|EQUIPMENT_DATA|JOB|HISTORY|DEFECT|FORMAT|PERMIT|BOQ|LOGBOOK|INSPECTION|TECHNICAL_REFERENCE|OTHER>|<short factual title based on heading/content>.
+Then extract EVERY legible row/maintenance line as ROW|page|item no|exact identifier|exact description/designation|quantity|unit|remarks.
+Preserve exact IDs, drawing/part numbers, dates and quantities. Do not guess. Do not copy filename numbers into data fields. Unreadable=[UNREADABLE].`;
+  const content=[{type:'input_text',text:prompt}];
+  for(const p of batch){content.push({type:'input_text',text:`SOURCE PAGE ${p.page}`});content.push({type:'input_image',image_url:`data:image/jpeg;base64,${p.bytes.toString('base64')}`,detail:'high'});}
+  const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),timeoutMs);
+  try{const r=await fetch('https://api.openai.com/v1/responses',{method:'POST',signal:ctrl.signal,headers:{Authorization:`Bearer ${OPENAI_API_KEY}`,'Content-Type':'application/json'},body:JSON.stringify({model:OPENAI_MODEL,input:[{role:'user',content}],max_output_tokens:16384})});
+    if(!r.ok)throw new Error(`OpenAI TIFF ${r.status}: ${(await r.text()).slice(0,700)}`);const j=await r.json();const text=String(j.output_text||'')||(j.output||[]).flatMap(o=>o.content||[]).map(c=>c.text||'').join('\n');if(!text.trim())throw new Error('OpenAI TIFF empty response');return {text,provider:'OPENAI',model:j.model||OPENAI_MODEL};
+  }catch(e){if(e?.name==='AbortError'){const x=new Error('OpenAI TIFF timeout');x.code='OPENAI_TIMEOUT';throw x;}throw e;}finally{clearTimeout(timer);}
+}
+async function geminiImageBatchV8133(batch,filename,caption){
+  const prompt=`Classify and extract these consecutive pages from one LMMM industrial source. Filename: ${filename}. Caption: ${caption||'(none)'}.
+First line DOC|<MANUAL|PARTS_LIST|DRAWING_LIST|EQUIPMENT_DATA|JOB|HISTORY|DEFECT|FORMAT|PERMIT|BOQ|LOGBOOK|INSPECTION|TECHNICAL_REFERENCE|OTHER>|<short factual title based on heading/content>.
+Then EVERY legible row as ROW|page|item no|exact identifier|exact description/designation|quantity|unit|remarks. Preserve exact source values; never guess.`;
+  const parts=[{text:prompt}]; for(const p of batch){parts.push({text:`SOURCE PAGE ${p.page}`});parts.push({inline_data:{mime_type:'image/jpeg',data:p.bytes.toString('base64')}});}
+  const gx=await geminiOnlyGenerateWithFallbackV8110({contents:[{parts}],generationConfig:{maxOutputTokens:16384}},120000);const j=await gx.response.json();return {text:(j.candidates?.[0]?.content?.parts||[]).map(x=>x.text||'').join(''),provider:'GEMINI',model:gx.model};
+}
+async function extractLargeTiffV8133(bytes,mime,filename,caption){
+  const {total,pages}=await tiffPageJpegsV8133(bytes,250); console.log('[TIFF_PAGES]',filename,total);
+  const all=[],stats=[]; let docType='TECHNICAL_REFERENCE',title='Technical reference document'; const batchSize=Math.max(1,Math.min(4,Number(process.env.TIFF_AI_BATCH_PAGES||4)));
+  for(let i=0;i<pages.length;i+=batchSize){const batch=pages.slice(i,i+batchSize);let out=null,last=null;
+    if(OPENAI_API_KEY){try{out=await openAIImageBatchV8133(batch,filename,caption);console.log('[TIFF_BATCH_OK] OPENAI',batch[0].page,'-',batch.at(-1).page);}catch(e){last=e;console.error('[TIFF_BATCH_FAIL] OPENAI',batch[0].page,'-',batch.at(-1).page,e.message);}}
+    if(!out&&GEMINI_API_KEY){try{out=await geminiImageBatchV8133(batch,filename,caption);console.log('[TIFF_BATCH_OK] GEMINI',batch[0].page,'-',batch.at(-1).page);}catch(e){last=e;console.error('[TIFF_BATCH_FAIL] GEMINI',batch[0].page,'-',batch.at(-1).page,e.message);}}
+    if(!out){for(const p of batch)stats.push({page:p.page,status:'NEEDS_REVIEW',rows:0,error:String(last?.message||'AI unavailable')});continue;}
+    const parsed=parseDelimitedRowsV8133(out.text); if(i===0){docType=parsed.docType||docType;title=parsed.title||title;} all.push(...parsed.rows); const represented=new Set(parsed.rows.map(x=>Number(x.page)).filter(Boolean)); for(const p of batch)stats.push({page:p.page,status:represented.has(p.page)?'OK':'NEEDS_REVIEW',rows:parsed.rows.filter(x=>Number(x.page)===p.page).length,provider:out.provider,model:out.model});
+  }
+  const clean=all.filter((x,i,a)=>{const k=[x.page,x.item_no,x.identifier,x.description,x.quantity,x.unit].join('|').toLowerCase();return a.findIndex(y=>[y.page,y.item_no,y.identifier,y.description,y.quantity,y.unit].join('|').toLowerCase()===k)===i;});
+  const review=stats.filter(x=>x.status==='NEEDS_REVIEW').map(x=>x.page); if(!clean.length)throw new Error(`TIFF extraction returned zero rows; pages retained for retry (${review.join(',')||'all'})`);
+  const preview=clean.map(x=>[x.page&&`P${x.page}`,x.item_no,x.identifier,x.description,x.quantity,x.unit,x.remarks].filter(Boolean).join(' | ')).join('\n');
+  return {document_type:docType,detected_languages:['English'],document_summary:`${title}. ${total}-page TIFF; ${clean.length} extracted items${review.length?`; pages needing review: ${review.join(', ')}`:''}.`,full_text:preview,review_text_english:preview,extracted_items:clean,records:[],expected_pages:total,page_extraction_status:stats,needs_review_pages:review,needs_review:review.length>0,_provider:'OPENAI_GEMINI',_extraction_mode:'MULTIPAGE_TIFF_IMAGE_BATCHES'};
+}
+
 async function extractPlainTechnicalV891(bytes,mime,filename,caption){
   if(!GEMINI_API_KEY && !OPENAI_API_KEY && !GROQ_API_KEY && !OPENROUTER_API_KEY) throw new Error('No AI provider key configured');
   const prompt=`You are a document transcription engine, not a conversational assistant.
@@ -1438,7 +1470,8 @@ async function extractMaintenanceV874(bytes,mime,filename,caption){
   if(/pdf/i.test(String(mime||''))){
     return await extractPdfBatchesV897(bytes,mime,filename,caption);
   }
-  if(/tiff|image/i.test(String(mime||''))) return await extractPlainTechnicalV891(bytes,mime,filename,caption);
+  if(/tiff/i.test(String(mime||'')) || /\.tiff?$/i.test(String(filename||''))) return await extractLargeTiffV8133(bytes,mime,filename,caption);
+  if(/image/i.test(String(mime||''))) return await extractPlainTechnicalV891(bytes,mime,filename,caption);
   try{return await extractMaintenanceCoreV887(bytes,mime,filename,caption,false);}
   catch(e){console.error('[EXTRACT_PRIMARY]',e);return await extractMaintenanceCoreV887(bytes,mime,filename,caption,true);}
 }
@@ -1457,7 +1490,7 @@ function ingestPreviewV877(packOrRows,filename){
   const review=recordReview+reviewPages;
   const lines=rows.slice(0,5).map((x,i)=>`${i+1}. ${String(x.module||'NEEDS_REVIEW').toUpperCase()} | ${x.equipment||'Equipment: not confirmed'} | ${x.event_date||'Date: not confirmed'}\n${String(x.description||'-').slice(0,220)}`);
   const items=Array.isArray(pack.extracted_items)?pack.extracted_items.length:0;
-  return `File extracted — NOT STORED\nSource: ${filename}\nType: ${pack.document_type||'OTHER'}\nLanguage: ${(pack.detected_languages||[]).join(', ')||'Not confirmed'}\nRecords: ${rows.length} | Detailed items: ${items}\nNeeds Review: ${review}\n\n${String(pack.document_summary||'').slice(0,700)}`;
+  return `File identified & extracted — NOT STORED\nSource: ${filename}\nFile Type: ${pack.document_type||'OTHER'}\nLanguage: ${(pack.detected_languages||[]).join(', ')||'Not confirmed'}\nRecords: ${rows.length} | Detailed items: ${items}\nNeeds Review: ${review}\n\n${String(pack.document_summary||'').slice(0,700)}`;
 }
 async function setPendingIngestSessionV877(from,id){
   await pool.query(`INSERT INTO ui_sessions(whatsapp_number,session_key,session_value,updated_at) VALUES($1,'PENDING_FILE_INGEST',$2::jsonb,now()) ON CONFLICT(whatsapp_number,session_key) DO UPDATE SET session_value=EXCLUDED.session_value,updated_at=now()`,[normWA(from),JSON.stringify({id})]);
@@ -1748,7 +1781,7 @@ async function extractQueuedIngestV895(from,row){
       await sendText(from,'This upload is not relevant to LMMM plant / maintenance knowledge. Nothing was stored.');
       return true;
     }
-    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.13.1',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack))]);
+    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.13.3',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack))]);
     await armTemporarySourceExpiryV8120(row.id);
     await reliabilityEventV8100(row,'AI_EXTRACTION','SUCCEEDED',pack?._provider||null);
     await pool.query(`UPDATE pending_file_ingests SET workflow_state='SOURCE_SECURED',updated_at=now() WHERE id=$1`,[row.id]).catch(()=>{});
