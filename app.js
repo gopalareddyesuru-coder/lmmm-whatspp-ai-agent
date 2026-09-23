@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.13.8 TIFF ADAPTIVE DISK-CACHE + WEBHOOK IDEMPOTENCY
+// LMMM AI Maintenance V8.13.9 NO-SOURCE-RETENTION + TIFF FAIL-FAST
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -1819,16 +1819,17 @@ async function markRetryV8100(row,stage,error){
   await reliabilityEventV8100(row,stage,'RETRY_PENDING',null,error);
 }
 async function recoverPendingWorkV8100(){
-  // Server restart recovery: release stale locks and make unfinished work retryable.
-  await pool.query(`UPDATE pending_file_ingests SET status='RETRY_PENDING',workflow_state='RECOVERED_AFTER_RESTART',locked_at=NULL,next_retry_at=now(),updated_at=now()
-    WHERE status='EXTRACTING' AND (locked_at IS NULL OR locked_at < now()-interval '5 minutes')`).catch(e=>console.error('[RECOVERY]',e));
+  // V8.13.9 privacy mode: purge any legacy upload binaries left by older deployments.
+  await pool.query(`UPDATE pending_file_ingests SET source_bytes=NULL,source_purged_at=COALESCE(source_purged_at,now()),status=CASE WHEN status IN ('RETRY_PENDING','RECEIVED','EXTRACTING') THEN 'FAILED' ELSE status END,workflow_state=CASE WHEN workflow_state IN ('RETRY_PENDING','SOURCE_SECURED','RECEIVED','AI_PROCESSING','EXTRACTING') THEN 'FAILED' ELSE workflow_state END,next_retry_at=NULL,last_error=CASE WHEN status IN ('RETRY_PENDING','RECEIVED','EXTRACTING') THEN COALESCE(last_error,'Original source purged by no-retention policy; re-upload required') ELSE last_error END WHERE source_bytes IS NOT NULL`).catch(e=>console.error('[NO_RETENTION_PURGE]',e));
+  // Server restart recovery: no source retry is possible because original uploads are not retained.
+  await pool.query(`UPDATE pending_file_ingests SET status='FAILED',workflow_state='FAILED',locked_at=NULL,next_retry_at=NULL,last_error=COALESCE(last_error,'Process restarted; original source was not retained'),updated_at=now() WHERE status='EXTRACTING'`).catch(e=>console.error('[RECOVERY]',e));
 }
-async function extractQueuedIngestV895(from,row){
+async function extractQueuedIngestV895(from,row,bytesOverride=null){
   try{
     await pool.query(`UPDATE pending_file_ingests SET status='EXTRACTING',workflow_state='AI_PROCESSING',locked_at=now(),retry_count=retry_count+1,last_error=NULL,updated_at=now() WHERE id=$1`,[row.id]);
     await reliabilityEventV8100(row,'AI_EXTRACTION','STARTED');
-    const bytes=Buffer.from(row.source_bytes||[]);
-    if(!bytes.length) throw new Error('Queued source bytes unavailable');
+    const bytes=bytesOverride ? Buffer.from(bytesOverride) : Buffer.alloc(0);
+    if(!bytes.length) throw Object.assign(new Error('Original upload is not retained. Please upload the file again.'),{code:'SOURCE_NOT_RETAINED'});
     const pack=await extractMaintenanceV874(bytes,row.source_mime_type||'application/octet-stream',row.source_filename||'upload',row.source_caption||'');
     const strongRefV8125=strongTechnicalReferenceEvidenceV8125(JSON.stringify(pack||{}),row.source_filename||'');
     const sourceIsTiffV8135=isTiffSourceV8135(bytes,row.source_mime_type||'',row.source_filename||'');
@@ -1836,39 +1837,22 @@ async function extractQueuedIngestV895(from,row){
     if(String(pack.document_type||'').toUpperCase()==='UNRELATED' && (strongRefV8125 || sourceIsTiffV8135 || hasTechnicalPayloadV8135)){
       console.log('[RELEVANCE_GUARD_V8135] AI UNRELATED blocked; source requires technical review',row.source_filename,'tiff=',sourceIsTiffV8135,'rows=',pack?.extracted_items?.length||0);
       pack.document_type=strongRefV8125?'REFERENCE':'TECHNICAL_REFERENCE';
-      pack.relevance='UNCERTAIN';
-      pack.needs_review=true;
+      pack.relevance='UNCERTAIN'; pack.needs_review=true;
       pack.document_summary=pack.document_summary&& !/unrelated/i.test(pack.document_summary)?pack.document_summary:'Technical source extracted; relevance requires review. No automatic rejection.';
     }
-    if(String(pack.document_type||'').toUpperCase()==='UNRELATED' && strongRefV8125){
-      console.log('[RELEVANCE_OVERRIDE] Strong drawing/manual/parts technical-reference evidence; AI UNRELATED overridden',row.source_filename);
-      pack.document_type='REFERENCE';
-      pack.relevance='LMMM_RELEVANT';
-    }
+    if(String(pack.document_type||'').toUpperCase()==='UNRELATED' && strongRefV8125){pack.document_type='REFERENCE';pack.relevance='LMMM_RELEVANT';}
     if(String(pack.document_type||'').toUpperCase()==='UNRELATED' && !strongRefV8125){
-      await pool.query(`UPDATE pending_file_ingests SET status='UNRELATED',extracted_rows=$2::jsonb,updated_at=now() WHERE id=$1`,[row.id,JSON.stringify(packForDBV878(pack))]);
-      await sendText(from,'This upload is not relevant to LMMM plant / maintenance knowledge. Nothing was stored.');
-      return true;
+      await pool.query(`UPDATE pending_file_ingests SET status='UNRELATED',workflow_state='COMPLETED',source_bytes=NULL,source_purged_at=now(),extracted_rows=$2::jsonb,locked_at=NULL,updated_at=now() WHERE id=$1`,[row.id,JSON.stringify(packForDBV878(pack))]);
+      await sendText(from,'This upload is not relevant to LMMM plant / maintenance knowledge. Nothing was stored.'); return true;
     }
-    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.13.8',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack))]);
-    await armTemporarySourceExpiryV8120(row.id);
+    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',source_bytes=NULL,source_purged_at=now(),extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.13.9',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack))]);
     await reliabilityEventV8100(row,'AI_EXTRACTION','SUCCEEDED',pack?._provider||null);
-    await pool.query(`UPDATE pending_file_ingests SET workflow_state='SOURCE_SECURED',updated_at=now() WHERE id=$1`,[row.id]).catch(()=>{});
-    await reliabilityEventV8100(row,'INTAKE','SOURCE_SECURED');
-    await setPendingIngestSessionV877(from,row.id);
-    await setIngestModeV874(from,false);
-    await showIngestOptionsV877(from,q.rows[0]);
-    return true;
+    await setPendingIngestSessionV877(from,row.id); await setIngestModeV874(from,false); await showIngestOptionsV877(from,q.rows[0]); return true;
   }catch(e){
-    const msg=String(e?.message||e).slice(0,1500);
-    console.error('[QUEUED_EXTRACT]',row.id,e);
-    await markRetryV8100(row,'AI_EXTRACTION',e).catch(()=>{});
-    await setPendingIngestSessionV877(from,row.id).catch(()=>{});
-    // Notify only on the first failure. Automatic retry workers stay silent to avoid annoying duplicate WhatsApp messages.
-    if(String(row?.status||'').toUpperCase()!=='RETRY_PENDING') await sendButtons(from,'Source is safely queued. AI is temporarily unavailable; no re-upload needed.',[
-      {id:'RETRY_LAST_UPLOAD',title:'Retry Extraction'},
-      {id:'INGEST_STATUS',title:'Check Status'}
-    ]);
+    const msg=String(e?.message||e).slice(0,1500); console.error('[EXTRACT_FAILED_NO_RETENTION]',row.id,e);
+    await pool.query(`UPDATE pending_file_ingests SET status='FAILED',workflow_state='FAILED',source_bytes=NULL,source_purged_at=now(),last_error=$2,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.13.9',updated_at=now() WHERE id=$1`,[row.id,msg]).catch(()=>{});
+    await reliabilityEventV8100(row,'AI_EXTRACTION','FAILED',null,e).catch(()=>{});
+    await sendText(from,'Extraction failed. Original file was not stored. Please upload the file again if you want to retry.');
     return false;
   }
 }
@@ -1965,28 +1949,28 @@ async function failSafeWorkerV8100(){
   try{
     const lk=await pool.query(`SELECT pg_try_advisory_lock(3518100) AS ok`); lock=!!lk.rows?.[0]?.ok;
     if(!lock) return;
-    const q=await pool.query(`SELECT * FROM pending_file_ingests WHERE status='RETRY_PENDING' AND (next_retry_at IS NULL OR next_retry_at<=now()) ORDER BY created_at ASC LIMIT 3`);
-    for(const row of q.rows){
-      try{await extractQueuedIngestV895(row.submitted_by_whatsapp,row);}
-      catch(e){console.error('[FAILSAFE_WORKER_ITEM]',row.id,e);}
-    }
+    // V8.13.9 privacy mode: original uploads are never retained, so background source retries are disabled.
+    await pool.query(`UPDATE pending_file_ingests SET status='FAILED',workflow_state='FAILED',source_bytes=NULL,source_purged_at=COALESCE(source_purged_at,now()),next_retry_at=NULL,last_error=COALESCE(last_error,'Original source not retained; re-upload required for retry') WHERE status='RETRY_PENDING'`).catch(()=>{});
   }catch(e){console.error('[FAILSAFE_WORKER]',e);}
   finally{if(lock) await pool.query(`SELECT pg_advisory_unlock(3518100)`).catch(()=>{});}
 }
 async function retryLastQueuedV895(from){
-  const q=await pool.query(`SELECT * FROM pending_file_ingests WHERE submitted_by_whatsapp=$1 AND status IN ('RETRY_PENDING','RECEIVED','EXTRACTING') ORDER BY created_at DESC LIMIT 1`,[normWA(from)]);
-  if(!q.rows.length){await sendText(from,'No queued upload is waiting for extraction.');return true;}
-  await sendText(from,'Retrying the saved source now…');
-  await extractQueuedIngestV895(from,q.rows[0]);
+  await sendText(from,'Original upload is not stored. Please upload the file again to retry extraction.');
   return true;
 }
+
 async function queuedStatusV895(from){
-  const q=await pool.query(`SELECT id,source_filename,status,retry_count,last_error,created_at,updated_at FROM pending_file_ingests WHERE submitted_by_whatsapp=$1 ORDER BY created_at DESC LIMIT 1`,[normWA(from)]);
-  if(!q.rows.length){await sendText(from,'No recent upload queue found.');return true;}
+  const q=await pool.query(`SELECT id,source_filename,status,retry_count,last_error,extraction_engine_version,created_at,updated_at FROM pending_file_ingests WHERE submitted_by_whatsapp=$1 ORDER BY created_at DESC LIMIT 1`,[normWA(from)]);
+  if(!q.rows.length){await sendText(from,'No recent upload found.');return true;}
   const r=q.rows[0];
-  await sendText(from,`Upload: ${r.source_filename||'source'}\nStatus: ${r.status}\nAttempts: ${r.retry_count}\nEngine: V8.9.8\nOriginal source: safely queued`);
+  await sendText(from,`Upload: ${r.source_filename||'source'}
+Status: ${r.status}
+Attempts: ${r.retry_count}
+Engine: ${r.extraction_engine_version||'V8.13.9'}
+Original source: not retained`);
   return true;
 }
+
 async function processMediaMessageV874(from,m){
   try{
     const u=await byWA(from);
@@ -1994,44 +1978,23 @@ async function processMediaMessageV874(from,m){
     const obj=m[m.type]||{},caption=String(obj.caption||'').trim();
     const mediaId=obj.id;if(!mediaId){await sendText(from,'File media ID not available. Please resend.');return;}
     const isAudio=['audio','voice'].includes(m.type);
-    await sendText(from,isAudio?'Voice received. Securing source & extracting…':'Received. Source secured; extracting…');
+    await sendText(from,isAudio?'Voice received. Processing…':'Received. Processing…');
     const d=await downloadWhatsAppMediaV874(mediaId),mime=String(obj.mime_type||d.mime||'application/octet-stream').toLowerCase();
     const guessedExt=isAudio?(String(obj.mime_type||'').includes('mpeg')?'.mp3':String(obj.mime_type||'').includes('mp4')?'.m4a':'.ogg'):'';
     const filename=obj.filename||`${m.type}_${mediaId}${guessedExt}`;
     const crypto=await import('node:crypto'),sha=crypto.createHash('sha256').update(d.bytes).digest('hex');
-
-    // Idempotent queue: same user + same source hash is not duplicated.
-    let q=await pool.query(`SELECT * FROM pending_file_ingests WHERE submitted_by_whatsapp=$1 AND source_sha256=$2 ORDER BY created_at DESC LIMIT 1`,[normWA(from),sha]);
-    let row=q.rows[0];
-    if(!row){
-      q=await pool.query(`INSERT INTO pending_file_ingests
-        (submitted_by_whatsapp,submitted_by_employee_number,source_media_id,source_filename,source_mime_type,source_caption,source_sha256,source_bytes,extracted_rows,status)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,'RECEIVED') RETURNING *`,
-        [normWA(from),u.employee_number,mediaId,filename,mime,caption,sha,d.bytes,JSON.stringify({})]);
-      row=q.rows[0];
-    }else if(!row.source_bytes){
-      q=await pool.query(`UPDATE pending_file_ingests SET source_bytes=$2,source_media_id=$3,status=CASE WHEN status='UNRELATED' THEN status ELSE 'RECEIVED' END,updated_at=now() WHERE id=$1 RETURNING *`,[row.id,d.bytes,mediaId]);
-      row=q.rows[0];
-    }
-    await setPendingIngestSessionV877(from,row.id);
-    if(row.status==='PENDING_CONFIRMATION' && row.extracted_rows){
-      // Extraction engines evolve; never serve an old cached preview as if it were freshly extracted.
-      // Re-run from the durably stored original bytes. The SHA still prevents duplicate source rows.
-      q=await pool.query(`UPDATE pending_file_ingests SET status='RECEIVED',extracted_rows='{}'::jsonb,last_error=NULL,next_retry_at=NULL,updated_at=now() WHERE id=$1 RETURNING *`,[row.id]);
-      row=q.rows[0];
-    }
-    if(row.status==='UNRELATED' && row.source_bytes){
-      q=await pool.query(`UPDATE pending_file_ingests SET status='RECEIVED',workflow_state='SOURCE_SECURED',extracted_rows='{}'::jsonb,last_error=NULL,next_retry_at=NULL,updated_at=now() WHERE id=$1 RETURNING *`,[row.id]);
-      row=q.rows[0];
-      console.log('[RELEVANCE_RECHECK] previous UNRELATED source reprocessed with V8.12.6',row.id);
-    }
-    if(row.status==='UNRELATED'){
-      await sendText(from,'This upload is not relevant to LMMM plant / maintenance knowledge. Nothing was stored.'); return;
-    }
-    await extractQueuedIngestV895(from,row);
+    // Store metadata/hash only. Never persist the user's original upload bytes.
+    const q=await pool.query(`INSERT INTO pending_file_ingests
+      (submitted_by_whatsapp,submitted_by_employee_number,source_media_id,source_filename,source_mime_type,source_caption,source_sha256,source_bytes,extracted_rows,status,workflow_state,extraction_engine_version)
+      VALUES($1,$2,$3,$4,$5,$6,$7,NULL,$8::jsonb,'RECEIVED','RECEIVED','V8.13.9') RETURNING *`,
+      [normWA(from),u.employee_number,mediaId,filename,mime,caption,sha,JSON.stringify({})]);
+    const row=q.rows[0]; await setPendingIngestSessionV877(from,row.id);
+    await extractQueuedIngestV895(from,row,d.bytes);
+    // Best-effort release of the in-process buffer reference after extraction returns.
+    d.bytes=null;
   }catch(e){
     console.error('[MEDIA_INGEST]',e);
-    await sendText(from,'Upload intake failed before secure queueing. Please resend this source once.');
+    await sendText(from,'Extraction failed. Original file was not stored. Please upload the file again if you want to retry.');
   }
 }
 
@@ -2328,4 +2291,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.13.8 TIFF ADAPTIVE DISK-CACHE + WEBHOOK IDEMPOTENCY listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.13.9 NO-SOURCE-RETENTION + TIFF FAIL-FAST listening on ${PORT}`));
