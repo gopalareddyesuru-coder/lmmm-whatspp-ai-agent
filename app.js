@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.14.1 TIFF BILEVEL LOW-MEM ENGINE
+// LMMM AI Maintenance V8.14.2 TIFF FFMPEG LOW-MEM FALLBACK
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -1407,18 +1407,28 @@ async function tiffPageCountV8137(file,maxPages=250){
     return {total:Math.max(1,count),capped:count>=maxPages};
   }finally{await fh.close();}
 }
+async function runFfmpegTiffPageV8142(file,page,timeout=90000,maxOut=4*1024*1024){
+  // ffmpeg/libtiff fallback avoids ImageMagick's pixel-cache path on 512 MiB Render instances.
+  const {spawn}=await import('node:child_process');
+  const filter=`select=eq(n\\,${Math.max(0,page-1)}),scale='min(1000,iw)':-2`;
+  const args=['-v','error','-threads','1','-i',file,'-vf',filter,'-frames:v','1','-f','image2pipe','-vcodec','mjpeg','-q:v','7','pipe:1'];
+  return await new Promise((resolve,reject)=>{const cp=spawn('ffmpeg',args,{stdio:['ignore','pipe','pipe']});const out=[],err=[];let size=0,errSize=0,done=false;
+    const finish=(e,v)=>{if(done)return;done=true;clearTimeout(timer);e?reject(e):resolve(v)};
+    const timer=setTimeout(()=>{cp.kill('SIGKILL');finish(new Error('ffmpeg TIFF page timeout'));},timeout);
+    cp.stdout.on('data',d=>{size+=d.length;if(size>maxOut){cp.kill('SIGKILL');finish(new Error('ffmpeg TIFF page exceeded safe output limit'));}else out.push(d)});
+    cp.stderr.on('data',d=>{if(errSize<65536){err.push(d);errSize+=d.length;}});cp.on('error',e=>finish(e));
+    cp.on('close',code=>{const b=Buffer.concat(out);if(code===0&&b.length)finish(null,b);else finish(new Error(`ffmpeg TIFF failed ${code}: ${Buffer.concat(err).toString().slice(0,500)}`));});
+  });
+}
 async function tiffOnePageJpegV8137(file,page){
-  // V8.14.1: engineering scans are commonly bilevel/Group4. Avoid sRGB/alpha expansion,
-  // which can multiply the decoded pixel cache on 512 MiB hosts. Decode one frame only,
-  // keep it grayscale/8-bit, thumbnail before JPEG encoding, then exit the child process.
   const frame=`${file}[${page-1}]`;
   try{
-    return await runImageMagickV8137('convert',[frame,'-alpha','off','-colorspace','Gray','-depth','8','-thumbnail','1050x1050>','-strip','-quality','66','jpeg:-'],90000,4*1024*1024);
+    return await runImageMagickV8137('convert',[frame,'-alpha','off','-colorspace','Gray','-depth','8','-thumbnail','1050x1050>','-strip','-quality','66','jpeg:-'],60000,4*1024*1024);
   }catch(e){
-    if(!/cache resources exhausted|OpenPixelCache|memory allocation/i.test(String(e?.message||e))) throw e;
-    console.warn('[TIFF_BILEVEL_RETRY]',page,'retrying 1-bit low-memory render');
-    // Last local attempt: force bilevel output and a smaller thumbnail. No page loop/retry storm.
-    return await runImageMagickV8137('convert',[frame,'-alpha','off','-colorspace','Gray','-threshold','60%','-depth','1','-thumbnail','760x760>','-strip','png:-'],90000,3*1024*1024);
+    const msg=String(e?.message||e);
+    if(!/cache resources exhausted|OpenPixelCache|memory allocation|no images defined/i.test(msg)) throw e;
+    console.warn('[TIFF_FFMPEG_FALLBACK]',page,'ImageMagick resource limit; using ffmpeg/libtiff');
+    return await runFfmpegTiffPageV8142(file,page,90000,4*1024*1024);
   }
 }
 function parseDelimitedRowsV8133(txt,forcedPage=null){
@@ -1490,7 +1500,7 @@ async function extractLargeTiffV8133(bytes,mime,filename,caption){
     const clean=all.filter((x,i,a)=>{const k=[x.page,x.item_no,x.identifier,x.description,x.quantity,x.unit].join('|').toLowerCase();return a.findIndex(y=>[y.page,y.item_no,y.identifier,y.description,y.quantity,y.unit].join('|').toLowerCase()===k)===i;});
     if(!clean.length) throw new Error('TIFF extraction returned zero structured rows');
     const preview=clean.map(x=>[x.page&&`P${x.page}`,x.item_no,x.identifier,x.description,x.quantity,x.unit,x.remarks].filter(Boolean).join(' | ')).join('\n');
-    return {document_type:docType,detected_languages:['English'],document_summary:`${title}. ${total}-page TIFF; ${clean.length} extracted items.`,full_text:preview,review_text_english:preview,extracted_items:clean,records:[],expected_pages:total,page_extraction_status:stats,needs_review_pages:[],needs_review:false,_provider:'FREE_MULTI_PROVIDER',_extraction_mode:'TIFF_BILEVEL_LOW_MEM_V8141'};
+    return {document_type:docType,detected_languages:['English'],document_summary:`${title}. ${total}-page TIFF; ${clean.length} extracted items.`,full_text:preview,review_text_english:preview,extracted_items:clean,records:[],expected_pages:total,page_extraction_status:stats,needs_review_pages:[],needs_review:false,_provider:'FREE_MULTI_PROVIDER',_extraction_mode:'TIFF_FFMPEG_LOW_MEM_V8142'};
   });
 }
 
@@ -1857,12 +1867,12 @@ async function extractQueuedIngestV895(from,row,bytesOverride=null){
       await pool.query(`UPDATE pending_file_ingests SET status='UNRELATED',workflow_state='COMPLETED',source_bytes=NULL,source_purged_at=now(),extracted_rows=$2::jsonb,locked_at=NULL,updated_at=now() WHERE id=$1`,[row.id,JSON.stringify(packForDBV878(pack))]);
       await sendText(from,'This upload is not relevant to LMMM plant / maintenance knowledge. Nothing was stored.'); return true;
     }
-    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',source_bytes=NULL,source_purged_at=now(),extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.14.0',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack))]);
+    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',source_bytes=NULL,source_purged_at=now(),extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.14.2',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack))]);
     await reliabilityEventV8100(row,'AI_EXTRACTION','SUCCEEDED',pack?._provider||null);
     await setPendingIngestSessionV877(from,row.id); await setIngestModeV874(from,false); await showIngestOptionsV877(from,q.rows[0]); return true;
   }catch(e){
     const msg=String(e?.message||e).slice(0,1500); console.error('[EXTRACT_FAILED_NO_RETENTION]',row.id,e);
-    await pool.query(`UPDATE pending_file_ingests SET status='FAILED',workflow_state='FAILED',source_bytes=NULL,source_purged_at=now(),last_error=$2,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.14.0',updated_at=now() WHERE id=$1`,[row.id,msg]).catch(()=>{});
+    await pool.query(`UPDATE pending_file_ingests SET status='FAILED',workflow_state='FAILED',source_bytes=NULL,source_purged_at=now(),last_error=$2,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.14.2',updated_at=now() WHERE id=$1`,[row.id,msg]).catch(()=>{});
     await reliabilityEventV8100(row,'AI_EXTRACTION','FAILED',null,e).catch(()=>{});
     await sendText(from,'Extraction failed. Original file was not stored. Please upload it again only if you want to retry.');
     return false;
@@ -2303,4 +2313,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.14.1 TIFF BILEVEL LOW-MEM ENGINE listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.14.2 TIFF FFMPEG LOW-MEM FALLBACK listening on ${PORT}`));
