@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.12.6 RELEVANCE CACHE FIX
+// LMMM AI Maintenance V8.12.7 PAGE COMPLETE EXTRACTION
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -1176,31 +1176,78 @@ Caption: ${caption||'(none)'}`;
 
 async function extractPdfBatchesV897(bytes,mime,filename,caption){
   const m=String(filename).match(/(\d+)\s*-\s*(\d+)/), totalHint=Number((m||[])[2]||0);
-  const maxPages=totalHint>0&&totalHint<=200?totalHint:50, batchSize=2, all=[];
+  const maxPages=totalHint>0&&totalHint<=200?totalHint:50, all=[], pageStats=[];
   let emptyStreak=0;
-  for(let start=1;start<=maxPages;start+=batchSize){
-    const end=Math.min(start+batchSize-1,maxPages);
-    const prompt=`Transcribe ONLY PDF pages ${start}-${end}. Return only data lines, no explanation.
-For EVERY legible list/table row: ROW|page|item|exact identifier|exact designation/description|quantity|unit|remarks
-Preserve identifiers exactly; leave absent fields empty; never invent. If no rows: NO_ROWS`;
-    const body={contents:[{parts:[{text:prompt},{inline_data:{mime_type:mime,data:bytes.toString('base64')}}]}],generationConfig:{maxOutputTokens:4096}};
-    const gx=await geminiGenerateWithFallbackV892(body,60000),r=gx.response;
-    console.log('[PDF_BATCH]',filename,start,end,gx.provider||'GEMINI',gx.model);
-    const j=await r.json(),txt=(j.candidates?.[0]?.content?.parts||[]).map(x=>x.text||'').join('').trim();
-    let added=0;
-    for(const raw of txt.split(/\r?\n/)){
-      const line=raw.trim(); if(!/^ROW\|/i.test(line)) continue;
-      const p=line.split('|'),row={page:(p[1]||'').trim()||String(start),item_no:(p[2]||'').trim()||null,identifier:(p[3]||'').trim()||null,description:(p[4]||'').trim()||null,quantity:(p[5]||'').trim()||null,unit:(p[6]||'').trim()||null,remarks:(p.slice(7).join('|')||'').trim()||null};
-      if(row.identifier||row.description){all.push(row);added++;}
+
+  // V8.12.7: one logical page per AI request. This avoids 2-page response truncation
+  // and lets us retry an individual page without repeating successful pages.
+  for(let page=1;page<=maxPages;page++){
+    let pageRows=[], lastErr=null;
+    for(let attempt=1;attempt<=2;attempt++){
+      try{
+        const prompt=`Read ONLY PDF page ${page}. Ignore every other page.
+Return EVERY legible table/list row from page ${page}; do not summarize and do not omit repeated-looking rows.
+Return only lines in this exact format:
+ROW|${page}|item|exact identifier|exact designation/description|quantity|unit|remarks
+Preserve identifiers character-for-character. Leave absent fields empty. Never invent.
+If page ${page} has headings but no data rows, output NO_ROWS.
+If page ${page} is unavailable/unreadable, output PAGE_UNREADABLE.`;
+        const body={contents:[{parts:[{text:prompt},{inline_data:{mime_type:mime,data:bytes.toString('base64')}}]}],generationConfig:{maxOutputTokens:8192}};
+        const gx=await geminiGenerateWithFallbackV892(body,60000),r=gx.response;
+        console.log('[PDF_PAGE_TRY]',filename,'page',page,'attempt',attempt,gx.provider||'GEMINI',gx.model);
+        const j=await r.json(),txt=(j.candidates?.[0]?.content?.parts||[]).map(x=>x.text||'').join('').trim();
+        for(const raw of txt.split(/\r?\n/)){
+          const line=raw.trim(); if(!/^ROW\|/i.test(line)) continue;
+          const p=line.split('|');
+          const row={page:String(page),item_no:(p[2]||'').trim()||null,identifier:(p[3]||'').trim()||null,description:(p[4]||'').trim()||null,quantity:(p[5]||'').trim()||null,unit:(p[6]||'').trim()||null,remarks:(p.slice(7).join('|')||'').trim()||null};
+          if(row.identifier||row.description) pageRows.push(row);
+        }
+        if(pageRows.length || /\bNO_ROWS\b/i.test(txt)){
+          pageStats.push({page,status:pageRows.length?'OK':'NO_ROWS',rows:pageRows.length,provider:gx.provider||'GEMINI',model:gx.model});
+          break;
+        }
+        lastErr=new Error(`Page ${page} returned no structured rows/status`);
+      }catch(e){
+        lastErr=e;
+        console.error('[PDF_PAGE_FAIL]',filename,'page',page,'attempt',attempt,e?.message||e);
+      }
     }
-    emptyStreak=added?0:emptyStreak+1;
-    if(!totalHint&&start>=6&&emptyStreak>=3) break;
+    if(pageRows.length){
+      all.push(...pageRows); emptyStreak=0;
+    }else{
+      emptyStreak++;
+      if(!pageStats.some(x=>x.page===page)) pageStats.push({page,status:'NEEDS_REVIEW',rows:0,error:String(lastErr?.message||'No rows')});
+    }
+    if(!totalHint && page>=6 && emptyStreak>=3) break;
   }
-  const clean=all.filter((x,i,a)=>{const k=[x.page,x.item_no,x.identifier,x.description,x.quantity,x.unit].join('|').toLowerCase();return a.findIndex(y=>[y.page,y.item_no,y.identifier,y.description,y.quantity,y.unit].join('|').toLowerCase()===k)===i;});
-  if(!clean.length) throw new Error('PDF batch extraction returned zero rows');
+
+  const clean=all.filter((x,i,a)=>{
+    const k=[x.page,x.item_no,x.identifier,x.description,x.quantity,x.unit].join('|').toLowerCase();
+    return a.findIndex(y=>[y.page,y.item_no,y.identifier,y.description,y.quantity,y.unit].join('|').toLowerCase()===k)===i;
+  });
+  if(!clean.length) throw new Error('PDF page extraction returned zero rows');
+
+  const expected=totalHint||Math.max(...pageStats.map(x=>x.page),0);
+  const reviewed=pageStats.filter(x=>x.status==='NEEDS_REVIEW').map(x=>x.page);
+  const represented=[...new Set(clean.map(x=>Number(x.page)).filter(Boolean))].sort((x,y)=>x-y);
+  console.log('[PDF_COMPLETENESS]',filename,'expected',expected,'represented',represented.join(','),'needsReview',reviewed.join(','));
+
   const preview=clean.map(x=>[x.page&&`P${x.page}`,x.item_no,x.identifier,x.description,x.quantity,x.unit,x.remarks].filter(Boolean).join(' | ')).join('\n');
-  return {document_type:'DRAWING_LIST',detected_languages:['English'],document_summary:`Drawing/reference list extracted in page batches (${clean.length} rows).`,full_text:preview,review_text_english:preview,extracted_items:clean,records:[],_extraction_mode:'PDF_PAGE_BATCHES'};
+  return {
+    document_type:'DRAWING_LIST',
+    detected_languages:['English'],
+    document_summary:`Drawing/reference list extracted page-by-page (${clean.length} rows).`,
+    full_text:preview,review_text_english:preview,extracted_items:clean,records:[],
+    page_extraction_status:pageStats,
+    expected_pages:expected,
+    pages_with_rows:represented,
+    needs_review_pages:reviewed,
+    completeness_warning:reviewed.length?`Pages needing review: ${reviewed.join(', ')}`:null,
+    needs_review:reviewed.length>0,
+    _extraction_mode:'PDF_SINGLE_PAGE_CHECKPOINTS'
+  };
 }
+
 async function extractPlainTechnicalV891(bytes,mime,filename,caption){
   if(!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY missing');
   const prompt=`You are a document transcription engine, not a conversational assistant.
@@ -1550,7 +1597,7 @@ async function extractQueuedIngestV895(from,row){
       await sendText(from,'This upload is not relevant to LMMM plant / maintenance knowledge. Nothing was stored.');
       return true;
     }
-    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.12.6',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack))]);
+    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.12.7',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack))]);
     await armTemporarySourceExpiryV8120(row.id);
     await reliabilityEventV8100(row,'AI_EXTRACTION','SUCCEEDED',pack?._provider||null);
     await pool.query(`UPDATE pending_file_ingests SET workflow_state='SOURCE_SECURED',updated_at=now() WHERE id=$1`,[row.id]).catch(()=>{});
@@ -2022,4 +2069,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.12.6 RELEVANCE CACHE FIX listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.12.7 PAGE COMPLETE EXTRACTION listening on ${PORT}`));
