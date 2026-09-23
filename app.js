@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.13.4 FREE-AI MULTI-PROVIDER FAILOVER
+// LMMM AI Maintenance V8.13.5 TIFF RELEVANCE GUARD
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -944,7 +944,7 @@ function safeJsonV874(t=''){
 
 function strongTechnicalReferenceEvidenceV8125(text='',filename=''){
   const t=`${filename}\n${text}`.toLowerCase();
-  const strongTitle=/\b(list\s+of\s+.*drawings?|drawing\s+list|mechanical\s+drawings?|technical\s+data|parts?\s+list|spares?\s+list|bill\s+of\s+materials?|boq|equipment\s+manual|maintenance\s+manual|service\s+manual)\b/i.test(t);
+  const strongTitle=/\b(list\s+of\s+.*drawings?|drawing\s+list|mechanical\s+drawings?|technical\s+data|parts?\s+list|spares?\s+list|bill\s+of\s+materials?|boq|equipment\s+manual|maintenance\s+manual|service\s+manual|central(?:is|iz)ed\s+lubrication|lubrication\s+(?:system|equipment|manual|drawing)|hydraulic\s+(?:system|equipment|manual)|pneumatic\s+(?:system|equipment|manual)|equipment\s+(?:data|list|drawing)|permit|inspection\s+(?:format|sheet|record)|maintenance\s+(?:format|record|history))\b/i.test(t);
   const drawingColumns=/drawing\s*(?:no|number|nos|numbers)\b/i.test(t) && /\bdesignation\b/i.test(t);
   const repeatedDrawingIds=(t.match(/\b(?:[a-z]?\d[\d.-]{3,}\d)\b/gi)||[]).length>=2;
   const examSignals=/\b(question\s*paper|objective\s*questions?|multiple\s*choice|ncvt|rrb|iti\s+exam|trade\s+test)\b/i.test(t);
@@ -1484,11 +1484,19 @@ Preserve identifiers character-for-character. Do not invent values. Continue unt
   return {document_type:docType,detected_languages:['English'],document_summary:title,full_text:preview,review_text_english:preview,extracted_items:cleanRows,records:[],_extraction_mode:'DELIMITED_FULL_DOCUMENT'};
 }
 
+function isTiffSourceV8135(bytes,mime='',filename=''){
+  const b=Buffer.isBuffer(bytes)?bytes:Buffer.from(bytes||[]);
+  const magic=b.length>=4 && ((b[0]===0x49&&b[1]===0x49&&b[2]===0x2a&&b[3]===0x00)||(b[0]===0x4d&&b[1]===0x4d&&b[2]===0x00&&b[3]===0x2a));
+  return magic || /tiff/i.test(String(mime||'')) || /\.tiff?$/i.test(String(filename||''));
+}
 async function extractMaintenanceV874(bytes,mime,filename,caption){
   if(/pdf/i.test(String(mime||''))){
     return await extractPdfBatchesV897(bytes,mime,filename,caption);
   }
-  if(/tiff/i.test(String(mime||'')) || /\.tiff?$/i.test(String(filename||''))) return await extractLargeTiffV8133(bytes,mime,filename,caption);
+  if(isTiffSourceV8135(bytes,mime,filename)){
+    console.log('[TIFF_ROUTE]',filename,mime,'magic-or-metadata');
+    return await extractLargeTiffV8133(bytes,mime,filename,caption);
+  }
   if(/image/i.test(String(mime||''))) return await extractPlainTechnicalV891(bytes,mime,filename,caption);
   try{return await extractMaintenanceCoreV887(bytes,mime,filename,caption,false);}
   catch(e){console.error('[EXTRACT_PRIMARY]',e);return await extractMaintenanceCoreV887(bytes,mime,filename,caption,true);}
@@ -1789,6 +1797,15 @@ async function extractQueuedIngestV895(from,row){
     if(!bytes.length) throw new Error('Queued source bytes unavailable');
     const pack=await extractMaintenanceV874(bytes,row.source_mime_type||'application/octet-stream',row.source_filename||'upload',row.source_caption||'');
     const strongRefV8125=strongTechnicalReferenceEvidenceV8125(JSON.stringify(pack||{}),row.source_filename||'');
+    const sourceIsTiffV8135=isTiffSourceV8135(bytes,row.source_mime_type||'',row.source_filename||'');
+    const hasTechnicalPayloadV8135=Array.isArray(pack?.extracted_items)&&pack.extracted_items.length>0;
+    if(String(pack.document_type||'').toUpperCase()==='UNRELATED' && (strongRefV8125 || sourceIsTiffV8135 || hasTechnicalPayloadV8135)){
+      console.log('[RELEVANCE_GUARD_V8135] AI UNRELATED blocked; source requires technical review',row.source_filename,'tiff=',sourceIsTiffV8135,'rows=',pack?.extracted_items?.length||0);
+      pack.document_type=strongRefV8125?'REFERENCE':'TECHNICAL_REFERENCE';
+      pack.relevance='UNCERTAIN';
+      pack.needs_review=true;
+      pack.document_summary=pack.document_summary&& !/unrelated/i.test(pack.document_summary)?pack.document_summary:'Technical source extracted; relevance requires review. No automatic rejection.';
+    }
     if(String(pack.document_type||'').toUpperCase()==='UNRELATED' && strongRefV8125){
       console.log('[RELEVANCE_OVERRIDE] Strong drawing/manual/parts technical-reference evidence; AI UNRELATED overridden',row.source_filename);
       pack.document_type='REFERENCE';
@@ -1799,7 +1816,7 @@ async function extractQueuedIngestV895(from,row){
       await sendText(from,'This upload is not relevant to LMMM plant / maintenance knowledge. Nothing was stored.');
       return true;
     }
-    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.13.4',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack))]);
+    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.13.5',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack))]);
     await armTemporarySourceExpiryV8120(row.id);
     await reliabilityEventV8100(row,'AI_EXTRACTION','SUCCEEDED',pack?._provider||null);
     await pool.query(`UPDATE pending_file_ingests SET workflow_state='SOURCE_SECURED',updated_at=now() WHERE id=$1`,[row.id]).catch(()=>{});
@@ -2271,4 +2288,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.13.4 FREE-AI MULTI-PROVIDER FAILOVER listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.13.5 TIFF RELEVANCE GUARD listening on ${PORT}`));
