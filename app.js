@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.12.7 PAGE COMPLETE EXTRACTION
+// LMMM AI Maintenance V8.12.8 FAST PROVIDER FAILOVER
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -1024,48 +1024,88 @@ async function groqGenerateV8110(body,timeoutMs=60000){
   if(!text) throw new Error('Groq empty response');
   return {model:j.model||process.env.GROQ_MODEL||'qwen/qwen3.8-27b',response:openAITextAsGeminiResponseV8110(text),provider:'GROQ'};
 }
+let geminiCooldownUntilV8128=0;
 async function geminiOnlyGenerateWithFallbackV8110(body,timeoutMs=45000){
+  if(Date.now()<geminiCooldownUntilV8128){
+    const e=new Error('Gemini temporary cooldown active'); e.code='GEMINI_COOLDOWN'; throw e;
+  }
+  const models=geminiModelCandidatesV892();
   let lastErr=null;
-  for(const model of geminiModelCandidatesV892()){
+  // V8.12.8: Gemini remains first priority, but do NOT burn time cycling all Gemini
+  // models during quota/high-demand incidents. Try preferred model first.
+  for(let i=0;i<models.length;i++){
+    const model=models[i];
     const url=`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`;
-    for(let attempt=1;attempt<=1;attempt++){
-      try{
-        const r=await geminiFetchV890(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)},timeoutMs);
-        if(r.status===429){ const qe=new Error('Gemini quota/rate limit 429'); qe.code='GEMINI_QUOTA'; qe.status=429; throw qe; }
-if(r.ok) return {response:r,model};
-        const raw=await r.text();
-        const retryable=[429,500,502,503,504].includes(r.status);
-        lastErr=new Error(`Gemini ${model} failed ${r.status}: ${raw.slice(0,500)}`);
-        console.error('[GEMINI_MODEL_FAIL]',JSON.stringify({model,attempt,status:r.status,error:raw.slice(0,500)}));
-        if(!retryable) break;
-      }catch(e){
-      if(e?.code==='GEMINI_QUOTA' || e?.status===429){ throw e; }
-
-        lastErr=e; console.error('[GEMINI_MODEL_ERROR]',model,attempt,String(e));
+    try{
+      const r=await geminiFetchV890(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)},Math.min(timeoutMs,18000));
+      if(r.ok) return {response:r,model};
+      const raw=await r.text();
+      console.error('[GEMINI_MODEL_FAIL]',JSON.stringify({model,attempt:1,status:r.status,error:raw.slice(0,500)}));
+      lastErr=new Error(`Gemini ${model} failed ${r.status}: ${raw.slice(0,300)}`);
+      lastErr.status=r.status;
+      // 429/5xx = provider temporarily unavailable. Fail over NOW instead of trying
+      // every Gemini model. Cooldown prevents every PDF page hammering Gemini again.
+      if([429,500,502,503,504].includes(r.status)){
+        geminiCooldownUntilV8128=Date.now()+120000;
+        lastErr.code=r.status===429?'GEMINI_QUOTA':'GEMINI_TEMP_UNAVAILABLE';
+        throw lastErr;
       }
-      
+      // 404/400 can be model-specific/config-specific: allow only one alternate model.
+      if(i>=1) throw lastErr;
+    }catch(e){
+      if(e?.name==='AbortError'){
+        geminiCooldownUntilV8128=Date.now()+120000;
+        const te=new Error('Gemini timeout; immediate provider failover'); te.code='GEMINI_TIMEOUT'; throw te;
+      }
+      if(e?.code||[429,500,502,503,504].includes(e?.status)) throw e;
+      lastErr=e;
+      console.error('[GEMINI_MODEL_ERROR]',model,1,String(e));
+      if(i>=1) throw e;
     }
   }
-  throw lastErr||new Error('All Gemini model attempts failed');
+  throw lastErr||new Error('Gemini unavailable');
 }
 async function geminiGenerateWithFallbackV892(body,timeoutMs=45000){
   const failures=[];
+  const content=geminiBodyToOpenAIContentV8110(body);
+  const hasFile=content.some(x=>x.type==='file');
+  const hasAudio=content.some(x=>x.type==='input_audio');
+
   try{
     console.log('[AI_PROVIDER_TRY] GEMINI');
     const x=await geminiOnlyGenerateWithFallbackV8110(body,timeoutMs);
     console.log('[AI_PROVIDER_OK] GEMINI',x.model); return {...x,provider:'GEMINI'};
-  }catch(e){failures.push(`GEMINI:${e.message}`);console.error('[AI_PROVIDER_FAIL] GEMINI',e.code||'',e.status||'',e.message);}
-  try{
-    console.log('[AI_PROVIDER_TRY] GROQ');
-    const x=await groqGenerateV8110(body,timeoutMs);
-    console.log('[AI_PROVIDER_OK] GROQ',x.model); return x;
-  }catch(e){failures.push(`GROQ:${e.message}`);console.error('[AI_PROVIDER_FAIL] GROQ',e.message);}
+  }catch(e){
+    failures.push(`GEMINI:${e.message}`);
+    console.error('[AI_PROVIDER_FAIL] GEMINI',e.code||'',e.status||'',e.message);
+  }
+
+  // Capability-aware failover:
+  // PDF/file -> OpenRouter directly (Groq path does not support PDF/file here).
+  // Text/image -> Groq first, then OpenRouter.
+  if(!hasFile && !hasAudio){
+    try{
+      console.log('[AI_PROVIDER_TRY] GROQ');
+      const x=await groqGenerateV8110(body,Math.min(timeoutMs,30000));
+      console.log('[AI_PROVIDER_OK] GROQ',x.model); return x;
+    }catch(e){
+      failures.push(`GROQ:${e.message}`);
+      console.error('[AI_PROVIDER_FAIL] GROQ',e.message);
+    }
+  }else{
+    console.log('[AI_PROVIDER_SKIP] GROQ unsupported modality');
+  }
+
   try{
     console.log('[AI_PROVIDER_TRY] OPENROUTER');
-    const x=await openRouterGenerateV8110(body,timeoutMs);
+    const x=await openRouterGenerateV8110(body,Math.min(Math.max(timeoutMs,45000),60000));
     console.log('[AI_PROVIDER_OK] OPENROUTER',x.model); return x;
-  }catch(e){failures.push(`OPENROUTER:${e.message}`);console.error('[AI_PROVIDER_FAIL] OPENROUTER',e.message);}
-  throw new Error(`All AI providers failed | ${failures.join(' | ')}`);
+  }catch(e){
+    failures.push(`OPENROUTER:${e.message}`);
+    console.error('[AI_PROVIDER_FAIL] OPENROUTER',e.message);
+  }
+
+  throw new Error(`All capable AI providers failed | ${failures.join(' | ')}`);
 }
 
 async function geminiFetchV890(url,options,timeoutMs=45000){
@@ -1597,7 +1637,7 @@ async function extractQueuedIngestV895(from,row){
       await sendText(from,'This upload is not relevant to LMMM plant / maintenance knowledge. Nothing was stored.');
       return true;
     }
-    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.12.7',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack))]);
+    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.12.8',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack))]);
     await armTemporarySourceExpiryV8120(row.id);
     await reliabilityEventV8100(row,'AI_EXTRACTION','SUCCEEDED',pack?._provider||null);
     await pool.query(`UPDATE pending_file_ingests SET workflow_state='SOURCE_SECURED',updated_at=now() WHERE id=$1`,[row.id]).catch(()=>{});
@@ -2069,4 +2109,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.12.7 PAGE COMPLETE EXTRACTION listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.12.8 FAST PROVIDER FAILOVER listening on ${PORT}`));
