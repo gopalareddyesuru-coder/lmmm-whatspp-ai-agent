@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.2 ACCESS PURE-JS READER
+// LMMM AI Maintenance V8.15.3 ACCESS PURE-JS READER NATIVE NODE DEPLOY
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -2541,4 +2541,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.14.5 TIFF FFMPEG LOW-MEM FALLBACK listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.3 ACCESS PURE-JS READER NATIVE NODE DEPLOY listening on ${PORT}`));
