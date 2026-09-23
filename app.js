@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.13.7 TIFF DISK-CACHE MEMORY GUARD + WEBHOOK IDEMPOTENCY
+// LMMM AI Maintenance V8.13.8 TIFF ADAPTIVE DISK-CACHE + WEBHOOK IDEMPOTENCY
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -1385,8 +1385,8 @@ async function withTiffTempV8136(bytes,fn){
 }
 async function runImageMagickV8137(cmd,args,timeout=60000,maxOut=8*1024*1024){
   const {spawn}=await import('node:child_process');
-  const guarded=['-limit','thread','1','-limit','memory','64MiB','-limit','map','96MiB','-limit','disk','768MiB',...args];
-  const env={...process.env,MAGICK_MEMORY_LIMIT:'64MiB',MAGICK_MAP_LIMIT:'96MiB',MAGICK_DISK_LIMIT:'768MiB',MAGICK_THREAD_LIMIT:'1',MAGICK_TEMPORARY_PATH:process.env.MAGICK_TEMPORARY_PATH||'/tmp'};
+  const guarded=['-limit','thread','1','-limit','memory','80MiB','-limit','map','128MiB','-limit','area','32MP','-limit','disk','2GiB',...args];
+  const env={...process.env,MAGICK_MEMORY_LIMIT:'80MiB',MAGICK_MAP_LIMIT:'128MiB',MAGICK_AREA_LIMIT:'32MP',MAGICK_DISK_LIMIT:'2GiB',MAGICK_THREAD_LIMIT:'1',MAGICK_TEMPORARY_PATH:process.env.MAGICK_TEMPORARY_PATH||'/tmp'};
   return await new Promise((resolve,reject)=>{const cp=spawn(cmd,guarded,{stdio:['ignore','pipe','pipe'],env});const out=[],err=[];let size=0,errSize=0,done=false;
     const finish=(e,v)=>{if(done)return;done=true;clearTimeout(timer);e?reject(e):resolve(v)};
     const timer=setTimeout(()=>{cp.kill('SIGKILL');finish(new Error(`${cmd} timeout`));},timeout);
@@ -1408,7 +1408,16 @@ async function tiffPageCountV8137(file,maxPages=250){
   }finally{await fh.close();}
 }
 async function tiffOnePageJpegV8137(file,page){
-  return await runImageMagickV8137('convert',[`${file}[${page-1}]`,'-background','white','-alpha','remove','-resize','1200x1200>','-strip','-quality','72','jpeg:-'],90000,6*1024*1024);
+  // Keep decoded pixels out of Node heap. ImageMagick may spill its pixel cache to /tmp.
+  // 2 GiB disk cache is intentional: scanned engineering TIFF pages can require far more cache
+  // than their compressed file size while RAM remains capped well below Render's 512 MiB limit.
+  try{
+    return await runImageMagickV8137('convert',[`${file}[${page-1}]`,'-background','white','-alpha','remove','-colorspace','sRGB','-resize','1100x1100>','-strip','-quality','68','jpeg:-'],120000,5*1024*1024);
+  }catch(e){
+    if(!/cache resources exhausted|OpenPixelCache/i.test(String(e?.message||e))) throw e;
+    console.warn('[TIFF_CACHE_RETRY]',page,'retrying with smaller output and disk-backed cache');
+    return await runImageMagickV8137('convert',[`${file}[${page-1}]`,'-background','white','-alpha','remove','-colorspace','Gray','-resize','850x850>','-strip','-quality','60','jpeg:-'],120000,4*1024*1024);
+  }
 }
 function parseDelimitedRowsV8133(txt,forcedPage=null){
   const rows=[]; let docType='TECHNICAL_REFERENCE',title='Technical reference document';
@@ -1469,7 +1478,7 @@ async function extractLargeTiffV8133(bytes,mime,filename,caption){
     const clean=all.filter((x,i,a)=>{const k=[x.page,x.item_no,x.identifier,x.description,x.quantity,x.unit].join('|').toLowerCase();return a.findIndex(y=>[y.page,y.item_no,y.identifier,y.description,y.quantity,y.unit].join('|').toLowerCase()===k)===i;});
     const review=stats.filter(x=>x.status==='NEEDS_REVIEW').map(x=>x.page); if(!clean.length)throw new Error(`TIFF extraction returned zero rows; pages retained for retry (${review.join(',')||'all'})`);
     const preview=clean.map(x=>[x.page&&`P${x.page}`,x.item_no,x.identifier,x.description,x.quantity,x.unit,x.remarks].filter(Boolean).join(' | ')).join('\n');
-    return {document_type:docType,detected_languages:['English'],document_summary:`${title}. ${total}-page TIFF; ${clean.length} extracted items${review.length?`; pages needing review: ${review.join(', ')}`:''}.`,full_text:preview,review_text_english:preview,extracted_items:clean,records:[],expected_pages:total,page_extraction_status:stats,needs_review_pages:review,needs_review:review.length>0,_provider:'FREE_MULTI_PROVIDER',_extraction_mode:'TIFF_DISK_CACHE_ONE_PAGE_V8137'};
+    return {document_type:docType,detected_languages:['English'],document_summary:`${title}. ${total}-page TIFF; ${clean.length} extracted items${review.length?`; pages needing review: ${review.join(', ')}`:''}.`,full_text:preview,review_text_english:preview,extracted_items:clean,records:[],expected_pages:total,page_extraction_status:stats,needs_review_pages:review,needs_review:review.length>0,_provider:'FREE_MULTI_PROVIDER',_extraction_mode:'TIFF_ADAPTIVE_DISK_CACHE_V8138'};
   });
 }
 
@@ -1841,7 +1850,7 @@ async function extractQueuedIngestV895(from,row){
       await sendText(from,'This upload is not relevant to LMMM plant / maintenance knowledge. Nothing was stored.');
       return true;
     }
-    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.13.7',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack))]);
+    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.13.8',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack))]);
     await armTemporarySourceExpiryV8120(row.id);
     await reliabilityEventV8100(row,'AI_EXTRACTION','SUCCEEDED',pack?._provider||null);
     await pool.query(`UPDATE pending_file_ingests SET workflow_state='SOURCE_SECURED',updated_at=now() WHERE id=$1`,[row.id]).catch(()=>{});
@@ -2319,4 +2328,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.13.7 TIFF DISK-CACHE MEMORY GUARD + WEBHOOK IDEMPOTENCY listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.13.8 TIFF ADAPTIVE DISK-CACHE + WEBHOOK IDEMPOTENCY listening on ${PORT}`));
