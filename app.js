@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.13.3 OPENAI PRIMARY + GEMINI BACKUP + LARGE TIFF ADAPTER
+// LMMM AI Maintenance V8.13.4 FREE-AI MULTI-PROVIDER FAILOVER
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -19,6 +19,8 @@ const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-5.6';
+const FREE_AI_ONLY = String(process.env.FREE_AI_ONLY ?? 'true').toLowerCase() !== 'false';
+const OPENAI_ENABLED = !FREE_AI_ONLY && !!OPENAI_API_KEY;
 
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 const SUPER_ADMINS = new Set(
@@ -949,8 +951,15 @@ function strongTechnicalReferenceEvidenceV8125(text='',filename=''){
   if(examSignals && !strongTitle && !drawingColumns) return false;
   return strongTitle || (drawingColumns && repeatedDrawingIds);
 }
+async function geminiFetchV890(url,options={},timeoutMs=45000){
+  const ctrl=new AbortController();
+  const timer=setTimeout(()=>ctrl.abort(),Math.max(1000,Number(timeoutMs)||45000));
+  try{return await fetch(url,{...options,signal:ctrl.signal});}
+  catch(e){if(e?.name==='AbortError'){const x=new Error(`AI request timeout after ${timeoutMs}ms`);x.code='AI_TIMEOUT';throw x;}throw e;}
+  finally{clearTimeout(timer);}
+}
 async function classifyTechnicalRelevanceV886(bytes,mime,filename,caption){
-  if(!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY missing');
+  if(!GEMINI_API_KEY && !GROQ_API_KEY && !OPENROUTER_API_KEY) throw new Error('No free AI provider configured');
   const prompt=`You are the intake gate for the RINL/VSP LMMM maintenance knowledge system.
 Decide PROJECT RELEVANCE, not whether the page merely contains technical words.
 
@@ -965,9 +974,8 @@ Return ONLY JSON:
 Filename: ${filename||'(unknown)'}
 Caption: ${caption||'(none)'}`;
   const body={contents:[{parts:[{text:prompt},{inline_data:{mime_type:mime,data:bytes.toString('base64')}}]}],generationConfig:{responseMimeType:'application/json',maxOutputTokens:512}};
-  const r=await geminiFetchV890(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)},45000);
-  if(!r.ok) throw new Error(`Relevance check failed ${r.status}: ${(await r.text()).slice(0,300)}`);
-  const j=await r.json(),txt=(j.candidates?.[0]?.content?.parts||[]).map(x=>x.text||'').join('');
+  const gx=await geminiGenerateWithFallbackV892(body,60000);
+  const j=await gx.response.json(),txt=(j.candidates?.[0]?.content?.parts||[]).map(x=>x.text||'').join('');
   return safeJsonV874(txt)||{relevance:'UNCERTAIN',reason:'Could not confidently classify',document_type:'OTHER'};
 }
 
@@ -1118,13 +1126,13 @@ async function geminiGenerateWithFallbackV892(body,timeoutMs=45000){
   // V8.13.3: OpenAI is primary wherever the modality is supported because the
   // current LMMM technical-document tests are more accurate with it. Gemini is
   // the immediate quality backup. Tertiary providers are text/image-only.
-  if(OPENAI_API_KEY){
+  if(OPENAI_ENABLED){
     try{
       console.log('[AI_PROVIDER_TRY] OPENAI');
       const x=await openAIUniversalGenerateV8132(body,Math.max(timeoutMs,90000));
       console.log('[AI_PROVIDER_OK] OPENAI',x.model); return x;
     }catch(e){failures.push(`OPENAI:${e.message}`);console.error('[AI_PROVIDER_FAIL] OPENAI',e.code||'',e.message);}
-  }else failures.push('OPENAI:key missing');
+  }else if(!FREE_AI_ONLY) failures.push('OPENAI:key missing');
 
   try{
     console.log('[AI_PROVIDER_TRY] GEMINI');
@@ -1144,7 +1152,7 @@ async function geminiGenerateWithFallbackV892(body,timeoutMs=45000){
 }
 
 async function extractMaintenanceCoreV887(bytes,mime,filename,caption,compact=false){
-  if(!GEMINI_API_KEY && !OPENAI_API_KEY && !GROQ_API_KEY && !OPENROUTER_API_KEY) throw new Error('No AI provider key configured');
+  if(!GEMINI_API_KEY && !GROQ_API_KEY && !OPENROUTER_API_KEY && !OPENAI_ENABLED) throw new Error('No enabled AI provider key configured');
   const ext=String(filename||'').toLowerCase().match(/\.([a-z0-9]+)$/)?.[1]||'';
   const mime0=String(mime||'application/octet-stream').toLowerCase();
   const extMime={pdf:'application/pdf',jpg:'image/jpeg',jpeg:'image/jpeg',png:'image/png',webp:'image/webp',tif:'image/tiff',tiff:'image/tiff',txt:'text/plain',csv:'text/csv',doc:'application/msword',docx:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',xls:'application/vnd.ms-excel',xlsx:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',xlsm:'application/vnd.ms-excel.sheet.macroenabled.12',mdb:'application/vnd.ms-access',accdb:'application/vnd.ms-access',ogg:'audio/ogg',opus:'audio/ogg',mp3:'audio/mpeg',m4a:'audio/mp4',aac:'audio/aac',wav:'audio/wav'};
@@ -1299,8 +1307,8 @@ Preserve drawing/part identifiers character-for-character. Leave absent fields e
 Use the actual PDF page number (1,2,3...). Continue through the final page.${expected?` Expected PDF pages: ${expected}.`:''}`;
   const body={contents:[{parts:[{text:prompt},{inline_data:{mime_type:mime,data:bytes.toString('base64')}}]}],generationConfig:{maxOutputTokens:32768}};
   let gx=null;
-  // OpenAI primary for PDF accuracy; Gemini is immediate quality backup.
-  if(OPENAI_API_KEY){
+  // FREE_AI_ONLY default: paid OpenAI is hard-disabled. Gemini is the primary PDF extractor; free fallbacks are validation-gated.
+  if(OPENAI_ENABLED){
     try{
       console.log('[PDF_OPENAI_PRIMARY_TRY]',filename,OPENAI_MODEL);
       const ox=await openAIPdfExtractV8131(bytes,mime,prompt,150000);
@@ -1316,7 +1324,7 @@ Use the actual PDF page number (1,2,3...). Continue through the final page.${exp
       all.push(...parseRows(txt));
     }catch(e){
       console.error('[PDF_GEMINI_BACKUP_FAIL]',filename,e?.code||'',e?.message||e);
-      const q=new Error(`OpenAI and Gemini PDF extraction temporarily unavailable; source retained for retry. ${e?.message||''}`);
+      const q=new Error(`Free PDF extraction providers temporarily unavailable; source retained for retry. ${e?.message||''}`);
       q.code=e?.code||'PDF_AI_RETRY'; throw q;
     }
   }
@@ -1340,7 +1348,7 @@ Use the actual PDF page number (1,2,3...). Continue through the final page.${exp
         lastErr=new Error('No structured rows/status');
       }catch(e){
         lastErr=e;console.error('[PDF_MISSING_PAGE_FAIL]',filename,'page',page,'attempt',attempt,e?.message||e);
-        if(OPENAI_API_KEY){
+        if(OPENAI_ENABLED){
           try{
             const opp=`Read ONLY PDF page ${page}. Ignore all other pages. Return EVERY legible printed data row from page ${page} only. Return ONLY lines: ROW|${page}|item number|exact identifier|exact designation/description|quantity|unit|remarks. Preserve identifiers exactly. Leave absent fields empty. Never invent. If truly no rows output NO_ROWS.`;
             const ox=await openAIPdfExtractV8131(bytes,mime,opp,90000);
@@ -1408,6 +1416,15 @@ Preserve exact IDs, drawing/part numbers, dates and quantities. Do not guess. Do
     if(!r.ok)throw new Error(`OpenAI TIFF ${r.status}: ${(await r.text()).slice(0,700)}`);const j=await r.json();const text=String(j.output_text||'')||(j.output||[]).flatMap(o=>o.content||[]).map(c=>c.text||'').join('\n');if(!text.trim())throw new Error('OpenAI TIFF empty response');return {text,provider:'OPENAI',model:j.model||OPENAI_MODEL};
   }catch(e){if(e?.name==='AbortError'){const x=new Error('OpenAI TIFF timeout');x.code='OPENAI_TIMEOUT';throw x;}throw e;}finally{clearTimeout(timer);}
 }
+async function openRouterImageBatchV8134(batch,filename,caption,timeoutMs=90000){
+  if(!OPENROUTER_API_KEY) throw new Error('OPENROUTER_API_KEY missing');
+  const prompt=`Classify and extract these consecutive pages from one LMMM industrial source. Filename: ${filename}. Caption: ${caption||'(none)'}. First line DOC|<MANUAL|PARTS_LIST|DRAWING_LIST|EQUIPMENT_DATA|JOB|HISTORY|DEFECT|FORMAT|PERMIT|BOQ|LOGBOOK|INSPECTION|TECHNICAL_REFERENCE|OTHER>|<short factual title>. Then EVERY legible row as ROW|page|item no|exact identifier|exact description/designation|quantity|unit|remarks. Preserve exact values; never guess.`;
+  const content=[{type:'text',text:prompt}];
+  for(const p of batch){content.push({type:'text',text:`SOURCE PAGE ${p.page}`});content.push({type:'image_url',image_url:{url:`data:image/jpeg;base64,${p.bytes.toString('base64')}`}});}
+  const r=await geminiFetchV890('https://openrouter.ai/api/v1/chat/completions',{method:'POST',headers:{Authorization:`Bearer ${OPENROUTER_API_KEY}`,'Content-Type':'application/json','X-Title':'LMMM AI Maintenance'},body:JSON.stringify({model:process.env.OPENROUTER_FREE_VISION_MODEL||'openrouter/free',messages:[{role:'user',content}],max_tokens:16384})},timeoutMs);
+  if(!r.ok) throw new Error(`OpenRouter TIFF ${r.status}: ${(await r.text()).slice(0,600)}`);
+  const j=await r.json(),text=j?.choices?.[0]?.message?.content;if(!text)throw new Error('OpenRouter TIFF empty response');return {text,provider:'OPENROUTER',model:j.model||'openrouter/free'};
+}
 async function geminiImageBatchV8133(batch,filename,caption){
   const prompt=`Classify and extract these consecutive pages from one LMMM industrial source. Filename: ${filename}. Caption: ${caption||'(none)'}.
 First line DOC|<MANUAL|PARTS_LIST|DRAWING_LIST|EQUIPMENT_DATA|JOB|HISTORY|DEFECT|FORMAT|PERMIT|BOQ|LOGBOOK|INSPECTION|TECHNICAL_REFERENCE|OTHER>|<short factual title based on heading/content>.
@@ -1419,19 +1436,20 @@ async function extractLargeTiffV8133(bytes,mime,filename,caption){
   const {total,pages}=await tiffPageJpegsV8133(bytes,250); console.log('[TIFF_PAGES]',filename,total);
   const all=[],stats=[]; let docType='TECHNICAL_REFERENCE',title='Technical reference document'; const batchSize=Math.max(1,Math.min(4,Number(process.env.TIFF_AI_BATCH_PAGES||4)));
   for(let i=0;i<pages.length;i+=batchSize){const batch=pages.slice(i,i+batchSize);let out=null,last=null;
-    if(OPENAI_API_KEY){try{out=await openAIImageBatchV8133(batch,filename,caption);console.log('[TIFF_BATCH_OK] OPENAI',batch[0].page,'-',batch.at(-1).page);}catch(e){last=e;console.error('[TIFF_BATCH_FAIL] OPENAI',batch[0].page,'-',batch.at(-1).page,e.message);}}
+    if(OPENAI_ENABLED){try{out=await openAIImageBatchV8133(batch,filename,caption);console.log('[TIFF_BATCH_OK] OPENAI',batch[0].page,'-',batch.at(-1).page);}catch(e){last=e;console.error('[TIFF_BATCH_FAIL] OPENAI',batch[0].page,'-',batch.at(-1).page,e.message);}}
     if(!out&&GEMINI_API_KEY){try{out=await geminiImageBatchV8133(batch,filename,caption);console.log('[TIFF_BATCH_OK] GEMINI',batch[0].page,'-',batch.at(-1).page);}catch(e){last=e;console.error('[TIFF_BATCH_FAIL] GEMINI',batch[0].page,'-',batch.at(-1).page,e.message);}}
+    if(!out&&OPENROUTER_API_KEY){try{out=await openRouterImageBatchV8134(batch,filename,caption);console.log('[TIFF_BATCH_OK] OPENROUTER_FREE',batch[0].page,'-',batch.at(-1).page);}catch(e){last=e;console.error('[TIFF_BATCH_FAIL] OPENROUTER_FREE',batch[0].page,'-',batch.at(-1).page,e.message);}}
     if(!out){for(const p of batch)stats.push({page:p.page,status:'NEEDS_REVIEW',rows:0,error:String(last?.message||'AI unavailable')});continue;}
     const parsed=parseDelimitedRowsV8133(out.text); if(i===0){docType=parsed.docType||docType;title=parsed.title||title;} all.push(...parsed.rows); const represented=new Set(parsed.rows.map(x=>Number(x.page)).filter(Boolean)); for(const p of batch)stats.push({page:p.page,status:represented.has(p.page)?'OK':'NEEDS_REVIEW',rows:parsed.rows.filter(x=>Number(x.page)===p.page).length,provider:out.provider,model:out.model});
   }
   const clean=all.filter((x,i,a)=>{const k=[x.page,x.item_no,x.identifier,x.description,x.quantity,x.unit].join('|').toLowerCase();return a.findIndex(y=>[y.page,y.item_no,y.identifier,y.description,y.quantity,y.unit].join('|').toLowerCase()===k)===i;});
   const review=stats.filter(x=>x.status==='NEEDS_REVIEW').map(x=>x.page); if(!clean.length)throw new Error(`TIFF extraction returned zero rows; pages retained for retry (${review.join(',')||'all'})`);
   const preview=clean.map(x=>[x.page&&`P${x.page}`,x.item_no,x.identifier,x.description,x.quantity,x.unit,x.remarks].filter(Boolean).join(' | ')).join('\n');
-  return {document_type:docType,detected_languages:['English'],document_summary:`${title}. ${total}-page TIFF; ${clean.length} extracted items${review.length?`; pages needing review: ${review.join(', ')}`:''}.`,full_text:preview,review_text_english:preview,extracted_items:clean,records:[],expected_pages:total,page_extraction_status:stats,needs_review_pages:review,needs_review:review.length>0,_provider:'OPENAI_GEMINI',_extraction_mode:'MULTIPAGE_TIFF_IMAGE_BATCHES'};
+  return {document_type:docType,detected_languages:['English'],document_summary:`${title}. ${total}-page TIFF; ${clean.length} extracted items${review.length?`; pages needing review: ${review.join(', ')}`:''}.`,full_text:preview,review_text_english:preview,extracted_items:clean,records:[],expected_pages:total,page_extraction_status:stats,needs_review_pages:review,needs_review:review.length>0,_provider:'FREE_MULTI_PROVIDER',_extraction_mode:'MULTIPAGE_TIFF_IMAGE_BATCHES'};
 }
 
 async function extractPlainTechnicalV891(bytes,mime,filename,caption){
-  if(!GEMINI_API_KEY && !OPENAI_API_KEY && !GROQ_API_KEY && !OPENROUTER_API_KEY) throw new Error('No AI provider key configured');
+  if(!GEMINI_API_KEY && !GROQ_API_KEY && !OPENROUTER_API_KEY && !OPENAI_ENABLED) throw new Error('No enabled AI provider key configured');
   const prompt=`You are a document transcription engine, not a conversational assistant.
 Read the ENTIRE uploaded industrial document, including every available PDF page.
 Return ONLY data lines. Never explain your work, never repeat these instructions, never say "and so on", "wait", or "let's".
@@ -1781,7 +1799,7 @@ async function extractQueuedIngestV895(from,row){
       await sendText(from,'This upload is not relevant to LMMM plant / maintenance knowledge. Nothing was stored.');
       return true;
     }
-    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.13.3',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack))]);
+    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.13.4',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack))]);
     await armTemporarySourceExpiryV8120(row.id);
     await reliabilityEventV8100(row,'AI_EXTRACTION','SUCCEEDED',pack?._provider||null);
     await pool.query(`UPDATE pending_file_ingests SET workflow_state='SOURCE_SECURED',updated_at=now() WHERE id=$1`,[row.id]).catch(()=>{});
@@ -2253,4 +2271,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.13.2 GEMINI PRIMARY + OPENAI UNIVERSAL BACKUP listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.13.4 FREE-AI MULTI-PROVIDER FAILOVER listening on ${PORT}`));
