@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.14.7 COMPLETE XLSX ROW EXTRACTION
+// LMMM AI Maintenance V8.14.8 ACCESS DATABASE EXTRACTION
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -1651,7 +1651,45 @@ function extractXlsxCompleteV8147(bytes,filename){
   return {document_type:'SPREADSHEET',detected_languages:['English'],document_summary:`Complete spreadsheet extraction: ${sheets.length} sheet(s), ${items.length} data row(s).`,full_text:preview.slice(0,120000),review_text_english:preview.slice(0,120000),extracted_items:items,records:[{module:'NEEDS_REVIEW',area:null,equipment:null,sub_equipment:null,event_date:null,event_time:null,shift:null,description:`Spreadsheet ${filename||''}: ${items.length} source rows extracted completely. Review before storage.`,action_taken:null,status:null,remarks:null,confidence:'NEEDS_REVIEW'}],_extraction_mode:'NATIVE_XLSX_ALL_ROWS'};
 }
 
+async function extractAccessDatabaseV8148(bytes,filename){
+  const {mkdtemp,writeFile,rm}=await import('node:fs/promises');
+  const {tmpdir}=await import('node:os');
+  const {join}=await import('node:path');
+  const {spawn}=await import('node:child_process');
+  const dir=await mkdtemp(join(tmpdir(),'lmmm-access-'));
+  const src=join(dir,/\.mdb$/i.test(String(filename||''))?'source.mdb':'source.accdb');
+  const run=(cmd,args,timeout=30000)=>new Promise((resolve,reject)=>{
+    const cp=spawn(cmd,args,{stdio:['ignore','pipe','pipe']}); let out='',err='',done=false;
+    const timer=setTimeout(()=>{if(!done){done=true;cp.kill('SIGKILL');reject(new Error(`${cmd} timeout`));}},timeout);
+    cp.stdout.on('data',d=>out+=d.toString('utf8')); cp.stderr.on('data',d=>err+=d.toString('utf8'));
+    cp.on('error',e=>{if(!done){done=true;clearTimeout(timer);reject(e);}});
+    cp.on('close',code=>{if(!done){done=true;clearTimeout(timer);code===0?resolve(out):reject(new Error(`${cmd} failed ${code}: ${err.slice(0,500)}`));}});
+  });
+  try{
+    await writeFile(src,bytes);
+    let tablesText;
+    try{tablesText=await run('mdb-tables',['-1',src],20000);}catch(e){const x=new Error('Access database reader is not available on this server.');x.code='ACCESS_READER_UNAVAILABLE';throw x;}
+    const tables=tablesText.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
+    if(!tables.length){const x=new Error('Access database contains no readable tables.');x.code='ACCESS_NO_TABLES';throw x;}
+    const items=[]; let rowNo=0; const summaries=[];
+    for(const table of tables){
+      let csv=''; try{csv=await run('mdb-export',[src,table],45000);}catch(e){console.error('[ACCESS_TABLE_FAIL]',table,e.message);continue;}
+      const lines=csv.split(/\r?\n/).filter(x=>x.length); if(!lines.length)continue;
+      const header=lines[0]; let count=0;
+      for(let i=1;i<lines.length;i++){if(!lines[i].trim())continue; rowNo++;count++;items.push({page:`Table: ${table}`,item_no:rowNo,identifier:'',description:`${header}\n${lines[i]}`,quantity:null,unit:null,remarks:'Source row from Microsoft Access database',source_table:table,source_row:i});}
+      summaries.push(`${table}: ${count} row(s)`);
+    }
+    if(!items.length){const x=new Error('Access tables were found but no readable rows could be extracted.');x.code='ACCESS_NO_ROWS';throw x;}
+    const preview=items.map(x=>`${x.page} | Row ${x.source_row} | ${x.description}`).join('\n');
+    return {document_type:'SPREADSHEET',detected_languages:['English'],document_summary:`Microsoft Access database extraction: ${tables.length} table(s), ${items.length} data row(s). ${summaries.join('; ')}`.slice(0,2000),full_text:preview.slice(0,120000),review_text_english:preview.slice(0,120000),extracted_items:items,records:[{module:'NEEDS_REVIEW',area:null,equipment:null,sub_equipment:null,event_date:null,event_time:null,shift:null,description:`Access database ${filename||''}: ${items.length} source rows extracted from ${tables.length} table(s). Review before storage.`,action_taken:null,status:null,remarks:null,confidence:'NEEDS_REVIEW'}],_extraction_mode:'NATIVE_ACCESS_ALL_ROWS'};
+  }finally{await rm(dir,{recursive:true,force:true}).catch(()=>{});}
+}
+
 async function extractMaintenanceV874(bytes,mime,filename,caption){
+  if(/\.(mdb|accdb)$/i.test(String(filename||'')) || /ms-access/i.test(String(mime||''))){
+    console.log('[ACCESS_NATIVE_COMPLETE]',filename);
+    return await extractAccessDatabaseV8148(bytes,filename);
+  }
   if(/\.xlsx$/i.test(String(filename||'')) || /spreadsheetml/i.test(String(mime||''))){
     console.log('[XLSX_NATIVE_COMPLETE]',filename);
     return extractXlsxCompleteV8147(bytes,filename);
@@ -2122,7 +2160,7 @@ async function processMediaMessageV874(from,m){
     // Store metadata/hash only. Never persist the user's original upload bytes.
     const q=await pool.query(`INSERT INTO pending_file_ingests
       (submitted_by_whatsapp,submitted_by_employee_number,source_media_id,source_filename,source_mime_type,source_caption,source_sha256,source_bytes,extracted_rows,status,workflow_state,extraction_engine_version)
-      VALUES($1,$2,$3,$4,$5,$6,$7,NULL,$8::jsonb,'RECEIVED','RECEIVED','V8.14.0') RETURNING *`,
+      VALUES($1,$2,$3,$4,$5,$6,$7,NULL,$8::jsonb,'RECEIVED','RECEIVED','V8.14.8') RETURNING *`,
       [normWA(from),u.employee_number,mediaId,filename,mime,caption,sha,JSON.stringify({})]);
     const row=q.rows[0]; await setPendingIngestSessionV877(from,row.id);
     await extractQueuedIngestV895(from,row,d.bytes);
