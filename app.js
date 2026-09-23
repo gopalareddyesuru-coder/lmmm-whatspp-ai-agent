@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.14.5 TIFF NATIVE PAGE READER
+// LMMM AI Maintenance V8.14.6 TIFF FAST-FAIL GATE
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -1489,6 +1489,14 @@ async function extractLargeTiffV8133(bytes,mime,filename,caption){
     tiffRendererV8145='imagemagick';
     const {total,capped}=await tiffPageCountV8137(file,250);
     console.log('[TIFF_PAGES]',filename,total,'mode=NATIVE_IFD_LOW_MEM_ONE_PAGE','capped=',capped);
+    // V8.14.6: On the 512 MiB service, large/multi-page TIFF rendering repeatedly
+    // exhausts ImageMagick/ffmpeg resources. Fail immediately after the cheap page
+    // count instead of spending minutes in a known conversion loop. Single-page TIFF
+    // remains supported. The original upload is never retained.
+    if(total>1){
+      const x=new Error(`MULTIPAGE_TIFF_UNSUPPORTED:${total}`);
+      x.code='MULTIPAGE_TIFF_UNSUPPORTED'; x.pageCount=total; throw x;
+    }
     const all=[],stats=[]; let docType='TECHNICAL_REFERENCE',title='Technical reference document';
     for(let page=1;page<=total;page++){
       let jpg=null,out=null,last=null;
@@ -1899,14 +1907,18 @@ async function extractQueuedIngestV895(from,row,bytesOverride=null){
       await pool.query(`UPDATE pending_file_ingests SET status='UNRELATED',workflow_state='COMPLETED',source_bytes=NULL,source_purged_at=now(),extracted_rows=$2::jsonb,locked_at=NULL,updated_at=now() WHERE id=$1`,[row.id,JSON.stringify(packForDBV878(pack))]);
       await sendText(from,'This upload is not relevant to LMMM plant / maintenance knowledge. Nothing was stored.'); return true;
     }
-    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',source_bytes=NULL,source_purged_at=now(),extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.14.3',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack))]);
+    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',source_bytes=NULL,source_purged_at=now(),extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.14.6',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack))]);
     await reliabilityEventV8100(row,'AI_EXTRACTION','SUCCEEDED',pack?._provider||null);
     await setPendingIngestSessionV877(from,row.id); await setIngestModeV874(from,false); await showIngestOptionsV877(from,q.rows[0]); return true;
   }catch(e){
     const msg=String(e?.message||e).slice(0,1500); console.error('[EXTRACT_FAILED_NO_RETENTION]',row.id,e);
-    await pool.query(`UPDATE pending_file_ingests SET status='FAILED',workflow_state='FAILED',source_bytes=NULL,source_purged_at=now(),last_error=$2,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.14.3',updated_at=now() WHERE id=$1`,[row.id,msg]).catch(()=>{});
+    await pool.query(`UPDATE pending_file_ingests SET status='FAILED',workflow_state='FAILED',source_bytes=NULL,source_purged_at=now(),last_error=$2,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.14.6',updated_at=now() WHERE id=$1`,[row.id,msg]).catch(()=>{});
     await reliabilityEventV8100(row,'AI_EXTRACTION','FAILED',null,e).catch(()=>{});
-    await sendText(from,'Extraction failed. Original file was not stored. Please upload it again only if you want to retry.');
+    if(e?.code==='MULTIPAGE_TIFF_UNSUPPORTED'){
+      await sendText(from,`This ${e.pageCount||'multi'}-page TIFF is too large for the current server. Original file was not stored. Please convert it to PDF and upload again.`);
+    }else{
+      await sendText(from,'Extraction failed. Original file was not stored. Please upload it again only if you want to retry.');
+    }
     return false;
   }
 }
