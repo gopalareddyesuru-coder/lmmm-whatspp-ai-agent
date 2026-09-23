@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.13.0 GEMINI ACCURATE FAST PDF
+// LMMM AI Maintenance V8.13.1 GEMINI 90S + OPENAI PDF FALLBACK
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -17,6 +17,8 @@ const DATABASE_URL = process.env.DATABASE_URL || '';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '';
 const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
+const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-5.6';
 
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 const SUPER_ADMINS = new Set(
@@ -1038,7 +1040,7 @@ async function geminiOnlyGenerateWithFallbackV8110(body,timeoutMs=45000){
     const model=models[i];
     const url=`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`;
     try{
-      const r=await geminiFetchV890(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)},Math.min(timeoutMs,8000));
+      const r=await geminiFetchV890(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)},Math.min(timeoutMs,90000));
       if(r.ok) return {response:r,model};
       const raw=await r.text();
       console.error('[GEMINI_MODEL_FAIL]',JSON.stringify({model,attempt:1,status:r.status,error:raw.slice(0,500)}));
@@ -1215,6 +1217,33 @@ Caption: ${caption||'(none)'}`;
 }
 
 
+async function openAIPdfExtractV8131(bytes,mime,prompt,timeoutMs=120000){
+  if(!OPENAI_API_KEY) throw new Error('OPENAI_API_KEY missing');
+  const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),timeoutMs);
+  try{
+    const r=await fetch('https://api.openai.com/v1/responses',{
+      method:'POST',signal:ctrl.signal,
+      headers:{Authorization:`Bearer ${OPENAI_API_KEY}`,'Content-Type':'application/json'},
+      body:JSON.stringify({
+        model:OPENAI_MODEL,
+        input:[{role:'user',content:[
+          {type:'input_text',text:prompt},
+          {type:'input_file',filename:'lmmm-source.pdf',file_data:`data:${mime||'application/pdf'};base64,${bytes.toString('base64')}`,detail:'high'}
+        ]}],
+        max_output_tokens:32768
+      })
+    });
+    if(!r.ok) throw new Error(`OpenAI ${r.status}: ${(await r.text()).slice(0,700)}`);
+    const j=await r.json();
+    const txt=String(j.output_text||'') || (j.output||[]).flatMap(o=>o.content||[]).map(c=>c.text||'').join('\n');
+    if(!txt.trim()) throw new Error('OpenAI empty PDF extraction response');
+    return {text:txt.trim(),model:j.model||OPENAI_MODEL,provider:'OPENAI'};
+  }catch(e){
+    if(e?.name==='AbortError'){const x=new Error('OpenAI PDF extraction timeout');x.code='OPENAI_TIMEOUT';throw x;}
+    throw e;
+  }finally{clearTimeout(timer);}
+}
+
 async function extractPdfBatchesV897(bytes,mime,filename,caption){
   const m=String(filename).match(/(\d+)\s*-\s*(\d+)/), totalHint=Number((m||[])[2]||0);
   const expected=totalHint>0&&totalHint<=200?totalHint:null;
@@ -1231,6 +1260,7 @@ async function extractPdfBatchesV897(bytes,mime,filename,caption){
     return rows;
   };
 
+  // V8.13.1: ACCURATE PDF path: Gemini gets up to 90s; OpenAI is quality fallback.
   // V8.13.0: FAST + ACCURATE PDF path. Gemini gets the whole PDF once first.
   // OpenRouter/Groq are intentionally NOT used for raw PDF extraction because a
   // fallback model can flatten page boundaries and silently create incomplete data.
@@ -1243,34 +1273,61 @@ Use the actual PDF page number (1,2,3...). Continue through the final page.${exp
   const body={contents:[{parts:[{text:prompt},{inline_data:{mime_type:mime,data:bytes.toString('base64')}}]}],generationConfig:{maxOutputTokens:32768}};
   let gx;
   try{
-    gx=await geminiOnlyGenerateWithFallbackV8110(body,60000);
+    gx=await geminiOnlyGenerateWithFallbackV8110(body,90000);
     console.log('[PDF_FAST_GEMINI_OK]',filename,gx.model);
   }catch(e){
     console.error('[PDF_FAST_GEMINI_FAIL]',filename,e?.code||'',e?.message||e);
-    const q=new Error(`Gemini PDF extraction temporarily unavailable; source retained for retry. ${e?.message||''}`);
-    q.code=e?.code||'GEMINI_PDF_RETRY'; throw q;
+    if(OPENAI_API_KEY){
+      try{
+        console.log('[PDF_OPENAI_FALLBACK_TRY]',filename,OPENAI_MODEL);
+        const ox=await openAIPdfExtractV8131(bytes,mime,prompt,120000);
+        console.log('[PDF_OPENAI_FALLBACK_OK]',filename,ox.model);
+        all.push(...parseRows(ox.text));
+        gx=null;
+      }catch(oe){
+        console.error('[PDF_OPENAI_FALLBACK_FAIL]',filename,oe?.code||'',oe?.message||oe);
+        const q=new Error(`Gemini and OpenAI PDF extraction temporarily unavailable; source retained for retry. ${oe?.message||e?.message||''}`);
+        q.code=oe?.code||e?.code||'PDF_AI_RETRY'; throw q;
+      }
+    }else{
+      const q=new Error(`Gemini PDF extraction temporarily unavailable; OPENAI_API_KEY not configured; source retained for retry. ${e?.message||''}`);
+      q.code=e?.code||'GEMINI_PDF_RETRY'; throw q;
+    }
   }
-  const j=await gx.response.json(), txt=(j.candidates?.[0]?.content?.parts||[]).map(x=>x.text||'').join('').trim();
-  all.push(...parseRows(txt));
+  if(gx){
+    const j=await gx.response.json(), txt=(j.candidates?.[0]?.content?.parts||[]).map(x=>x.text||'').join('').trim();
+    all.push(...parseRows(txt));
+  }
 
   let represented=[...new Set(all.map(x=>Number(x.page)).filter(Boolean))].sort((a,b)=>a-b);
   let missing=expected?Array.from({length:expected},(_,i)=>i+1).filter(x=>!represented.includes(x)):[];
   console.log('[PDF_FAST_FIRST_PASS]',filename,'rows',all.length,'represented',represented.join(','),'missing',missing.join(','));
 
-  // Retry ONLY missing pages with Gemini. Successful pages are never repeated.
+  // Retry ONLY missing pages. Gemini remains primary; OpenAI can recover a missing page when Gemini is unavailable.
   for(const page of missing){
     let rows=[], lastErr=null;
     for(let attempt=1;attempt<=2;attempt++){
       try{
         const pp=`Read ONLY PDF page ${page}. Ignore all other pages. Return EVERY legible printed data row from page ${page} only.\nReturn ONLY:\nROW|${page}|item number|exact identifier|exact designation/description|quantity|unit|remarks\nPreserve identifiers exactly. Leave absent fields empty. Never invent. If there are truly no data rows output NO_ROWS.`;
         const pb={contents:[{parts:[{text:pp},{inline_data:{mime_type:mime,data:bytes.toString('base64')}}]}],generationConfig:{maxOutputTokens:16384}};
-        const pgx=await geminiOnlyGenerateWithFallbackV8110(pb,45000);
+        const pgx=await geminiOnlyGenerateWithFallbackV8110(pb,90000);
         const pj=await pgx.response.json(), ptxt=(pj.candidates?.[0]?.content?.parts||[]).map(x=>x.text||'').join('').trim();
         rows=parseRows(ptxt,page);
         console.log('[PDF_MISSING_PAGE_RETRY]',filename,'page',page,'attempt',attempt,'rows',rows.length,pgx.model);
         if(rows.length||/\bNO_ROWS\b/i.test(ptxt)){pageStats.push({page,status:rows.length?'OK':'NO_ROWS',rows:rows.length,provider:'GEMINI',model:pgx.model});break;}
         lastErr=new Error('No structured rows/status');
-      }catch(e){lastErr=e;console.error('[PDF_MISSING_PAGE_FAIL]',filename,'page',page,'attempt',attempt,e?.message||e);}
+      }catch(e){
+        lastErr=e;console.error('[PDF_MISSING_PAGE_FAIL]',filename,'page',page,'attempt',attempt,e?.message||e);
+        if(OPENAI_API_KEY){
+          try{
+            const opp=`Read ONLY PDF page ${page}. Ignore all other pages. Return EVERY legible printed data row from page ${page} only. Return ONLY lines: ROW|${page}|item number|exact identifier|exact designation/description|quantity|unit|remarks. Preserve identifiers exactly. Leave absent fields empty. Never invent. If truly no rows output NO_ROWS.`;
+            const ox=await openAIPdfExtractV8131(bytes,mime,opp,90000);
+            rows=parseRows(ox.text,page);
+            console.log('[PDF_MISSING_PAGE_OPENAI_OK]',filename,'page',page,'rows',rows.length,ox.model);
+            if(rows.length||/\bNO_ROWS\b/i.test(ox.text)){pageStats.push({page,status:rows.length?'OK':'NO_ROWS',rows:rows.length,provider:'OPENAI',model:ox.model});break;}
+          }catch(oe){lastErr=oe;console.error('[PDF_MISSING_PAGE_OPENAI_FAIL]',filename,'page',page,oe?.message||oe);}
+        }
+      }
     }
     if(rows.length) all.push(...rows);
     else if(!pageStats.some(x=>x.page===page)) pageStats.push({page,status:'NEEDS_REVIEW',rows:0,error:String(lastErr?.message||'No rows')});
@@ -1282,7 +1339,7 @@ Use the actual PDF page number (1,2,3...). Continue through the final page.${exp
   const reviewed=expected?Array.from({length:expected},(_,i)=>i+1).filter(x=>!represented.includes(x) && !pageStats.some(y=>y.page===x&&y.status==='NO_ROWS')):[];
   console.log('[PDF_COMPLETENESS]',filename,'expected',expected||'unknown','represented',represented.join(','),'needsReview',reviewed.join(','));
   const preview=clean.map(x=>[x.page&&`P${x.page}`,x.item_no,x.identifier,x.description,x.quantity,x.unit,x.remarks].filter(Boolean).join(' | ')).join('\n');
-  return {document_type:'DRAWING_LIST',detected_languages:['English'],document_summary:reviewed.length?`Partial drawing/reference extraction (${clean.length} rows). Pages needing review: ${reviewed.join(', ')}.`:`Drawing/reference list extracted with Gemini (${clean.length} rows).`,full_text:preview,review_text_english:preview,extracted_items:clean,records:[],page_extraction_status:pageStats,expected_pages:expected,pages_with_rows:represented,needs_review_pages:reviewed,completeness_warning:reviewed.length?`Pages needing review: ${reviewed.join(', ')}`:null,needs_review:reviewed.length>0,_extraction_mode:'GEMINI_FAST_FULL_DOCUMENT_PLUS_MISSING_PAGE_RETRY'};
+  return {document_type:'DRAWING_LIST',detected_languages:['English'],document_summary:reviewed.length?`Partial drawing/reference extraction (${clean.length} rows). Pages needing review: ${reviewed.join(', ')}.`:`Drawing/reference list extracted with Gemini (${clean.length} rows).`,full_text:preview,review_text_english:preview,extracted_items:clean,records:[],page_extraction_status:pageStats,expected_pages:expected,pages_with_rows:represented,needs_review_pages:reviewed,completeness_warning:reviewed.length?`Pages needing review: ${reviewed.join(', ')}`:null,needs_review:reviewed.length>0,_extraction_mode:'GEMINI_90S_PRIMARY_OPENAI_QUALITY_FALLBACK'};
 }
 
 async function extractPlainTechnicalV891(bytes,mime,filename,caption){
@@ -1635,7 +1692,7 @@ async function extractQueuedIngestV895(from,row){
       await sendText(from,'This upload is not relevant to LMMM plant / maintenance knowledge. Nothing was stored.');
       return true;
     }
-    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.13.0',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack))]);
+    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.13.1',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack))]);
     await armTemporarySourceExpiryV8120(row.id);
     await reliabilityEventV8100(row,'AI_EXTRACTION','SUCCEEDED',pack?._provider||null);
     await pool.query(`UPDATE pending_file_ingests SET workflow_state='SOURCE_SECURED',updated_at=now() WHERE id=$1`,[row.id]).catch(()=>{});
@@ -2107,4 +2164,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.13.0 GEMINI ACCURATE FAST PDF listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.13.1 GEMINI 90S + OPENAI PDF FALLBACK listening on ${PORT}`));
