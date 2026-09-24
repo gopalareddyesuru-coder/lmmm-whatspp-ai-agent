@@ -1,8 +1,11 @@
 {
   "name": "lmmm-ai-maintenance",
-  "version": "8.15.3",
+  "version": "8.15.4",
   "type": "module",
-  "scripts": {"start": "node app.js"},
+  "scripts": {
+    "start": "node app.js",
+    "verify:runtime": "node --check app.js && node -e \"import('mdb-reader').then(()=>console.log('mdb-reader runtime OK')).catch(e=>{console.error(e);process.exit(1)})\""
+  },
   "engines": {"node": ">=20"},
   "dependencies": {
     "dotenv": "^16.4.7",
