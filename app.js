@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.6 MULTI-USER DURABLE QUEUE
+// LMMM AI Maintenance V8.15.7 DURABLE SOURCE + DRAWING EXTRACTION FIX
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -1296,7 +1296,7 @@ async function extractPdfBatchesV897(bytes,mime,filename,caption){
   const parseRows=(txt,forcedPage=null)=>{
     const rows=[];
     for(const raw of String(txt||'').split(/\r?\n/)){
-      const line=raw.trim(); if(!/^ROW\|/i.test(line)) continue;
+      const line=normalizePipeLineV8157(raw); if(!/^ROW\|/i.test(line)) continue;
       const p=line.split('|');
       const pg=forcedPage||Number(String(p[1]||'').replace(/\D/g,''))||null;
       const row={page:pg?String(pg):null,item_no:(p[2]||'').trim()||null,identifier:(p[3]||'').trim()||null,description:(p[4]||'').trim()||null,quantity:(p[5]||'').trim()||null,unit:(p[6]||'').trim()||null,remarks:(p.slice(7).join('|')||'').trim()||null};
@@ -1409,13 +1409,13 @@ async function tiffPageCountV8137(file,maxPages=250){
     if(magic===42){off=u32(h,4);while(off&&count<maxPages){const b=Buffer.alloc(2);if((await fh.read(b,0,2,off)).bytesRead<2)break;const n=u16(b,0),next=off+2+n*12,nx=Buffer.alloc(4);if((await fh.read(nx,0,4,next)).bytesRead<4)break;off=u32(nx,0);count++;}}
     else if(magic===43){if(u16(h,4)!==8)throw new Error('Unsupported BigTIFF offset size');const u64=(b,o)=>Number(le?b.readBigUInt64LE(o):b.readBigUInt64BE(o));off=u64(h,8);while(off&&count<maxPages){const b=Buffer.alloc(8);if((await fh.read(b,0,8,off)).bytesRead<8)break;const n=u64(b,0),next=off+8+n*20,nx=Buffer.alloc(8);if((await fh.read(nx,0,8,next)).bytesRead<8)break;off=u64(nx,0);count++;}}
     else throw new Error(`Unsupported TIFF magic ${magic}`);
-    return {total:Math.max(1,count),capped:count>=maxPages};
+    return {total:Math.max(1,count),capped:!!off};
   }finally{await fh.close();}
 }
 async function runPythonTiffPageV8145(file,page,timeout=45000,maxOut=4*1024*1024){
   // Pillow seeks directly to one TIFF IFD/frame and avoids ImageMagick's global pixel cache.
   const {spawn}=await import('node:child_process');
-  const py=`import sys,io\nfrom PIL import Image,ImageOps\np=sys.argv[1]; n=int(sys.argv[2])\nim=Image.open(p); im.seek(n)\nim=ImageOps.exif_transpose(im)\nif im.mode not in ('L','RGB'): im=im.convert('L')\nim.thumbnail((1100,1100))\nb=io.BytesIO(); im.save(b,format='JPEG',quality=68,optimize=False); sys.stdout.buffer.write(b.getvalue())\n`;
+  const py=`import sys,io\nfrom PIL import Image,ImageOps\np=sys.argv[1]; n=int(sys.argv[2])\nim=Image.open(p); im.seek(n)\nim=ImageOps.exif_transpose(im)\nif im.mode not in ('L','RGB'): im=im.convert('L')\nim.thumbnail((1800,1800))\nb=io.BytesIO(); im.save(b,format='JPEG',quality=68,optimize=False); sys.stdout.buffer.write(b.getvalue())\n`;
   return await new Promise((resolve,reject)=>{const cp=spawn('python3',['-c',py,file,String(Math.max(0,page-1))],{stdio:['ignore','pipe','pipe']});const out=[],err=[];let size=0,es=0,done=false;
     const finish=(e,v)=>{if(done)return;done=true;clearTimeout(timer);e?reject(e):resolve(v)};
     const timer=setTimeout(()=>{cp.kill('SIGKILL');finish(new Error('python TIFF page timeout'));},timeout);
@@ -1426,7 +1426,7 @@ async function runPythonTiffPageV8145(file,page,timeout=45000,maxOut=4*1024*1024
 }
 async function runFfmpegTiffPageV8142(file,page,timeout=45000,maxOut=4*1024*1024){
   const {spawn}=await import('node:child_process');
-  const filter=`select=eq(n\\,${Math.max(0,page-1)}),scale='min(1000,iw)':-2`;
+  const filter=`select=eq(n\\,${Math.max(0,page-1)}),scale='min(1800,iw)':-2`;
   const args=['-v','error','-threads','1','-i',file,'-vf',filter,'-frames:v','1','-f','image2pipe','-vcodec','mjpeg','-q:v','7','pipe:1'];
   return await new Promise((resolve,reject)=>{const cp=spawn('ffmpeg',args,{stdio:['ignore','pipe','pipe']});const out=[],err=[];let size=0,errSize=0,done=false;
     const finish=(e,v)=>{if(done)return;done=true;clearTimeout(timer);e?reject(e):resolve(v)}; const timer=setTimeout(()=>{cp.kill('SIGKILL');finish(new Error('ffmpeg TIFF page timeout'));},timeout);
@@ -1441,7 +1441,7 @@ async function tiffOnePageJpegV8137(file,page){
   if(tiffRendererV8145==='ffmpeg') return await runFfmpegTiffPageV8142(file,page);
   const frame=`${file}[${page-1}]`;
   try{
-    return await runImageMagickV8137('convert',[frame,'-alpha','off','-colorspace','Gray','-depth','8','-thumbnail','1050x1050>','-strip','-quality','66','jpeg:-'],45000,4*1024*1024);
+    return await runImageMagickV8137('convert',[frame,'-alpha','off','-colorspace','Gray','-depth','8','-thumbnail','1800x1800>','-strip','-quality','66','jpeg:-'],45000,4*1024*1024);
   }catch(e){
     const msg=String(e?.message||e); if(!/cache resources exhausted|OpenPixelCache|memory allocation|no images defined|convert timeout|timeout/i.test(msg)) throw e;
     console.warn('[TIFF_NATIVE_FALLBACK]',page,'ImageMagick unavailable; trying direct TIFF frame reader');
@@ -1450,10 +1450,35 @@ async function tiffOnePageJpegV8137(file,page){
     const b=await runFfmpegTiffPageV8142(file,page);tiffRendererV8145='ffmpeg';console.log('[TIFF_RENDERER_OK] FFMPEG',page);return b;
   }
 }
+function normalizePipeLineV8157(raw){
+  return String(raw||'').trim().replace(/^```[a-z]*\s*/i,'').replace(/```\s*$/,'')
+    .replace(/^(?:[-*+•]\s+|\d+[.)]\s+)/,'').replace(/^\|\s*(?=(?:DOC|ROW|DRAWING|DIM|NOTE|MATERIAL|FUNCTION)\s*\|)/i,'')
+    .replace(/[ \t]*\|[ \t]*/g,'|').trim();
+}
+function sourceValueV8157(v){
+  const t=String(v??'').trim();
+  return !t || /^(?:\[?UNREADABLE\]?|UNKNOWN|N\/A|NULL|NONE|NOT (?:VISIBLE|AVAILABLE|SPECIFIED)|-)$/i.test(t)?null:t;
+}
+function drawingRowsV8157(details={}){
+  const rows=[];
+  const add=(x,identifier,description,remarks=null,item=null,unit=null)=>{
+    identifier=sourceValueV8157(identifier); description=sourceValueV8157(description);
+    if(!identifier&&!description)return;
+    rows.push({page:x.page||null,item_no:sourceValueV8157(item),identifier,description,
+      quantity:null,unit:sourceValueV8157(unit),remarks:sourceValueV8157(remarks)});
+  };
+  const join=v=>v.map(sourceValueV8157).filter(Boolean).join(' | ')||null;
+  for(const x of details.title_block||[])add(x,x.drawing_no,join([x.title,x.equipment_assembly]),join([x.revision&&`Revision: ${x.revision}`,x.scale&&`Scale: ${x.scale}`]));
+  for(const x of details.dimensions||[])if(sourceValueV8157(x.value))add(x,null,join([x.reference,x.value,x.unit,x.context]),null,null,x.unit);
+  for(const x of details.notes||[])add(x,null,x.text,null,x.note_no);
+  for(const x of details.materials||[])add(x,null,x.material_spec,null,x.item_no);
+  for(const x of details.functions||[])add(x,null,x.text);
+  return rows;
+}
 function parseDelimitedRowsV8133(txt,forcedPage=null){
   const rows=[],drawing_details={title_block:[],dimensions:[],notes:[],materials:[],functions:[]}; let docType='TECHNICAL_REFERENCE',title='Technical reference document';
   for(const raw of String(txt||'').split(/\r?\n/)){
-    const line=raw.trim(); if(!line)continue;
+    const line=normalizePipeLineV8157(raw); if(!line)continue;
     if(/^DOC\|/i.test(line)){const p=line.split('|');docType=(p[1]||docType).trim().toUpperCase().replace(/\s+/g,'_');title=(p.slice(2).join('|')||title).trim();continue;}
     if(/^DRAWING\|/i.test(line)){const p=line.split('|');drawing_details.title_block.push({page:String(forcedPage||p[1]||'')||null,drawing_no:(p[2]||'').trim()||null,title:(p[3]||'').trim()||null,revision:(p[4]||'').trim()||null,scale:(p[5]||'').trim()||null,equipment_assembly:(p.slice(6).join('|')||'').trim()||null});continue;}
     if(/^DIM\|/i.test(line)){const p=line.split('|');drawing_details.dimensions.push({page:String(forcedPage||p[1]||'')||null,reference:(p[2]||'').trim()||null,value:(p[3]||'').trim()||null,unit:(p[4]||'').trim()||null,context:(p.slice(5).join('|')||'').trim()||null});continue;}
@@ -1463,7 +1488,7 @@ function parseDelimitedRowsV8133(txt,forcedPage=null){
     if(!/^ROW\|/i.test(line))continue; const p=line.split('|');
     rows.push({page:String(forcedPage||Number(String(p[1]||'').replace(/\D/g,''))||'')||null,item_no:(p[2]||'').trim()||null,identifier:(p[3]||'').trim()||null,description:(p[4]||'').trim()||null,quantity:(p[5]||'').trim()||null,unit:(p[6]||'').trim()||null,remarks:(p.slice(7).join('|')||'').trim()||null});
   }
-  return {rows,docType,title,drawing_details};
+  return {rows:rows.filter(x=>sourceValueV8157(x.identifier)||sourceValueV8157(x.description)),docType,title,drawing_details};
 }
 async function openAIImageBatchV8133(batch,filename,caption,timeoutMs=150000){
   if(!OPENAI_API_KEY) throw new Error('OPENAI_API_KEY missing');
@@ -1523,14 +1548,7 @@ async function extractLargeTiffV8133(bytes,mime,filename,caption){
     tiffRendererV8145='imagemagick';
     const {total,capped}=await tiffPageCountV8137(file,250);
     console.log('[TIFF_PAGES]',filename,total,'mode=NATIVE_IFD_LOW_MEM_ONE_PAGE','capped=',capped);
-    // V8.14.6: On the 512 MiB service, large/multi-page TIFF rendering repeatedly
-    // exhausts ImageMagick/ffmpeg resources. Fail immediately after the cheap page
-    // count instead of spending minutes in a known conversion loop. Single-page TIFF
-    // remains supported. The original upload is never retained.
-    if(total>1){
-      const x=new Error(`MULTIPAGE_TIFF_UNSUPPORTED:${total}`);
-      x.code='MULTIPAGE_TIFF_UNSUPPORTED'; x.pageCount=total; throw x;
-    }
+    if(capped) throw Object.assign(new Error('TIFF page limit reached; complete coverage cannot be confirmed'),{code:'TIFF_PAGE_LIMIT'});
     const all=[],stats=[],drawingDetails={title_block:[],dimensions:[],notes:[],materials:[],functions:[]}; let docType='TECHNICAL_REFERENCE',title='Technical reference document';
     for(let page=1;page<=total;page++){
       let jpg=null,out=null,last=null;
@@ -1562,18 +1580,19 @@ async function extractLargeTiffV8133(bytes,mime,filename,caption){
         const parsed=parseDelimitedRowsV8133(out.text,page);
         if(page===1){docType=parsed.docType||docType;title=parsed.title||title;}
         for(const k of Object.keys(drawingDetails)) drawingDetails[k].push(...(parsed.drawing_details?.[k]||[]));
+        if(!parsed.rows.length)parsed.rows.push(...drawingRowsV8157(parsed.drawing_details));
         all.push(...parsed.rows);
         stats.push({page,status:parsed.rows.length?'OK':'NO_ROWS',rows:parsed.rows.length,provider:out.provider,model:out.model});
       }catch(e){
         console.error('[TIFF_HARD_FAIL]',filename,'page',page,String(e?.message||e));
-        // Important on 512 MiB hosting: do not continue through the remaining frames after
-        // ImageMagick/cache failure. The original upload is intentionally not retained.
+        // Stop on a failed frame; durable source remains available for retry.
         const x=new Error(`TIFF page ${page} could not be processed safely: ${String(e?.message||e).slice(0,300)}`);
         x.code='TIFF_PAGE_FAILED'; throw x;
       }finally{jpg=null;out=null;}
     }
     const clean=all.filter((x,i,a)=>{const k=[x.page,x.item_no,x.identifier,x.description,x.quantity,x.unit].join('|').toLowerCase();return a.findIndex(y=>[y.page,y.item_no,y.identifier,y.description,y.quantity,y.unit].join('|').toLowerCase()===k)===i;});
-    if(!clean.length) throw new Error('TIFF extraction returned zero structured rows');
+    if(!clean.length)clean.push(...drawingRowsV8157(drawingDetails));
+    if(!clean.length) throw Object.assign(new Error('TIFF_ZERO_EXTRACTION'),{code:'TIFF_ZERO_EXTRACTION'});
     const preview=clean.map(x=>[x.page&&`P${x.page}`,x.item_no,x.identifier,x.description,x.quantity,x.unit,x.remarks].filter(Boolean).join(' | ')).join('\n');
     return {document_type:docType,detected_languages:['English'],document_summary:`${title}. ${total}-page TIFF; ${clean.length} extracted items; ${drawingDetails.dimensions.length} dimensions/callouts; ${drawingDetails.notes.length} notes.`,full_text:preview,review_text_english:preview,extracted_items:clean,drawing_details:drawingDetails,records:[],expected_pages:total,page_extraction_status:stats,needs_review_pages:[],needs_review:false,_provider:'FREE_MULTI_PROVIDER',_extraction_mode:'TIFF_DRAWING_INTELLIGENCE_V8155'};
   });
@@ -1600,7 +1619,7 @@ Preserve identifiers character-for-character. Do not invent values. Continue unt
   if(/^UNRELATED\b/i.test(txt)) return {document_type:'UNRELATED',detected_languages:[],document_summary:'Unrelated to LMMM plant / maintenance knowledge.',full_text:'',review_text_english:'',extracted_items:[],records:[]};
   const rows=[]; let docType='TECHNICAL_REFERENCE',title='Technical reference document';
   for(const raw of txt.split(/\r?\n/)){
-    const line=raw.trim();
+    const line=normalizePipeLineV8157(raw);
     if(/^DOC\|/i.test(line)){const p=line.split('|');docType=(p[1]||docType).trim().toUpperCase().replace(/\s+/g,'_');title=(p.slice(2).join('|')||title).trim();continue;}
     if(!/^ROW\|/i.test(line)) continue;
     const p=line.split('|');
@@ -1841,7 +1860,7 @@ async function getPendingIngestV877(from){
   return (await pool.query(`SELECT * FROM pending_file_ingests WHERE id=$1 AND submitted_by_whatsapp=$2 AND status='PENDING_CONFIRMATION'`,[id,normWA(from)])).rows[0]||null;
 }
 async function clearPendingIngestV877(from,id,status='DISCARDED'){
-  if(id)await pool.query(`UPDATE pending_file_ingests SET status=$2,updated_at=now() WHERE id=$1`,[id,status]);
+  if(id)await pool.query(`UPDATE pending_file_ingests SET status=$2,workflow_state=CASE WHEN $2='STORED' THEN 'COMPLETED' ELSE workflow_state END,updated_at=now() WHERE id=$1`,[id,status]);
   await pool.query(`DELETE FROM ui_sessions WHERE whatsapp_number=$1 AND session_key='PENDING_FILE_INGEST'`,[normWA(from)]);
 }
 async function showIngestOptionsV877(from,p){
@@ -2045,10 +2064,19 @@ async function exportPendingV878(from,p,kind){
 async function storePendingVerifiedV877(from,p){
   const u=await byWA(from); if(!u||!(await hasAuthorityV874(u,'ENTRY'))){await sendText(from,'Permission denied. ENTRY authority is required to store data.');return;}
   const pack=ingestPackV878(p); let rows=Array.isArray(pack.records)?[...pack.records]:[];let saved=0,review=0,dupe=0;
-  const refTypes=new Set(['DRAWING_LIST','PARTS_LIST','BOQ','MANUAL','MANUAL_REFERENCE','REFERENCE','TECHNICAL_REFERENCE','EQUIPMENT_DATA']);
-  if(!rows.length && refTypes.has(String(pack.document_type||'').toUpperCase()) && ((pack.extracted_items||[]).length || pack.drawing_details)){
-    const d=pack.drawing_details||{}; const tb=(d.title_block||[])[0]||{};
-    rows=[{module:String(pack.document_type||'').toUpperCase()==='MANUAL'?'MANUAL_REFERENCE':'DRAWING_DOCS',area:null,equipment:tb.equipment_assembly||null,sub_equipment:null,event_date:null,event_time:null,shift:null,description:pack.document_summary||tb.title||'Technical reference document',action_taken:null,status:'REFERENCE',remarks:tb.drawing_no?`Drawing No: ${tb.drawing_no}`:null,confidence:'MEDIUM'}];
+  const refTypes=new Set(['DRAWING_LIST','PARTS_LIST','BOQ','MANUAL','MANUAL_REFERENCE','REFERENCE','TECHNICAL_REFERENCE','EQUIPMENT_DATA','DRAWING','DRAWING_DOCS','TECHNICAL_DRAWING','ASSEMBLY_DRAWING','EQUIPMENT_DRAWING']);
+  if(String(pack.document_type||'').toUpperCase()==='UNRELATED'||pack.relevance==='UNRELATED'||pack.relevance==='UNCERTAIN'||pack.needs_review_pages?.length){
+    await sendText(from,'The extraction needs source/relevance review before Store Data. Nothing was stored.');return;
+  }
+  if(refTypes.has(String(pack.document_type||'').toUpperCase())){
+    const verifiedRefs=rows.filter(x=>['DRAWING_DOCS','MANUAL_REFERENCE'].includes(String(x.module||'').toUpperCase())&&['HIGH','MEDIUM'].includes(String(x.confidence||'').toUpperCase()));
+    if(verifiedRefs.length)rows=verifiedRefs;
+    else if(!rows.some(x=>['HIGH','MEDIUM'].includes(String(x.confidence||'').toUpperCase()))){
+      const tb=(pack.drawing_details?.title_block||[])[0]||{};
+      const title=sourceValueV8157(tb.title),summary=sourceValueV8157(pack.document_summary);
+      const description=title||(summary&&!/^Technical reference document[.]?$/i.test(summary)?summary:null);
+      if(description)rows=[{module:/MANUAL/.test(String(pack.document_type).toUpperCase())?'MANUAL_REFERENCE':'DRAWING_DOCS',area:null,equipment:sourceValueV8157(tb.equipment_assembly),sub_equipment:null,event_date:null,event_time:null,shift:null,description,action_taken:null,status:'REFERENCE',remarks:sourceValueV8157(tb.drawing_no)?`Drawing No: ${tb.drawing_no}`:null,confidence:'MEDIUM'}];
+    }
   }
   for(const x of rows){
     const confidence=['HIGH','MEDIUM'].includes(String(x.confidence||'').toUpperCase())?String(x.confidence).toUpperCase():'NEEDS_REVIEW';
@@ -2058,7 +2086,11 @@ async function storePendingVerifiedV877(from,p){
     try{const raw={...x,document_type:pack.document_type,document_summary:pack.document_summary,extracted_items:pack.extracted_items,drawing_details:pack.drawing_details||null};
       const q=await pool.query(`INSERT INTO maintenance_ingest_records(data_class,source_type,source_media_id,source_filename,source_mime_type,source_caption,source_sha256,submitted_by_employee_number,submitted_by_whatsapp,module,area,equipment,sub_equipment,event_date,event_time,shift,description,action_taken,status,remarks,confidence,raw_extraction) VALUES('TEST','WHATSAPP_FILE',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::date,$13::time,$14,$15,$16,$17,$18,$19,$20::jsonb) ON CONFLICT DO NOTHING RETURNING id`,[p.source_media_id,p.source_filename,p.source_mime_type,p.source_caption,p.source_sha256,u.employee_number,normWA(from),module,x.area||null,x.equipment||null,x.sub_equipment||null,x.event_date||null,x.event_time||null,x.shift||null,x.description||pack.document_summary||null,x.action_taken||null,x.status||null,x.remarks||null,confidence,JSON.stringify(raw)]);if(q.rowCount)saved++;else dupe++;}catch(e){console.error('[INGEST_STORE]',e.message);review++;}
   }
+  if(saved===0 && dupe===0){
+    await sendText(from,'Nothing was stored because no verified source-backed record was available. The extraction remains pending for review.');return;
+  }
   if(review){const missing=rows.filter(x=>String(x.confidence||'').toUpperCase()==='NEEDS_REVIEW'||(!x.equipment&&!['DRAWING_DOCS','MANUAL_REFERENCE'].includes(String(x.module||'').toUpperCase()))).slice(0,8).map((x,i)=>`${i+1}. ${x.module||'NEEDS_REVIEW'} — ${!x.equipment?'Equipment missing/uncertain; ':''}${!x.event_date?'Date missing/uncertain; ':''}${x.description||''}`).join('\n');await sendText(from,`Not stored completely because ${review} record(s) need confirmation.\n\n${missing}\n\nSend the correct source-backed details in a simple message, for example:\nEDIT 1 | Equipment=WBF-2 | Date=2026-09-22 | Module=DEFECT\n\nThen choose Store Data again.`);return;}
+  await purgeConfirmedSourceBytesV8120(p.id);
   await clearPendingIngestV877(from,p.id,'STORED');
   await sendText(from,`✅ Confirmed TEST data stored\nStored: ${saved}\nDuplicates skipped: ${dupe}\nSource: ${p.source_filename}`);
 }
@@ -2110,27 +2142,24 @@ async function markRetryV8100(row,stage,error){
   await reliabilityEventV8100(row,stage,'RETRY_PENDING',null,error);
 }
 async function recoverPendingWorkV8100(){
-  // V8.15.6 no-retention queue: only metadata/media-id is persisted.
-  // Jobs interrupted by a restart are returned to the queue and the WhatsApp media is re-downloaded when possible.
+  // Recover durable in-flight work before starting the queue pump.
   await pool.query(`UPDATE pending_file_ingests
-    SET status='RECEIVED',workflow_state='RECEIVED',locked_at=NULL,next_retry_at=NULL,
-        last_error=CASE WHEN source_media_id IS NOT NULL THEN 'Recovered after process restart; queued for re-download' ELSE COALESCE(last_error,'Original source not retained; re-upload required') END,
-        updated_at=now()
+    SET status='RETRY_PENDING',workflow_state='AI_EXTRACTION_RETRY_PENDING',locked_at=NULL,next_retry_at=now(),
+        last_error='Recovered after process restart',updated_at=now()
     WHERE status IN ('PROCESSING','EXTRACTING')
-      AND source_media_id IS NOT NULL
-      AND source_bytes IS NULL`).catch(e=>console.error('[QUEUE_RECOVERY]',e));
+      AND (source_bytes IS NOT NULL OR NULLIF(source_media_id,'') IS NOT NULL)`);
   await pool.query(`UPDATE pending_file_ingests
     SET status='FAILED',workflow_state='FAILED',locked_at=NULL,next_retry_at=NULL,
-        last_error=COALESCE(last_error,'Original source not retained; re-upload required'),updated_at=now()
-    WHERE status IN ('PROCESSING','EXTRACTING','RECEIVED')
-      AND (source_media_id IS NULL OR source_media_id='')
-      AND source_bytes IS NULL`).catch(e=>console.error('[RECOVERY_NO_MEDIA_ID]',e));
+        last_error='Source unavailable; re-upload required',updated_at=now()
+    WHERE status IN ('PROCESSING','EXTRACTING','RECEIVED','RETRY_PENDING')
+      AND NULLIF(source_media_id,'') IS NULL AND source_bytes IS NULL`);
+
 }
 async function extractQueuedIngestV895(from,row,bytesOverride=null){
   try{
     await pool.query(`UPDATE pending_file_ingests SET status='EXTRACTING',workflow_state='AI_PROCESSING',locked_at=now(),retry_count=retry_count+1,last_error=NULL,updated_at=now() WHERE id=$1`,[row.id]);
     await reliabilityEventV8100(row,'AI_EXTRACTION','STARTED');
-    let bytes=bytesOverride ? Buffer.from(bytesOverride) : null;
+    let bytes=bytesOverride ? Buffer.from(bytesOverride) : row.source_bytes ? Buffer.from(row.source_bytes) : null;
     let effectiveMime=row.source_mime_type||'application/octet-stream';
     if(!bytes?.length && row.source_media_id){
       const d=await downloadWhatsAppMediaV874(row.source_media_id);
@@ -2139,10 +2168,15 @@ async function extractQueuedIngestV895(from,row,bytesOverride=null){
       console.log('[QUEUE_MEDIA_DOWNLOADED]',row.id,row.source_filename||'upload',bytes.length);
     }
     if(!bytes?.length) throw Object.assign(new Error('Original upload is not retained and media could not be re-downloaded. Please upload the file again.'),{code:'SOURCE_NOT_RETAINED'});
+    const {createHash}=await import('node:crypto');
+    const sourceHash=createHash('sha256').update(bytes).digest('hex');
+    await pool.query(`UPDATE pending_file_ingests SET source_bytes=$2,source_mime_type=$3,source_sha256=$4,
+      source_purged_at=NULL,confirmation_expires_at=NULL,workflow_state='AI_PROCESSING',extraction_engine_version='V8.15.7',updated_at=now() WHERE id=$1`,[row.id,bytes,effectiveMime,sourceHash]);
+    row.source_bytes=bytes; row.source_mime_type=effectiveMime; row.source_sha256=sourceHash;
+    const sourceIsTiffV8135=isTiffSourceV8135(bytes,effectiveMime,row.source_filename||'');
     const pack=await extractMaintenanceV874(bytes,effectiveMime,row.source_filename||'upload',row.source_caption||'');
     bytes=null;
     const strongRefV8125=strongTechnicalReferenceEvidenceV8125(JSON.stringify(pack||{}),row.source_filename||'');
-    const sourceIsTiffV8135=isTiffSourceV8135(bytes,row.source_mime_type||'',row.source_filename||'');
     const hasTechnicalPayloadV8135=Array.isArray(pack?.extracted_items)&&pack.extracted_items.length>0;
     if(String(pack.document_type||'').toUpperCase()==='UNRELATED' && (strongRefV8125 || sourceIsTiffV8135 || hasTechnicalPayloadV8135)){
       console.log('[RELEVANCE_GUARD_V8135] AI UNRELATED blocked; source requires technical review',row.source_filename,'tiff=',sourceIsTiffV8135,'rows=',pack?.extracted_items?.length||0);
@@ -2155,17 +2189,22 @@ async function extractQueuedIngestV895(from,row,bytesOverride=null){
       await pool.query(`UPDATE pending_file_ingests SET status='UNRELATED',workflow_state='COMPLETED',source_bytes=NULL,source_purged_at=now(),extracted_rows=$2::jsonb,locked_at=NULL,updated_at=now() WHERE id=$1`,[row.id,JSON.stringify(packForDBV878(pack))]);
       await sendText(from,'This upload is not relevant to LMMM plant / maintenance knowledge. Nothing was stored.'); return true;
     }
-    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',source_bytes=NULL,source_purged_at=now(),extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.15.6',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack))]);
+    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',source_purged_at=NULL,confirmation_expires_at=now()+($3::text||' minutes')::interval,extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.15.7',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack)),TEMP_CONFIRMATION_MINUTES_V8120]);
     await reliabilityEventV8100(row,'AI_EXTRACTION','SUCCEEDED',pack?._provider||null);
     await setPendingIngestSessionV877(from,row.id); await setIngestModeV874(from,false); await showIngestOptionsV877(from,q.rows[0]); return true;
   }catch(e){
-    const msg=String(e?.message||e).slice(0,1500); console.error('[EXTRACT_FAILED_NO_RETENTION]',row.id,e);
-    await pool.query(`UPDATE pending_file_ingests SET status='FAILED',workflow_state='FAILED',source_bytes=NULL,source_purged_at=now(),last_error=$2,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.15.6',updated_at=now() WHERE id=$1`,[row.id,msg]).catch(()=>{});
-    await reliabilityEventV8100(row,'AI_EXTRACTION','FAILED',null,e).catch(()=>{});
-    if(e?.code==='MULTIPAGE_TIFF_UNSUPPORTED'){
-      await sendText(from,`This ${e.pageCount||'multi'}-page TIFF is too large for the current server. Original file was not stored. Please convert it to PDF and upload again.`);
+    console.error('[EXTRACT_RETRY]',row.id,e);
+    const current=(await pool.query(`SELECT * FROM pending_file_ingests WHERE id=$1`,[row.id])).rows[0]||row;
+    if(current.status==='PENDING_CONFIRMATION'){
+      // A WhatsApp notification failure must not restart completed AI extraction.
+      console.error('[EXTRACTION_NOTIFICATION_FAILED]',row.id,e.message);return true;
+    }
+    if(current.source_bytes || current.source_media_id){
+      await markRetryV8100(current,'AI_EXTRACTION',e);
+      await sendText(from,'Extraction could not complete on this attempt. Your source is safely queued and will retry automatically; no re-upload is needed.');
     }else{
-      await sendText(from,'Extraction failed. Original file was not stored. Please upload it again only if you want to retry.');
+      await pool.query(`UPDATE pending_file_ingests SET status='FAILED',workflow_state='FAILED',last_error=$2,next_retry_at=NULL,locked_at=NULL,updated_at=now() WHERE id=$1`,[row.id,String(e?.message||e).slice(0,1500)]);
+      await sendText(from,'Extraction failed and no source is available. Please upload the file again.');
     }
     return false;
   }
@@ -2240,8 +2279,7 @@ async function oneTimeLegacySourceCleanupV8120(){
            source_purged_at=COALESCE(source_purged_at,NOW())
      WHERE source_bytes IS NOT NULL
        AND created_at < NOW() - INTERVAL '10 minutes'
-       AND workflow_state NOT IN ('AI_PROCESSING','EXTRACTING','RETRY_PENDING','SOURCE_SECURED','RECEIVED')
-       AND status NOT IN ('RETRY_PENDING','RECEIVED','PROCESSING')
+       AND status IN ('STORED','EXPIRED','REJECTED','UNRELATED','CANCELLED')
      RETURNING id
   `);
   return r.rowCount||0;
@@ -2259,23 +2297,19 @@ async function failSafeWorkerV8100(){
     await purgeRejectedTemporarySourcesV8120();
   }catch(e){ console.error('[TEMP_CLEANUP_FAIL]',e.message); }
 
-  let lock=false;
-  try{
-    const lk=await pool.query(`SELECT pg_try_advisory_lock(3518100) AS ok`); lock=!!lk.rows?.[0]?.ok;
-    if(!lock) return;
-    // V8.13.9 privacy mode: original uploads are never retained, so background source retries are disabled.
-    await pool.query(`UPDATE pending_file_ingests SET status='FAILED',workflow_state='FAILED',source_bytes=NULL,source_purged_at=COALESCE(source_purged_at,now()),next_retry_at=NULL,last_error=COALESCE(last_error,'Original source not retained; re-upload required for retry') WHERE status='RETRY_PENDING'`).catch(()=>{});
-  }catch(e){console.error('[FAILSAFE_WORKER]',e);}
-  finally{if(lock) await pool.query(`SELECT pg_advisory_unlock(3518100)`).catch(()=>{});}
+  await pool.query(`UPDATE pending_file_ingests SET status='FAILED',workflow_state='FAILED',next_retry_at=NULL,
+    locked_at=NULL,last_error='Source unavailable; re-upload required',updated_at=now()
+    WHERE status='RETRY_PENDING' AND source_bytes IS NULL AND NULLIF(source_media_id,'') IS NULL`);
+
 }
 async function claimNextIngestV8156(){
   const q=await pool.query(`
     WITH next_job AS (
       SELECT p.id
         FROM pending_file_ingests p
-       WHERE p.status='RECEIVED'
-         AND p.workflow_state='RECEIVED'
-         AND p.source_media_id IS NOT NULL
+       WHERE ((p.status='RECEIVED' AND p.workflow_state='RECEIVED')
+           OR (p.status='RETRY_PENDING' AND (p.next_retry_at IS NULL OR p.next_retry_at<=now())))
+         AND (p.source_bytes IS NOT NULL OR NULLIF(p.source_media_id,'') IS NOT NULL)
          AND NOT EXISTS (
            SELECT 1 FROM pending_file_ingests a
             WHERE a.submitted_by_whatsapp=p.submitted_by_whatsapp
@@ -2323,19 +2357,32 @@ async function pumpIngestQueueV8156(){
 }
 
 async function retryLastQueuedV895(from){
-  await sendText(from,'Original upload is not stored. Please upload the file again to retry extraction.');
+  const u=await byWA(from);
+  if(!u||u.approval_status!=='approved'||!u.is_active){await sendText(from,'Approved registration required before file processing.');return true;}
+  const row=(await pool.query(`SELECT * FROM pending_file_ingests WHERE submitted_by_whatsapp=$1
+    AND status IN ('RECEIVED','PROCESSING','EXTRACTING','RETRY_PENDING','PENDING_CONFIRMATION','FAILED')
+    ORDER BY created_at DESC,id DESC LIMIT 1`,[normWA(from)])).rows[0];
+  if(!row){await sendText(from,'No pending upload found.');return true;}
+  if(['PROCESSING','EXTRACTING'].includes(row.status)){await sendText(from,'Extraction is already processing.');return true;}
+  if(!row.source_bytes&&!row.source_media_id){await sendText(from,'Source unavailable. Please upload the file again.');return true;}
+  const q=await pool.query(`UPDATE pending_file_ingests SET status='RETRY_PENDING',workflow_state='AI_EXTRACTION_RETRY_PENDING',
+    next_retry_at=now(),locked_at=NULL,last_error=NULL,confirmation_expires_at=NULL,updated_at=now()
+    WHERE id=$1 AND status IN ('RECEIVED','RETRY_PENDING','PENDING_CONFIRMATION','FAILED')
+      AND (source_bytes IS NOT NULL OR NULLIF(source_media_id,'') IS NOT NULL) RETURNING id`,[row.id]);
+  await sendText(from,q.rowCount?'Extraction queued for retry. No re-upload needed.':'Upload status changed. Check Status for the latest state.');
+  void pumpIngestQueueV8156();
   return true;
 }
 
 async function queuedStatusV895(from){
-  const q=await pool.query(`SELECT id,source_filename,status,retry_count,last_error,extraction_engine_version,created_at,updated_at FROM pending_file_ingests WHERE submitted_by_whatsapp=$1 ORDER BY created_at DESC LIMIT 1`,[normWA(from)]);
+  const q=await pool.query(`SELECT id,source_filename,status,retry_count,last_error,extraction_engine_version,created_at,updated_at,(source_bytes IS NOT NULL) AS has_source_bytes,source_media_id FROM pending_file_ingests WHERE submitted_by_whatsapp=$1 ORDER BY created_at DESC LIMIT 1`,[normWA(from)]);
   if(!q.rows.length){await sendText(from,'No recent upload found.');return true;}
   const r=q.rows[0];
   await sendText(from,`Upload: ${r.source_filename||'source'}
 Status: ${r.status}
 Attempts: ${r.retry_count}
-Engine: ${r.extraction_engine_version||'V8.15.6'}
-Original source: not retained`);
+Engine: ${r.extraction_engine_version||'V8.15.7'}
+Source: ${r.has_source_bytes?'temporarily retained':r.source_media_id?'media reference available':'unavailable'}`);
   return true;
 }
 
@@ -2349,10 +2396,10 @@ async function processMediaMessageV874(from,m){
     const guessedExt=isAudio?(String(obj.mime_type||'').includes('mpeg')?'.mp3':String(obj.mime_type||'').includes('mp4')?'.m4a':'.ogg'):'';
     const filename=obj.filename||`${m.type}_${mediaId}${guessedExt}`;
     const mime=String(obj.mime_type||'application/octet-stream').toLowerCase();
-    // Metadata only: never persist original file bytes. Worker downloads media only when this job reaches the front of the queue.
+    // Queue metadata first; the worker durably saves downloaded bytes before AI extraction.
     const q=await pool.query(`INSERT INTO pending_file_ingests
       (submitted_by_whatsapp,submitted_by_employee_number,source_media_id,source_filename,source_mime_type,source_caption,source_sha256,source_bytes,extracted_rows,status,workflow_state,extraction_engine_version)
-      VALUES($1,$2,$3,$4,$5,$6,NULL,NULL,$7::jsonb,'RECEIVED','RECEIVED','V8.15.6') RETURNING *`,
+      VALUES($1,$2,$3,$4,$5,$6,NULL,NULL,$7::jsonb,'RECEIVED','RECEIVED','V8.15.7') RETURNING *`,
       [normWA(from),u.employee_number,mediaId,filename,mime,caption,JSON.stringify({})]);
     const row=q.rows[0]; await setPendingIngestSessionV877(from,row.id);
     await sendText(from,isAudio?'Voice received. Processing…':'Received. Processing…');
@@ -2367,7 +2414,7 @@ async function processMediaMessageV874(from,m){
 async function processMessage(from,text,payload=''){
   const cmd=String(payload||text||'').trim();
   if(cmd==='RETRY_LAST_UPLOAD' || /^retry( extraction| upload)?$/i.test(cmd)){await retryLastQueuedV895(from);return;}
-  if(cmd==='INGEST_STATUS' || /^(upload |extraction )?status$/i.test(cmd)){await queuedStatusV895(from);return;}
+  if(cmd==='INGEST_STATUS' || /^(check |upload |extraction )?status$/i.test(cmd)){await queuedStatusV895(from);return;}
   try{await pool.query(`CREATE TABLE IF NOT EXISTS ui_sessions(whatsapp_number TEXT NOT NULL,session_key TEXT NOT NULL,session_value JSONB,updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),PRIMARY KEY(whatsapp_number,session_key))`);}catch(e){console.error('[SESSION_SCHEMA]',e.message);}
   if(isOwner(from) && /^PURGE_TESTERS$/i.test(cmd)){await sendButtons(from,'Delete all TESTER registrations/profile/contact/roster data? MAIN users and Super Admin are preserved.',[{id:'PURGE_TESTERS_CONFIRM',title:'Confirm Delete'},{id:'BACK',title:'Cancel'}]);return;}
   if(isOwner(from) && cmd==='PURGE_TESTERS_CONFIRM'){const n=await purgeTesterUsersV854(normWA(from));await sendText(from,`✅ Tester cleanup completed.\nTester users removed: ${n}\nMAIN users preserved.`);return;}
@@ -2661,4 +2708,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.6 MULTI-USER DURABLE QUEUE listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.7 DURABLE SOURCE + DRAWING EXTRACTION FIX listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
