@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.4 ACCESS PURE-JS BUILD FIX
+// LMMM AI Maintenance V8.15.5 DRAWING INTELLIGENCE + REFERENCE STORE
 // CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
 import express from 'express';
 import 'dotenv/config';
@@ -1447,21 +1447,34 @@ async function tiffOnePageJpegV8137(file,page){
   }
 }
 function parseDelimitedRowsV8133(txt,forcedPage=null){
-  const rows=[]; let docType='TECHNICAL_REFERENCE',title='Technical reference document';
+  const rows=[],drawing_details={title_block:[],dimensions:[],notes:[],materials:[],functions:[]}; let docType='TECHNICAL_REFERENCE',title='Technical reference document';
   for(const raw of String(txt||'').split(/\r?\n/)){
-    const line=raw.trim();
+    const line=raw.trim(); if(!line)continue;
     if(/^DOC\|/i.test(line)){const p=line.split('|');docType=(p[1]||docType).trim().toUpperCase().replace(/\s+/g,'_');title=(p.slice(2).join('|')||title).trim();continue;}
+    if(/^DRAWING\|/i.test(line)){const p=line.split('|');drawing_details.title_block.push({page:String(forcedPage||p[1]||'')||null,drawing_no:(p[2]||'').trim()||null,title:(p[3]||'').trim()||null,revision:(p[4]||'').trim()||null,scale:(p[5]||'').trim()||null,equipment_assembly:(p.slice(6).join('|')||'').trim()||null});continue;}
+    if(/^DIM\|/i.test(line)){const p=line.split('|');drawing_details.dimensions.push({page:String(forcedPage||p[1]||'')||null,reference:(p[2]||'').trim()||null,value:(p[3]||'').trim()||null,unit:(p[4]||'').trim()||null,context:(p.slice(5).join('|')||'').trim()||null});continue;}
+    if(/^NOTE\|/i.test(line)){const p=line.split('|');drawing_details.notes.push({page:String(forcedPage||p[1]||'')||null,note_no:(p[2]||'').trim()||null,text:(p.slice(3).join('|')||'').trim()||null});continue;}
+    if(/^MATERIAL\|/i.test(line)){const p=line.split('|');drawing_details.materials.push({page:String(forcedPage||p[1]||'')||null,item_no:(p[2]||'').trim()||null,material_spec:(p.slice(3).join('|')||'').trim()||null});continue;}
+    if(/^FUNCTION\|/i.test(line)){const p=line.split('|');drawing_details.functions.push({page:String(forcedPage||p[1]||'')||null,text:(p.slice(2).join('|')||'').trim()||null});continue;}
     if(!/^ROW\|/i.test(line))continue; const p=line.split('|');
     rows.push({page:String(forcedPage||Number(String(p[1]||'').replace(/\D/g,''))||'')||null,item_no:(p[2]||'').trim()||null,identifier:(p[3]||'').trim()||null,description:(p[4]||'').trim()||null,quantity:(p[5]||'').trim()||null,unit:(p[6]||'').trim()||null,remarks:(p.slice(7).join('|')||'').trim()||null});
   }
-  return {rows,docType,title};
+  return {rows,docType,title,drawing_details};
 }
 async function openAIImageBatchV8133(batch,filename,caption,timeoutMs=150000){
   if(!OPENAI_API_KEY) throw new Error('OPENAI_API_KEY missing');
   const prompt=`Classify and extract these consecutive pages from one LMMM industrial source. Filename: ${filename}. Caption: ${caption||'(none)'}.
 First line MUST be DOC|<MANUAL|PARTS_LIST|DRAWING_LIST|EQUIPMENT_DATA|JOB|HISTORY|DEFECT|FORMAT|PERMIT|BOQ|LOGBOOK|INSPECTION|TECHNICAL_REFERENCE|OTHER>|<short factual title based on heading/content>.
 Then extract EVERY legible row/maintenance line as ROW|page|item no|exact identifier|exact description/designation|quantity|unit|remarks.
-Preserve exact IDs, drawing/part numbers, dates and quantities. Do not guess. Do not copy filename numbers into data fields. Unreadable=[UNREADABLE].`;
+Preserve exact IDs, drawing/part numbers, dates and quantities. Do not guess. Do not copy filename numbers into data fields. Unreadable=[UNREADABLE].
+If the source is an engineering drawing/assembly/parts drawing, ALSO extract source-backed drawing intelligence using these exact line formats BEFORE ROW lines:
+DRAWING|page|exact drawing number|exact title/designation|revision|scale|equipment/assembly
+DIM|page|dimension/callout reference|exact value|unit|what the dimension applies to
+NOTE|page|note number|exact technical note
+MATERIAL|page|item number|exact material/specification
+FUNCTION|page|short source-backed explanation of what the shown assembly/component does or how parts relate
+Read visible dimensions, tolerances, fits, threads, diameters, radii, angles, section/callout labels and title-block data. Never infer a missing dimension or function; use [UNREADABLE] when unclear.
+`;
   const content=[{type:'input_text',text:prompt}];
   for(const p of batch){content.push({type:'input_text',text:`SOURCE PAGE ${p.page}`});content.push({type:'input_image',image_url:`data:${p.mime||'image/jpeg'};base64,${p.bytes.toString('base64')}`,detail:'high'});}
   const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),timeoutMs);
@@ -1471,7 +1484,15 @@ Preserve exact IDs, drawing/part numbers, dates and quantities. Do not guess. Do
 }
 async function openRouterImageBatchV8134(batch,filename,caption,timeoutMs=90000){
   if(!OPENROUTER_API_KEY) throw new Error('OPENROUTER_API_KEY missing');
-  const prompt=`Classify and extract these consecutive pages from one LMMM industrial source. Filename: ${filename}. Caption: ${caption||'(none)'}. First line DOC|<MANUAL|PARTS_LIST|DRAWING_LIST|EQUIPMENT_DATA|JOB|HISTORY|DEFECT|FORMAT|PERMIT|BOQ|LOGBOOK|INSPECTION|TECHNICAL_REFERENCE|OTHER>|<short factual title>. Then EVERY legible row as ROW|page|item no|exact identifier|exact description/designation|quantity|unit|remarks. Preserve exact values; never guess.`;
+  const prompt=`Classify and extract these consecutive pages from one LMMM industrial source. Filename: ${filename}. Caption: ${caption||'(none)'}. First line DOC|<MANUAL|PARTS_LIST|DRAWING_LIST|EQUIPMENT_DATA|JOB|HISTORY|DEFECT|FORMAT|PERMIT|BOQ|LOGBOOK|INSPECTION|TECHNICAL_REFERENCE|OTHER>|<short factual title>. Then EVERY legible row as ROW|page|item no|exact identifier|exact description/designation|quantity|unit|remarks. Preserve exact values; never guess.
+If the source is an engineering drawing/assembly/parts drawing, ALSO extract source-backed drawing intelligence using these exact line formats BEFORE ROW lines:
+DRAWING|page|exact drawing number|exact title/designation|revision|scale|equipment/assembly
+DIM|page|dimension/callout reference|exact value|unit|what the dimension applies to
+NOTE|page|note number|exact technical note
+MATERIAL|page|item number|exact material/specification
+FUNCTION|page|short source-backed explanation of what the shown assembly/component does or how parts relate
+Read visible dimensions, tolerances, fits, threads, diameters, radii, angles, section/callout labels and title-block data. Never infer a missing dimension or function; use [UNREADABLE] when unclear.
+`;
   const content=[{type:'text',text:prompt}];
   for(const p of batch){content.push({type:'text',text:`SOURCE PAGE ${p.page}`});content.push({type:'image_url',image_url:{url:`data:${p.mime||'image/jpeg'};base64,${p.bytes.toString('base64')}`}});}
   const r=await geminiFetchV890('https://openrouter.ai/api/v1/chat/completions',{method:'POST',headers:{Authorization:`Bearer ${OPENROUTER_API_KEY}`,'Content-Type':'application/json','X-Title':'LMMM AI Maintenance'},body:JSON.stringify({model:process.env.OPENROUTER_FREE_VISION_MODEL||'openrouter/free',messages:[{role:'user',content}],max_tokens:16384})},timeoutMs);
@@ -1481,7 +1502,15 @@ async function openRouterImageBatchV8134(batch,filename,caption,timeoutMs=90000)
 async function geminiImageBatchV8133(batch,filename,caption){
   const prompt=`Classify and extract these consecutive pages from one LMMM industrial source. Filename: ${filename}. Caption: ${caption||'(none)'}.
 First line DOC|<MANUAL|PARTS_LIST|DRAWING_LIST|EQUIPMENT_DATA|JOB|HISTORY|DEFECT|FORMAT|PERMIT|BOQ|LOGBOOK|INSPECTION|TECHNICAL_REFERENCE|OTHER>|<short factual title based on heading/content>.
-Then EVERY legible row as ROW|page|item no|exact identifier|exact description/designation|quantity|unit|remarks. Preserve exact source values; never guess.`;
+Then EVERY legible row as ROW|page|item no|exact identifier|exact description/designation|quantity|unit|remarks. Preserve exact source values; never guess.
+If the source is an engineering drawing/assembly/parts drawing, ALSO extract source-backed drawing intelligence using these exact line formats BEFORE ROW lines:
+DRAWING|page|exact drawing number|exact title/designation|revision|scale|equipment/assembly
+DIM|page|dimension/callout reference|exact value|unit|what the dimension applies to
+NOTE|page|note number|exact technical note
+MATERIAL|page|item number|exact material/specification
+FUNCTION|page|short source-backed explanation of what the shown assembly/component does or how parts relate
+Read visible dimensions, tolerances, fits, threads, diameters, radii, angles, section/callout labels and title-block data. Never infer a missing dimension or function; use [UNREADABLE] when unclear.
+`;
   const parts=[{text:prompt}]; for(const p of batch){parts.push({text:`SOURCE PAGE ${p.page}`});parts.push({inline_data:{mime_type:p.mime||'image/jpeg',data:p.bytes.toString('base64')}});}
   const gx=await geminiOnlyGenerateWithFallbackV8110({contents:[{parts}],generationConfig:{maxOutputTokens:16384}},120000);const j=await gx.response.json();return {text:(j.candidates?.[0]?.content?.parts||[]).map(x=>x.text||'').join(''),provider:'GEMINI',model:gx.model};
 }
@@ -1498,7 +1527,7 @@ async function extractLargeTiffV8133(bytes,mime,filename,caption){
       const x=new Error(`MULTIPAGE_TIFF_UNSUPPORTED:${total}`);
       x.code='MULTIPAGE_TIFF_UNSUPPORTED'; x.pageCount=total; throw x;
     }
-    const all=[],stats=[]; let docType='TECHNICAL_REFERENCE',title='Technical reference document';
+    const all=[],stats=[],drawingDetails={title_block:[],dimensions:[],notes:[],materials:[],functions:[]}; let docType='TECHNICAL_REFERENCE',title='Technical reference document';
     for(let page=1;page<=total;page++){
       let jpg=null,out=null,last=null;
       try{
@@ -1517,7 +1546,7 @@ async function extractLargeTiffV8133(bytes,mime,filename,caption){
         }
         if(!out&&GROQ_API_KEY){
           try{
-            const parts=[{text:`Extract every legible technical row from SOURCE PAGE ${page} of ${filename}. Preserve exact identifiers, descriptions, quantities and units. Output DOC|TECHNICAL_REFERENCE|<factual title> then ROW|${page}|item no|exact identifier|exact description/designation|quantity|unit|remarks. Never guess.`},{inline_data:{mime_type:pageMime,data:jpg.toString('base64')}}];
+            const parts=[{text:`Extract every legible technical row and drawing detail from SOURCE PAGE ${page} of ${filename}. Preserve exact identifiers, descriptions, quantities, units, dimensions and notes. Output DOC|TECHNICAL_REFERENCE|<factual title>. For drawings also output DRAWING|page|drawing number|title|revision|scale|equipment/assembly, DIM|page|reference|exact value|unit|context, NOTE|page|note number|exact note, MATERIAL|page|item|material/specification, FUNCTION|page|source-backed assembly/component explanation. Then ROW|${page}|item no|exact identifier|exact description/designation|quantity|unit|remarks. Never guess; unreadable=[UNREADABLE].`},{inline_data:{mime_type:pageMime,data:jpg.toString('base64')}}];
             const gx=await groqGenerateV8110({contents:[{parts}],generationConfig:{maxOutputTokens:8192}},20000);
             const gj=await gx.response.json(); out={text:(gj.candidates?.[0]?.content?.parts||[]).map(x=>x.text||'').join(''),provider:'GROQ',model:gx.model};
             if(!out.text.trim()) throw new Error('Groq TIFF empty response');
@@ -1528,6 +1557,7 @@ async function extractLargeTiffV8133(bytes,mime,filename,caption){
         if(!out) throw last||new Error('No free AI provider available for TIFF page');
         const parsed=parseDelimitedRowsV8133(out.text,page);
         if(page===1){docType=parsed.docType||docType;title=parsed.title||title;}
+        for(const k of Object.keys(drawingDetails)) drawingDetails[k].push(...(parsed.drawing_details?.[k]||[]));
         all.push(...parsed.rows);
         stats.push({page,status:parsed.rows.length?'OK':'NO_ROWS',rows:parsed.rows.length,provider:out.provider,model:out.model});
       }catch(e){
@@ -1541,7 +1571,7 @@ async function extractLargeTiffV8133(bytes,mime,filename,caption){
     const clean=all.filter((x,i,a)=>{const k=[x.page,x.item_no,x.identifier,x.description,x.quantity,x.unit].join('|').toLowerCase();return a.findIndex(y=>[y.page,y.item_no,y.identifier,y.description,y.quantity,y.unit].join('|').toLowerCase()===k)===i;});
     if(!clean.length) throw new Error('TIFF extraction returned zero structured rows');
     const preview=clean.map(x=>[x.page&&`P${x.page}`,x.item_no,x.identifier,x.description,x.quantity,x.unit,x.remarks].filter(Boolean).join(' | ')).join('\n');
-    return {document_type:docType,detected_languages:['English'],document_summary:`${title}. ${total}-page TIFF; ${clean.length} extracted items.`,full_text:preview,review_text_english:preview,extracted_items:clean,records:[],expected_pages:total,page_extraction_status:stats,needs_review_pages:[],needs_review:false,_provider:'FREE_MULTI_PROVIDER',_extraction_mode:'TIFF_NATIVE_PAGE_READER_V8145'};
+    return {document_type:docType,detected_languages:['English'],document_summary:`${title}. ${total}-page TIFF; ${clean.length} extracted items; ${drawingDetails.dimensions.length} dimensions/callouts; ${drawingDetails.notes.length} notes.`,full_text:preview,review_text_english:preview,extracted_items:clean,drawing_details:drawingDetails,records:[],expected_pages:total,page_extraction_status:stats,needs_review_pages:[],needs_review:false,_provider:'FREE_MULTI_PROVIDER',_extraction_mode:'TIFF_DRAWING_INTELLIGENCE_V8155'};
   });
 }
 
@@ -1858,7 +1888,13 @@ async function sendFullExtractionV878(from,p){ return sendAdaptiveExtractionPrev
 function escPdfV879(v){return String(v??'').replace(/\\/g,'\\\\').replace(/\(/g,'\\(').replace(/\)/g,'\\)').replace(/[^\x20-\x7E]/g,'?');}
 function reportRowsV880(pack){
   const items=Array.isArray(pack.extracted_items)&&pack.extracted_items.length?pack.extracted_items:(pack.records||[]);
-  return items.map(x=>x||{});
+  const d=pack?.drawing_details||{}, extra=[];
+  for(const x of (d.title_block||[])) extra.push({item_no:'DRAWING',identifier:x.drawing_no||'',description:[x.title,x.equipment_assembly].filter(Boolean).join(' | '),quantity:'',unit:'',remarks:[x.revision&&`Rev ${x.revision}`,x.scale&&`Scale ${x.scale}`].filter(Boolean).join(' | '),page:x.page||''});
+  for(const x of (d.dimensions||[])) extra.push({item_no:'DIMENSION',identifier:x.reference||'',description:x.context||'',quantity:x.value||'',unit:x.unit||'',remarks:'',page:x.page||''});
+  for(const x of (d.notes||[])) extra.push({item_no:'NOTE',identifier:x.note_no||'',description:x.text||'',quantity:'',unit:'',remarks:'',page:x.page||''});
+  for(const x of (d.materials||[])) extra.push({item_no:'MATERIAL',identifier:x.item_no||'',description:x.material_spec||'',quantity:'',unit:'',remarks:'',page:x.page||''});
+  for(const x of (d.functions||[])) extra.push({item_no:'FUNCTION',identifier:'',description:x.text||'',quantity:'',unit:'',remarks:'',page:x.page||''});
+  return [...extra,...items.map(x=>x||{})];
 }
 function reportColumnsV880(rows){
   const keys=[...new Set(rows.flatMap(x=>Object.keys(x||{})))];
@@ -2004,13 +2040,18 @@ async function exportPendingV878(from,p,kind){
 }
 async function storePendingVerifiedV877(from,p){
   const u=await byWA(from); if(!u||!(await hasAuthorityV874(u,'ENTRY'))){await sendText(from,'Permission denied. ENTRY authority is required to store data.');return;}
-  const pack=ingestPackV878(p),rows=Array.isArray(pack.records)?pack.records:[];let saved=0,review=0,dupe=0;
+  const pack=ingestPackV878(p); let rows=Array.isArray(pack.records)?[...pack.records]:[];let saved=0,review=0,dupe=0;
+  const refTypes=new Set(['DRAWING_LIST','PARTS_LIST','BOQ','MANUAL','MANUAL_REFERENCE','REFERENCE','TECHNICAL_REFERENCE','EQUIPMENT_DATA']);
+  if(!rows.length && refTypes.has(String(pack.document_type||'').toUpperCase()) && ((pack.extracted_items||[]).length || pack.drawing_details)){
+    const d=pack.drawing_details||{}; const tb=(d.title_block||[])[0]||{};
+    rows=[{module:String(pack.document_type||'').toUpperCase()==='MANUAL'?'MANUAL_REFERENCE':'DRAWING_DOCS',area:null,equipment:tb.equipment_assembly||null,sub_equipment:null,event_date:null,event_time:null,shift:null,description:pack.document_summary||tb.title||'Technical reference document',action_taken:null,status:'REFERENCE',remarks:tb.drawing_no?`Drawing No: ${tb.drawing_no}`:null,confidence:'MEDIUM'}];
+  }
   for(const x of rows){
     const confidence=['HIGH','MEDIUM'].includes(String(x.confidence||'').toUpperCase())?String(x.confidence).toUpperCase():'NEEDS_REVIEW';
     const module=String(x.module||'NEEDS_REVIEW').toUpperCase();
     const referenceDoc=['DRAWING_DOCS','MANUAL_REFERENCE'].includes(module);
     if(confidence==='NEEDS_REVIEW'||(!referenceDoc && !x.equipment)){review++;continue;}
-    try{const raw={...x,document_type:pack.document_type,document_summary:pack.document_summary,extracted_items:pack.extracted_items};
+    try{const raw={...x,document_type:pack.document_type,document_summary:pack.document_summary,extracted_items:pack.extracted_items,drawing_details:pack.drawing_details||null};
       const q=await pool.query(`INSERT INTO maintenance_ingest_records(data_class,source_type,source_media_id,source_filename,source_mime_type,source_caption,source_sha256,submitted_by_employee_number,submitted_by_whatsapp,module,area,equipment,sub_equipment,event_date,event_time,shift,description,action_taken,status,remarks,confidence,raw_extraction) VALUES('TEST','WHATSAPP_FILE',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::date,$13::time,$14,$15,$16,$17,$18,$19,$20::jsonb) ON CONFLICT DO NOTHING RETURNING id`,[p.source_media_id,p.source_filename,p.source_mime_type,p.source_caption,p.source_sha256,u.employee_number,normWA(from),module,x.area||null,x.equipment||null,x.sub_equipment||null,x.event_date||null,x.event_time||null,x.shift||null,x.description||pack.document_summary||null,x.action_taken||null,x.status||null,x.remarks||null,confidence,JSON.stringify(raw)]);if(q.rowCount)saved++;else dupe++;}catch(e){console.error('[INGEST_STORE]',e.message);review++;}
   }
   if(review){const missing=rows.filter(x=>String(x.confidence||'').toUpperCase()==='NEEDS_REVIEW'||(!x.equipment&&!['DRAWING_DOCS','MANUAL_REFERENCE'].includes(String(x.module||'').toUpperCase()))).slice(0,8).map((x,i)=>`${i+1}. ${x.module||'NEEDS_REVIEW'} — ${!x.equipment?'Equipment missing/uncertain; ':''}${!x.event_date?'Date missing/uncertain; ':''}${x.description||''}`).join('\n');await sendText(from,`Not stored completely because ${review} record(s) need confirmation.\n\n${missing}\n\nSend the correct source-backed details in a simple message, for example:\nEDIT 1 | Equipment=WBF-2 | Date=2026-09-22 | Module=DEFECT\n\nThen choose Store Data again.`);return;}
@@ -2091,12 +2132,12 @@ async function extractQueuedIngestV895(from,row,bytesOverride=null){
       await pool.query(`UPDATE pending_file_ingests SET status='UNRELATED',workflow_state='COMPLETED',source_bytes=NULL,source_purged_at=now(),extracted_rows=$2::jsonb,locked_at=NULL,updated_at=now() WHERE id=$1`,[row.id,JSON.stringify(packForDBV878(pack))]);
       await sendText(from,'This upload is not relevant to LMMM plant / maintenance knowledge. Nothing was stored.'); return true;
     }
-    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',source_bytes=NULL,source_purged_at=now(),extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.14.6',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack))]);
+    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',source_bytes=NULL,source_purged_at=now(),extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.15.5',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack))]);
     await reliabilityEventV8100(row,'AI_EXTRACTION','SUCCEEDED',pack?._provider||null);
     await setPendingIngestSessionV877(from,row.id); await setIngestModeV874(from,false); await showIngestOptionsV877(from,q.rows[0]); return true;
   }catch(e){
     const msg=String(e?.message||e).slice(0,1500); console.error('[EXTRACT_FAILED_NO_RETENTION]',row.id,e);
-    await pool.query(`UPDATE pending_file_ingests SET status='FAILED',workflow_state='FAILED',source_bytes=NULL,source_purged_at=now(),last_error=$2,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.14.6',updated_at=now() WHERE id=$1`,[row.id,msg]).catch(()=>{});
+    await pool.query(`UPDATE pending_file_ingests SET status='FAILED',workflow_state='FAILED',source_bytes=NULL,source_purged_at=now(),last_error=$2,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.15.5',updated_at=now() WHERE id=$1`,[row.id,msg]).catch(()=>{});
     await reliabilityEventV8100(row,'AI_EXTRACTION','FAILED',null,e).catch(()=>{});
     if(e?.code==='MULTIPAGE_TIFF_UNSUPPORTED'){
       await sendText(from,`This ${e.pageCount||'multi'}-page TIFF is too large for the current server. Original file was not stored. Please convert it to PDF and upload again.`);
@@ -2541,4 +2582,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.4 ACCESS PURE-JS BUILD FIX listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.5 DRAWING INTELLIGENCE + REFERENCE STORE listening on ${PORT}`));
