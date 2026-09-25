@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.11 SOURCE-BASED DOCUMENT QUESTIONS
+// LMMM AI Maintenance V8.15.12 EXACT DRAWING REVERSE LOOKUP
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -2266,7 +2266,7 @@ async function extractQueuedIngestV895(from,row,bytesOverride=null){
     const {createHash}=await import('node:crypto');
     const sourceHash=createHash('sha256').update(bytes).digest('hex');
     await pool.query(`UPDATE pending_file_ingests SET source_bytes=$2,source_mime_type=$3,source_sha256=$4,
-      source_purged_at=NULL,confirmation_expires_at=NULL,workflow_state='AI_PROCESSING',extraction_engine_version='V8.15.11',updated_at=now() WHERE id=$1`,[row.id,bytes,effectiveMime,sourceHash]);
+      source_purged_at=NULL,confirmation_expires_at=NULL,workflow_state='AI_PROCESSING',extraction_engine_version='V8.15.12',updated_at=now() WHERE id=$1`,[row.id,bytes,effectiveMime,sourceHash]);
     row.source_bytes=bytes; row.source_mime_type=effectiveMime; row.source_sha256=sourceHash;
     const sourceIsTiffV8135=isTiffSourceV8135(bytes,effectiveMime,row.source_filename||'');
     const pack=await extractMaintenanceV874(bytes,effectiveMime,row.source_filename||'upload',row.source_caption||'');
@@ -2285,7 +2285,7 @@ async function extractQueuedIngestV895(from,row,bytesOverride=null){
       await sendText(from,'This upload is not relevant to LMMM plant / maintenance knowledge. Nothing was stored.'); return true;
     }
     pack.records=verifiedReferenceRowsV8158(pack);
-    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',source_purged_at=NULL,confirmation_expires_at=now()+($3::text||' minutes')::interval,extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.15.11',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack)),TEMP_CONFIRMATION_MINUTES_V8120]);
+    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',source_purged_at=NULL,confirmation_expires_at=now()+($3::text||' minutes')::interval,extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.15.12',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack)),TEMP_CONFIRMATION_MINUTES_V8120]);
     await reliabilityEventV8100(row,'AI_EXTRACTION','SUCCEEDED',pack?._provider||null);
     await setPendingIngestSessionV877(from,row.id); await setIngestModeV874(from,false); await showIngestOptionsV877(from,q.rows[0]); return true;
   }catch(e){
@@ -2477,7 +2477,7 @@ async function queuedStatusV895(from){
   await sendText(from,`Upload: ${r.source_filename||'source'}
 Status: ${r.status}
 Attempts: ${r.retry_count}
-Engine: ${r.extraction_engine_version||'V8.15.11'}
+Engine: ${r.extraction_engine_version||'V8.15.12'}
 Source: ${r.has_source_bytes?'temporarily retained':r.source_media_id?'media reference available':'unavailable'}`);
   return true;
 }
@@ -2495,7 +2495,7 @@ async function processMediaMessageV874(from,m){
     // Queue metadata first; the worker durably saves downloaded bytes before AI extraction.
     const q=await pool.query(`INSERT INTO pending_file_ingests
       (submitted_by_whatsapp,submitted_by_employee_number,source_media_id,source_filename,source_mime_type,source_caption,source_sha256,source_bytes,extracted_rows,status,workflow_state,extraction_engine_version)
-      VALUES($1,$2,$3,$4,$5,$6,NULL,NULL,$7::jsonb,'RECEIVED','RECEIVED','V8.15.11') RETURNING *`,
+      VALUES($1,$2,$3,$4,$5,$6,NULL,NULL,$7::jsonb,'RECEIVED','RECEIVED','V8.15.12') RETURNING *`,
       [normWA(from),u.employee_number,mediaId,filename,mime,caption,JSON.stringify({})]);
     const row=q.rows[0]; await setPendingIngestSessionV877(from,row.id);
     await sendText(from,isAudio?'Voice received. Processing…':'Received. Processing…');
@@ -2510,7 +2510,7 @@ async function processMediaMessageV874(from,m){
 function documentQuestionIntentV81511(text){
   const s=String(text||'').trim();
   return !!s && (/[?？]/.test(s) || /[\u0c00-\u0c7f]/.test(s) ||
-    /^(ask|explain|describe|tell me|what|which|where|why|how|does|is there|show me|find|drawing|manual|document|file|part|dimension|tolerance|material|standard|specification|meaning|doubt|query)\b/i.test(s) ||
+    /^(ask|explain|describe|tell me|what|which|where|why|how|does|is there|show me|find|check|verify|lookup|drawing|manual|document|file|part|dimension|tolerance|material|standard|specification|meaning|doubt|query)\b/i.test(s) ||
     /\b(explain|drawing|manual|document|tolerance|dimension|specification|meaning|gurinchi|enti|cheppandi|samjhao|batao)\b/i.test(s));
 }
 function documentSessionValueV81511(row){
@@ -2548,18 +2548,21 @@ function documentEvidenceV81511(doc,question){
   }
   return sections.join('\n').slice(0,17500);
 }
-async function accessibleDocumentsV81511(from,u){
+async function accessibleDocumentsV81511(from,u,searchTerm=''){
   const canView=await hasAuthorityV874(u,'VIEW');
   const override=canView&&!isOwner(from)?await adminOverrideV850(u.employee_number):null;
   const allScope=isOwner(from)||!!(canView&&override?.scope==='LMMM_ALL');
   const area=canonicalArea(u.area_of_working),section=canonicalSection(u.section_department);
+  const search=String(searchTerm||'').replace(/[%_\\]/g,'').slice(0,100);
+  const pattern=search?`%${search}%`:'';
   const stored=(await pool.query(`SELECT m.id,m.source_filename,m.description,m.source_sha256,m.submitted_by_whatsapp,m.raw_extraction,m.created_at
     FROM maintenance_ingest_records m LEFT JOIN users creator ON creator.whatsapp_number=m.submitted_by_whatsapp
     WHERE m.data_class='VERIFIED' AND (m.submitted_by_whatsapp=$1 OR $2::boolean OR
       ($3::boolean AND creator.approval_status='approved' AND creator.is_active=true
        AND $4<>'' AND $5<>'' AND upper(creator.area_of_working)=upper($4)
        AND lower(creator.section_department)=lower($5)))
-    ORDER BY m.created_at DESC,m.id DESC LIMIT 250`,[normWA(from),allScope,canView,area,section])).rows;
+      AND ($6='' OR m.source_filename ILIKE $6 OR m.description ILIKE $6 OR m.raw_extraction::text ILIKE $6)
+    ORDER BY m.created_at DESC,m.id DESC LIMIT 500`,[normWA(from),allScope,canView,area,section,pattern])).rows;
   const docs=[],seen=new Set();
   for(const m of stored){
     const key=m.source_sha256?`${m.submitted_by_whatsapp}:${m.source_sha256}`:`record:${m.id}`;
@@ -2568,7 +2571,8 @@ async function accessibleDocumentsV81511(from,u){
   }
   const pending=(await pool.query(`SELECT id,source_filename,source_sha256,extracted_rows,created_at FROM pending_file_ingests
     WHERE submitted_by_whatsapp=$1 AND status='PENDING_CONFIRMATION' AND confirmation_expires_at>now()
-    ORDER BY created_at DESC,id DESC LIMIT 15`,[normWA(from)])).rows;
+      AND ($2='' OR source_filename ILIKE $2 OR extracted_rows::text ILIKE $2)
+    ORDER BY created_at DESC,id DESC LIMIT 30`,[normWA(from),pattern])).rows;
   for(const p of pending){
     const key=p.source_sha256?`${normWA(from)}:${p.source_sha256}`:null;
     if(key&&seen.has(key))continue;
@@ -2577,6 +2581,86 @@ async function accessibleDocumentsV81511(from,u){
     docs.push({...p,kind:'pending',pack,raw:{}});
   }
   return docs;
+}
+function drawingLookupRequestV81512(question){
+  const q=String(question||'').trim();
+  const asksDrawing=/\b(drawing|drg|drawings|drgno|drawno)\b|డ్రాయింగ్/i.test(q);
+  const asksCheck=/\b(check|verify|search|find|lookup)\b|చెక్|వెతుకు/i.test(q);
+  const asksNumber=/\b(number|no\.?|id)\b|నంబర్|సంఖ్య/i.test(q);
+  const asksProperty=/\b(material|tolerance|dimension|diameter|weight|quantity|qty|length|width|height|grade|size|fit|pitch)\b|మెటీరియల్|టాలరెన్స్|పరిమాణం/i.test(q);
+  const numbers=q.match(/[a-z0-9]+(?:[./-][a-z0-9]+)+|\b\d{5,}\b/gi)||[];
+  const id=numbers.sort((a,b)=>b.length-a.length)[0];
+  if(id && (asksDrawing||asksCheck) && !asksProperty && (/[0-9]/.test(id)))return {kind:'number',term:id};
+  if(asksDrawing&&asksNumber){
+    const term=q.replace(/\b(drawing|drawings|drg|number|no|id|of|for|what|which|is|the|please|give|tell|me|check|find|search|cheppandi|enti|gurinchi|deniki|sambandhanchindi)\b|డ్రాయింగ్|నంబర్|సంఖ్య|ఏంటి|చెప్పండి/gi,' ').replace(/[^\p{L}\p{N}]+/gu,' ').trim();
+    if(term.length>=3)return {kind:'name',term};
+  }
+  if(/^\d{8,}$/.test(q))return {kind:'number',term:q};
+  return null;
+}
+function exactDrawingTokenV81512(value,needle){
+  if(value==null||!needle)return false;
+  const s=String(value).replace(/[\u2010-\u2015]/g,'-').toUpperCase(),n=String(needle).replace(/[\u2010-\u2015]/g,'-').toUpperCase();
+  const adjacent=/^\d+$/.test(n)?/[A-Z0-9./-]/:/[A-Z0-9]/;
+  let at=s.indexOf(n);
+  while(at>=0){
+    if(!adjacent.test(s[at-1]||'')&&!adjacent.test(s[at+n.length]||''))return true;
+    at=s.indexOf(n,at+1);
+  }
+  return false;
+}
+function drawingTitleNumbersV81512(doc){
+  const d=doc.pack?.drawing_details||doc.raw?.drawing_details||{};
+  const blocks=Array.isArray(d.title_block)?d.title_block:d.title_block?[d.title_block]:[];
+  const values=blocks.flatMap(b=>[b.drawing_no,b.drawing_number,b.drawingNo,b.document_number].filter(Boolean));
+  return [...new Set(values.map(x=>String(x).trim()).filter(x=>x&&!/\[UNREADABLE\]|UNKNOWN|NOT AVAILABLE/i.test(x)))];
+}
+function drawingLookupMatchesV81512(doc,request){
+  const p=doc.pack||doc.raw||{},d=p.drawing_details||{},items=Array.isArray(p.extracted_items)?p.extracted_items:[],
+    blocks=Array.isArray(d.title_block)?d.title_block:d.title_block?[d.title_block]:[],numbers=drawingTitleNumbersV81512(doc),result=[];
+  const add=(place,detail,page)=>{if(result.length<10&&!result.some(x=>x.place===place&&x.detail===detail))result.push({place,detail:String(detail||'').slice(0,180),page});};
+  if(request.kind==='number'){
+    for(const n of numbers)if(exactDrawingTokenV81512(n,request.term))add('Title block drawing number',n,blocks[0]?.page);
+    if(exactDrawingTokenV81512(doc.source_filename,request.term))add('File name reference',doc.source_filename);
+    for(const x of items){
+      const page=x.page||'',item=x.item_no||'';
+      for(const k of ['drawing_no','drawing_number','part_no','identifier','item_no','remarks'])
+        if(exactDrawingTokenV81512(x[k],request.term))add(`Source item ${item||'?'} ${k}`,x[k],page);
+    }
+    if(!result.length){
+      const text=String(p.full_text||'');
+      if(exactDrawingTokenV81512(text,request.term))add('Extracted text mention (field unconfirmed)',request.term);
+    }
+  }else{
+    const found=x=>exactDrawingTokenV81512(x,request.term);
+    for(const b of blocks)if(found(b.title)||found(b.equipment_assembly))add('Title block title',b.title||b.equipment_assembly,b.page);
+    for(const x of items){
+      if(['identifier','description','name','part_name','title'].some(k=>found(x[k])))add(`Source item ${x.item_no||'?'} name`,x.identifier||x.description||x.name||x.part_name||x.title,x.page);
+    }
+    if(!result.length&&found(doc.source_filename))add('File name',doc.source_filename);
+  }
+  return {matches:result,drawingNumbers:numbers};
+}
+async function handleDrawingLookupV81512(from,question,user,selectedDoc=null){
+  const request=drawingLookupRequestV81512(question);if(!request)return false;
+  const telugu=/[\u0c00-\u0c7f]|\b(deniki|sambandhanchindi|gurinchi|cheppandi|enti)\b/i.test(question);
+  const docs=selectedDoc?[selectedDoc]:await accessibleDocumentsV81511(from,user,request.term);
+  const hits=docs.map(doc=>({doc,...drawingLookupMatchesV81512(doc,request)})).filter(x=>x.matches.length);
+  if(!hits.length){await sendText(from,telugu?`${request.term}: అందుబాటులో ఉన్న డ్రాయింగ్ డేటాలో ఖచ్చితమైన సరిపోలిక లేదు. నిర్ధారించలేను.`:
+    `${request.term}: No exact match in accessible extracted drawings. Data ledu / confirm cheyyalenu.`);return true;}
+  if(request.kind==='name'&&!selectedDoc&&hits.length>1){
+    await saveDocumentSessionV81511(from,'DOC_QA_SELECTION',{question,expiresAt:Date.now()+10*60000});
+    await sendList(from,telugu?`"${request.term}" ఒకటి కంటే ఎక్కువ ఫైళ్లలో ఉంది. ఒక ఫైల్ ఎంచుకోండి.`:`"${request.term}" appears in several files. Select one.`, 'Select file',hits.slice(0,10).map(({doc})=>({id:`DOC_QA_SELECT:${doc.kind}:${doc.id}`,title:`${doc.kind==='pending'?'Review ':'File '}${doc.id}`,description:doc.source_filename||'Unnamed source'})),'Drawing Sources');return true;
+  }
+  const shown=hits.slice(0,6).map(({doc,matches,drawingNumbers})=>{
+    const labels={'Title block drawing number':'టైటిల్ బ్లాక్ డ్రాయింగ్ నంబర్','File name reference':'ఫైల్ పేరులోని రిఫరెన్స్','Extracted text mention (field unconfirmed)':'ఎక్స్‌ట్రాక్ట్ చేసిన టెక్స్ట్‌లో ఉంది; ఫీల్డ్ నిర్ధారణ కాలేదు','Title block title':'టైటిల్ బ్లాక్ పేరు','File name':'ఫైల్ పేరు'};
+    const detail=matches.slice(0,3).map(m=>`${telugu?(labels[m.place]||m.place):m.place}${m.page?` (${telugu?'పేజీ':'page'} ${m.page})`:''}: ${m.detail}`).join('\n');
+    const no=drawingNumbers.length?`${telugu?'టైటిల్ బ్లాక్ డ్రాయింగ్ నంబర్':'Title block drawing No'}: ${drawingNumbers.join(', ')}`:
+      `${telugu?'టైటిల్ బ్లాక్ డ్రాయింగ్ నంబర్: నిర్ధారణ కాలేదు':'Title block drawing No: unconfirmed'}`;
+    return `${telugu?'మూల ఫైల్':'Source'}: ${doc.source_filename||'document'}${doc.kind==='pending'?(telugu?' (సమీక్ష పెండింగ్)':' (review pending)'):''}\n${detail}\n${no}`;
+  }).join('\n\n');
+  if(hits.length===1)await saveDocumentSessionV81511(from,'DOC_QA_CONTEXT',{mode:true,kind:hits[0].doc.kind,id:hits[0].doc.id,expiresAt:Date.now()+30*60000});
+  await sendText(from,`${shown}${hits.length>6?`\n${hits.length-6} more matching sources; narrow your search.`:''}`.slice(0,3300));return true;
 }
 async function answerDocumentQuestionV81511(from,question,doc){
   const evidence=documentEvidenceV81511(doc,question);
@@ -2600,10 +2684,14 @@ async function handleDocumentQuestionV81511(from,text,cmd,user){
     question=s.question;
   }
   if(!question){await sendText(from,'Please send your question about the file.');return;}
+  if(!selection&&await handleDrawingLookupV81512(from,question,user))return;
   const docs=await accessibleDocumentsV81511(from,user);
   if(!docs.length){await sendText(from,'No accessible extracted drawing or manual is available yet. Upload the file for review, then ask about it. Nothing is stored until Store Data.');return;}
   let picked;
   if(selection){picked=docs.find(x=>x.kind===selection[1]&&String(x.id)===selection[2]);
+    if(!picked){const lookup=drawingLookupRequestV81512(question);
+      if(lookup)picked=(await accessibleDocumentsV81511(from,user,lookup.term)).find(x=>x.kind===selection[1]&&String(x.id)===selection[2]);
+    }
     if(!picked){await sendText(from,'This file is no longer available to you. Please ask again.');return;}
   }else{
     const context=documentSessionValueV81511(await safeSessionV855(from,'DOC_QA_CONTEXT'));
@@ -2620,6 +2708,7 @@ async function handleDocumentQuestionV81511(from,text,cmd,user){
       await sendList(from,'Which source file should I use?','Select file',docs.slice(0,10).map(x=>({id:`DOC_QA_SELECT:${x.kind}:${x.id}`,title:`${x.kind==='pending'?'Review ':'File '}${x.id}`,description:x.source_filename||'Unnamed source'})),'Accessible Files');return;
     }
   }
+  if(selection&&await handleDrawingLookupV81512(from,question,user,picked))return;
   await saveDocumentSessionV81511(from,'DOC_QA_CONTEXT',{mode:true,kind:picked.kind,id:picked.id,expiresAt:Date.now()+30*60000});
   await answerDocumentQuestionV81511(from,question,picked);
 }
@@ -2640,7 +2729,7 @@ async function processMessage(from,text,payload=''){
   const qaContext=documentSessionValueV81511(await safeSessionV855(from,'DOC_QA_CONTEXT'));
   const qaSelection=/^DOC_QA_SELECT:(stored|pending):\d+$/.test(cmd);
   const qaFreeText=!payload&&(documentQuestionIntentV81511(text)||
-    (qaContext?.mode && qaContext.expiresAt>Date.now() && !/^(hi|hello|hey|start|back|search|version|menu|add entry|store data|check status|retry extraction|my account|my details|contact details|profile|remove me|exit|quit)$/i.test(cmd) && !/^\d{3,}$/.test(cmd) && !/^[A-Z][a-z.'-]+(?: [A-Z][a-z.'-]+){1,2}$/.test(cmd)));
+    (qaContext?.mode && qaContext.expiresAt>Date.now() && !/^(hi|hello|hey|start|back|search|version|menu|add entry|store data|check status|retry extraction|my account|my details|contact details|profile|remove me|exit|quit)$/i.test(cmd) && (!/^\d{3,}$/.test(cmd)||/^\d{8,}$/.test(cmd)) && !/^[A-Z][a-z.'-]+(?: [A-Z][a-z.'-]+){1,2}$/.test(cmd)));
   if(cmd==='MENU_SEARCH'||qaSelection||qaFreeText){
     const qaUser=await byWA(from);
     if(qaUser?.approval_status==='approved'&&qaUser.is_active){await handleDocumentQuestionV81511(from,text,cmd,qaUser);return;}
@@ -2891,8 +2980,8 @@ Shift: ${u.shift||'-'}`,[{id:'REMOVE_ME_CONFIRM',title:'Remove Me'},{id:'ACCOUNT
 }
 
 app.get('/health', async (_req,res)=>{
-  try{await pool.query('SELECT 1');res.json({ok:true,version:'8.15.11',phase:'registration-and-file-ingestion',db:true});}
-  catch(e){res.status(500).json({ok:false,version:'8.15.11',error:e.message});}
+  try{await pool.query('SELECT 1');res.json({ok:true,version:'8.15.12',phase:'registration-and-file-ingestion',db:true});}
+  catch(e){res.status(500).json({ok:false,version:'8.15.12',error:e.message});}
 });
 app.get('/webhook',(req,res)=>{
   const mode=req.query['hub.mode'], token=req.query['hub.verify_token'], challenge=req.query['hub.challenge'];
@@ -2938,4 +3027,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.11 SOURCE-BASED DOCUMENT QUESTIONS listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.12 EXACT DRAWING REVERSE LOOKUP listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
