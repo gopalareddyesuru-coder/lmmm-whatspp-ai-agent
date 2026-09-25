@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.13 SOURCE-BASED UNIVERSAL MAINTENANCE SEARCH
+// LMMM AI Maintenance V8.15.14 MAINTENANCE SEARCH ROUTING AND DRAWING ANSWERS
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -2279,7 +2279,7 @@ async function extractQueuedIngestV895(from,row,bytesOverride=null){
     const {createHash}=await import('node:crypto');
     const sourceHash=createHash('sha256').update(bytes).digest('hex');
     await pool.query(`UPDATE pending_file_ingests SET source_bytes=$2,source_mime_type=$3,source_sha256=$4,
-      source_purged_at=NULL,confirmation_expires_at=NULL,workflow_state='AI_PROCESSING',extraction_engine_version='V8.15.13',updated_at=now() WHERE id=$1`,[row.id,bytes,effectiveMime,sourceHash]);
+      source_purged_at=NULL,confirmation_expires_at=NULL,workflow_state='AI_PROCESSING',extraction_engine_version='V8.15.14',updated_at=now() WHERE id=$1`,[row.id,bytes,effectiveMime,sourceHash]);
     row.source_bytes=bytes; row.source_mime_type=effectiveMime; row.source_sha256=sourceHash;
     const sourceIsTiffV8135=isTiffSourceV8135(bytes,effectiveMime,row.source_filename||'');
     const pack=await extractMaintenanceV874(bytes,effectiveMime,row.source_filename||'upload',row.source_caption||'');
@@ -2298,7 +2298,7 @@ async function extractQueuedIngestV895(from,row,bytesOverride=null){
       await sendText(from,'This upload is not relevant to LMMM plant / maintenance knowledge. Nothing was stored.'); return true;
     }
     pack.records=verifiedReferenceRowsV8158(pack);
-    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',source_purged_at=NULL,confirmation_expires_at=now()+($3::text||' minutes')::interval,extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.15.13',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack)),TEMP_CONFIRMATION_MINUTES_V8120]);
+    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',source_purged_at=NULL,confirmation_expires_at=now()+($3::text||' minutes')::interval,extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.15.14',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack)),TEMP_CONFIRMATION_MINUTES_V8120]);
     await reliabilityEventV8100(row,'AI_EXTRACTION','SUCCEEDED',pack?._provider||null);
     await setPendingIngestSessionV877(from,row.id); await setIngestModeV874(from,false); await showIngestOptionsV877(from,q.rows[0]); return true;
   }catch(e){
@@ -2490,7 +2490,7 @@ async function queuedStatusV895(from){
   await sendText(from,`Upload: ${r.source_filename||'source'}
 Status: ${r.status}
 Attempts: ${r.retry_count}
-Engine: ${r.extraction_engine_version||'V8.15.13'}
+Engine: ${r.extraction_engine_version||'V8.15.14'}
 Source: ${r.has_source_bytes?'temporarily retained':r.source_media_id?'media reference available':'unavailable'}`);
   return true;
 }
@@ -2508,7 +2508,7 @@ async function processMediaMessageV874(from,m){
     // Queue metadata first; the worker durably saves downloaded bytes before AI extraction.
     const q=await pool.query(`INSERT INTO pending_file_ingests
       (submitted_by_whatsapp,submitted_by_employee_number,source_media_id,source_filename,source_mime_type,source_caption,source_sha256,source_bytes,extracted_rows,status,workflow_state,extraction_engine_version)
-      VALUES($1,$2,$3,$4,$5,$6,NULL,NULL,$7::jsonb,'RECEIVED','RECEIVED','V8.15.13') RETURNING *`,
+      VALUES($1,$2,$3,$4,$5,$6,NULL,NULL,$7::jsonb,'RECEIVED','RECEIVED','V8.15.14') RETURNING *`,
       [normWA(from),u.employee_number,mediaId,filename,mime,caption,JSON.stringify({})]);
     const row=q.rows[0]; await setPendingIngestSessionV877(from,row.id);
     await sendText(from,isAudio?'Voice received. Processing…':'Received. Processing…');
@@ -2523,8 +2523,9 @@ async function processMediaMessageV874(from,m){
 function documentQuestionIntentV81511(text){
   const s=String(text||'').trim();
   return !!s && (/[?？]/.test(s) || /[\u0c00-\u0c7f]/.test(s) || /^\d{8,}$/.test(s) ||
+    /\b(bloom pusher|ecs|shear pin|trunnion|coupling|furnace|hydraulic|pump|motor|shaft|gearbox|bearing)\b/i.test(s) ||
     /^(ask|explain|describe|tell me|what|which|where|why|how|does|is there|show me|find|check|verify|lookup|drawing|manual|document|file|part|dimension|tolerance|material|standard|specification|meaning|doubt|query|history|jobs|job|spares|spare|equipment|sap|defects|defect|smp|sop|maintenance|production|vibration)\b/i.test(s) ||
-    /\b(explain|drawing|manual|document|tolerance|dimension|specification|meaning|gurinchi|enti|cheppandi|deniki|sambandhanchindi|samjhao|batao|history|jobs|job|spares|spare|equipment|sap|defects|defect|smp|sop)\b/i.test(s));
+    /\b(explain|drawing|manual|document|tolerance|dimension|specification|meaning|gurinchi|enti|entha|cheppandi|deniki|sambandhanchindi|samjhao|batao|history|jobs|job|spares|spare|equipment|sap|defects|defect|smp|sop)\b/i.test(s));
 }
 function documentSessionValueV81511(row){
   let v=row?.session_value;
@@ -2537,7 +2538,7 @@ async function saveDocumentSessionV81511(from,key,value){
     DO UPDATE SET session_value=EXCLUDED.session_value,updated_at=now()`,[normWA(from),key,JSON.stringify(value)]);
 }
 function documentAnswerTextV81511(question){
-  return /[\u0c00-\u0c7f]|\b(telugu|gurinchi|enti|cheppandi)\b/i.test(question)?'ఆ వివరాలు sourceలో లేవు; నిర్ధారించలేను.':
+  return /[\u0c00-\u0c7f]|\b(telugu|gurinchi|enti|entha|cheppandi)\b/i.test(question)?'ఆ వివరాలు sourceలో లేవు; నిర్ధారించలేను.':
     /[\u0900-\u097f]|\b(hindi|samjhao|batao)\b/i.test(question)?'स्रोत में यह जानकारी नहीं है; पुष्टि नहीं कर सकता।':'Data ledu / confirm cheyyalenu.';
 }
 function documentEvidenceV81511(doc,question){
@@ -2660,7 +2661,7 @@ function drawingLookupMatchesV81512(doc,request){
 }
 async function handleDrawingLookupV81512(from,question,user,selectedDoc=null){
   const request=drawingLookupRequestV81512(question);if(!request)return false;
-  const telugu=/[\u0c00-\u0c7f]|\b(deniki|sambandhanchindi|gurinchi|cheppandi|enti)\b/i.test(question);
+  const telugu=/[\u0c00-\u0c7f]|\b(deniki|sambandhanchindi|gurinchi|cheppandi|enti|entha)\b/i.test(question);
   const docs=selectedDoc?[selectedDoc]:await accessibleDocumentsV81511(from,user,request.term);
   const hits=docs.map(doc=>({doc,...drawingLookupMatchesV81512(doc,request)})).filter(x=>x.matches.length);
   if(!hits.length){
@@ -2686,7 +2687,7 @@ function universalTermsV81513(question){
   const q=String(question||'').trim();
   const refs=q.match(/[A-Za-z0-9]+(?:[./-][A-Za-z0-9]+)+|\b\d{7,}\b/g)||[];
   const exact=refs.filter(x=>/\d/.test(x)).sort((a,b)=>b.length-a.length)[0]||null;
-  const stop=new Set(['what','which','where','when','why','how','are','the','and','for','this','that','with','from','about','there','any','all','show','give','tell','please','check','find','search','number','name','data','record','records','lo','ki','di','enti','deniki','gurinchi','cheppandi','sambandhanchindi','drawing','manual','file','related','sambandham','details','history','jobs','job','spares','spare','equipment','maintenance','part','parts','sap','defect','defects']);
+  const stop=new Set(['what','which','where','when','why','how','are','the','and','for','this','that','with','from','about','there','any','all','show','give','tell','please','check','find','search','number','name','data','record','records','lo','ki','di','enti','entha','deniki','gurinchi','cheppandi','sambandhanchindi','drawing','manual','file','related','sambandham','details','history','jobs','job','spares','spare','equipment','maintenance','part','parts','sap','defect','defects']);
   const terms=[...new Set((q.toLowerCase().match(/[a-z0-9]{3,}|[\u0c00-\u0c7f]{2,}|[\u0900-\u097f]{2,}/g)||[]).filter(x=>!stop.has(x)))];
   return {exact,terms,primary:exact||terms.sort((a,b)=>b.length-a.length)[0]||null};
 }
@@ -2709,6 +2710,7 @@ async function universalSearchV81513(from,user,question){
   const allScope=isOwner(from)||!!(canView&&override?.scope==='LMMM_ALL');
   const area=canonicalArea(user.area_of_working),section=canonicalSection(user.section_department);
   const pattern=`%${request.primary.replace(/[%_\\]/g,'').slice(0,100)}%`, wa=normWA(from),emp=String(user.employee_number||'');
+  const shortToken=/^[a-z]{2,3}$/i.test(request.primary), tokenRegex=shortToken?`(^|[^[:alnum:]])${request.primary}([^[:alnum:]]|$)`:'';
   const jobs=[
     accessibleDocumentsV81511(from,user,request.primary).then(docs=>docs.slice(0,25).map(d=>({kind:d.kind==='pending'?'Pending extraction':'Verified maintenance file',
       source:d.source_filename,title:d.raw?.drawing_details?.title_block?.[0]?.title||d.raw?.document_summary||d.pack?.document_summary||'',
@@ -2760,7 +2762,8 @@ async function universalSearchV81513(from,user,question){
     jobs.push(pool.query(`SELECT uid,source_name,source_row,raw_text,identifiers,verification_status
       FROM lmmm_knowledge_records WHERE verification_status='SOURCE' AND
       (raw_text ILIKE $1 OR source_name ILIKE $1 OR identifiers::text ILIKE $1)
-      ORDER BY uid DESC LIMIT 81`,[pattern]).then(r=>r.rows.map(k=>({kind:'Source line (mapping unconfirmed)',source:`${k.source_name||'import'} row ${k.source_row||'?'}`,
+      AND ($2='' OR raw_text ~* $2 OR source_name ~* $2 OR identifiers::text ~* $2)
+      ORDER BY CASE WHEN raw_text ILIKE $1 THEN 0 ELSE 1 END,uid DESC LIMIT 81`,[pattern,tokenRegex]).then(r=>r.rows.map(k=>({kind:'Source line (mapping unconfirmed)',source:`${k.source_name||'import'} row ${k.source_row||'?'}`,
         content:`Identifiers: ${JSON.stringify(k.identifiers||[])}; Source text: ${k.raw_text||''}`,key:`legacy:${k.uid}`}))));
     jobs.push(pool.query(`SELECT uid,record_type,equipment,area,event_date,record_text,source_name FROM lmmm_master_records
       WHERE equipment ILIKE $1 OR record_text ILIKE $1 OR source_name ILIKE $1 ORDER BY imported_at DESC LIMIT 51`,[pattern])
@@ -2779,16 +2782,39 @@ async function universalSearchV81513(from,user,question){
     const hay=`${row.source||''} ${row.title||''} ${row.content||''}`.toLowerCase();
     const hits=request.terms.reduce((n,w)=>n+(hay.includes(w)?1:0),0);
     return {...row,score:(exact&&exactDrawingTokenV81512(hay,exact)?20:0)+hits+(row.kind==='Verified maintenance file'?2:0)};
-  }).filter(row=>exact?row.score>=20:row.score>0).sort((a,b)=>b.score-a.score);
-  return {request,rows:filtered,failed:results.every(x=>x.status==='rejected'),partialFailure:results.some(x=>x.status==='rejected')};
+  }).filter(row=>{
+    if(shortToken&&!new RegExp(`(^|[^a-z0-9])${request.primary}([^a-z0-9]|$)`,'i').test(`${row.source||''} ${row.title||''} ${row.content||''}`))return false;
+    return exact?row.score>=20:row.score>0;
+  }).sort((a,b)=>b.score-a.score);
+  const sourceLines=filtered.filter(r=>r.kind==='Source line (mapping unconfirmed)');
+  const sourceContentHits=sourceLines.some(r=>shortToken?
+    new RegExp(`(^|[^a-z0-9])${request.primary}([^a-z0-9]|$)`,'i').test(r.content):
+    r.content.toLowerCase().includes(request.primary.toLowerCase()));
+  const relevant=sourceContentHits?filtered.filter(r=>r.kind!=='Source line (mapping unconfirmed)'||
+    (shortToken?new RegExp(`(^|[^a-z0-9])${request.primary}([^a-z0-9]|$)`,'i').test(r.content):
+      r.content.toLowerCase().includes(request.primary.toLowerCase()))):filtered;
+  return {request,rows:relevant,failed:results.every(x=>x.status==='rejected'),partialFailure:results.some(x=>x.status==='rejected')};
 }
 async function handleUniversalSearchV81513(from,question,user){
   const {request,rows,failed,partialFailure}=await universalSearchV81513(from,user,question);
-  const te=/[\u0c00-\u0c7f]|\b(deniki|sambandhanchindi|gurinchi|cheppandi|enti)\b/i.test(question);
+  const te=/[\u0c00-\u0c7f]|\b(deniki|sambandhanchindi|gurinchi|cheppandi|enti|entha)\b/i.test(question);
   if(!request.primary){await sendText(from,te?'ఏ equipment, number, part లేదా విషయం గురించి వెతకాలో చెప్పండి.':'Specify an equipment, number, part or subject to search.');return true;}
   if(failed||(partialFailure&&!rows.length)){await sendText(from,'Some data sources are temporarily unavailable. Please try again; I cannot confirm a complete search.');return true;}
   if(!rows.length){await sendText(from,te?`${request.primary}: అందుబాటులో ఉన్న, మీకు అనుమతి ఉన్న డేటాలో ఆధారం దొరకలేదు. నిర్ధారించలేను.`:
     `${request.primary}: No source-backed match in data you can access. Data ledu / confirm cheyyalenu.`);return true;}
+  // Imported SMP file names and their document IDs are not drawing numbers.
+  // Answer drawing-number requests only from an explicitly extracted title block.
+  if(/\b(drawing|drg)\b|డ్రాయింగ్/i.test(question) && /\b(number|no\.?|entha)\b|నంబర్|సంఖ్య/i.test(question)){
+    const documents=await accessibleDocumentsV81511(from,user,request.primary);
+    const verified=documents.flatMap(d=>drawingTitleNumbersV81512(d).map(n=>({doc:d,number:n})))
+      .filter(x=>rows.some(r=>r.key===`file:${x.doc.kind}:${x.doc.id}`));
+    if(!verified.length){
+      const sources=[...new Set(rows.map(r=>r.source).filter(Boolean))].slice(0,3);
+      await sendText(from,`${request.primary}: ${te?'ఈ అంశానికి సంబంధించిన ఆధారాలు ఉన్నాయి, కానీ వాటిలో ధృవీకరించిన drawing number లేదు.':'Related source records exist, but no verified drawing number was found.'}${sources.length?`\n${te?'మూలాలు':'Sources'}: ${sources.join('; ')}`:''}\nData ledu / confirm cheyyalenu.`.slice(0,1400));return true;
+    }
+    const answer=verified.slice(0,5).map(x=>`${x.number} — ${x.doc.source_filename||'source'}${x.doc.kind==='pending'?' (review pending)':''}`).join('\n');
+    await sendText(from,`${te?'టైటిల్ బ్లాక్‌లో ఉన్న drawing number':'Drawing number in title block'}:\n${answer}`.slice(0,1400));return true;
+  }
   const strong=!!request.exact;
   if(strong || rows.length>8){
     const items=rows.slice(0,7).map((r,i)=>`${i+1}. ${universalEvidenceV81513(r,request)}`).join('\n\n');
@@ -2854,6 +2880,12 @@ async function handleDocumentQuestionV81511(from,text,cmd,user){
   await answerDocumentQuestionV81511(from,question,picked);
 }
 
+async function maintenanceBareSearchV81514(text,cmd,payload){
+  if(payload||!/^[A-Za-z][A-Za-z .'-]{2,70}$/.test(String(text||'').trim())||
+    /^(hi|hello|hey|start|back|search|version|menu|add entry|store data|check status|retry extraction|my account|my details|contact details|profile|remove me|exit|quit)$/i.test(cmd))return false;
+  const employee=(await pool.query('SELECT 1 FROM users WHERE lower(name)=lower($1) LIMIT 1',[String(text).trim()])).rows.length;
+  return !employee;
+}
 async function processMessage(from,text,payload=''){
   const cmd=String(payload||text||'').trim();
   if(cmd==='RETRY_LAST_UPLOAD' || /^retry( extraction| upload)?$/i.test(cmd)){await retryLastQueuedV895(from);return;}
@@ -2871,7 +2903,10 @@ async function processMessage(from,text,payload=''){
   const qaSelection=/^DOC_QA_SELECT:(stored|pending):\d+$/.test(cmd);
   const qaFreeText=!payload&&(documentQuestionIntentV81511(text)||
     (qaContext?.mode && qaContext.expiresAt>Date.now() && !/^(hi|hello|hey|start|back|search|version|menu|add entry|store data|check status|retry extraction|my account|my details|contact details|profile|remove me|exit|quit)$/i.test(cmd) && (!/^\d{3,}$/.test(cmd)||/^\d{8,}$/.test(cmd)) && !/^[A-Z][a-z.'-]+(?: [A-Z][a-z.'-]+){1,2}$/.test(cmd)));
-  if(cmd==='MENU_SEARCH'||qaSelection||qaFreeText){
+  // A bare equipment/part name can look exactly like an employee's name.
+  // Preserve actual employee lookups; route unmatched names to maintenance search.
+  const bareSearch=!qaFreeText&&await maintenanceBareSearchV81514(text,cmd,payload);
+  if(cmd==='MENU_SEARCH'||qaSelection||qaFreeText||bareSearch){
     const qaUser=await byWA(from);
     if(qaUser?.approval_status==='approved'&&qaUser.is_active){await handleDocumentQuestionV81511(from,text,cmd,qaUser);return;}
     if(cmd==='MENU_SEARCH'||qaSelection){await sendText(from,'Approved registration required to ask about documents.');return;}
@@ -3121,8 +3156,8 @@ Shift: ${u.shift||'-'}`,[{id:'REMOVE_ME_CONFIRM',title:'Remove Me'},{id:'ACCOUNT
 }
 
 app.get('/health', async (_req,res)=>{
-  try{await pool.query('SELECT 1');res.json({ok:true,version:'8.15.13',phase:'registration-and-file-ingestion',db:true});}
-  catch(e){res.status(500).json({ok:false,version:'8.15.13',error:e.message});}
+  try{await pool.query('SELECT 1');res.json({ok:true,version:'8.15.14',phase:'registration-and-file-ingestion',db:true});}
+  catch(e){res.status(500).json({ok:false,version:'8.15.14',error:e.message});}
 });
 app.get('/webhook',(req,res)=>{
   const mode=req.query['hub.mode'], token=req.query['hub.verify_token'], challenge=req.query['hub.challenge'];
@@ -3168,4 +3203,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.13 SOURCE-BASED UNIVERSAL MAINTENANCE SEARCH listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.14 MAINTENANCE SEARCH ROUTING AND DRAWING ANSWERS listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
