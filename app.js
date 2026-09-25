@@ -1,5 +1,5 @@
-// LMMM AI Maintenance V8.15.7 DURABLE SOURCE + DRAWING EXTRACTION FIX
-// CLEAN REBUILD - PHASE 1: REGISTRATION / APPROVAL / USER LIFECYCLE ONLY
+// LMMM AI Maintenance V8.15.8 VERIFIED DRAWING STORE + FILE-BOUND CONFIRMATION
+// Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
 import pg from 'pg';
@@ -475,6 +475,13 @@ async function initDB(){
       console.log('[V8.0.1] one-time non-Super-Admin registration reset complete; Super Admin preserved');
     }catch(e){await pool.query('ROLLBACK');throw e;}
   }
+  // Legacy TEST rows were written only after explicit Store Data. Reclassify confirmed
+  // source fingerprints without changing their identifiers, payload, or audit timestamps.
+  await pool.query(`UPDATE maintenance_ingest_records AS m SET data_class='VERIFIED'
+    WHERE m.data_class='TEST' AND m.source_type='WHATSAPP_FILE' AND m.source_sha256 IS NOT NULL
+      AND EXISTS (SELECT 1 FROM pending_file_ingests AS p
+        WHERE p.status='STORED' AND p.submitted_by_whatsapp=m.submitted_by_whatsapp
+          AND p.source_sha256=m.source_sha256 AND p.source_filename=m.source_filename)`);
 }
 async function byWA(wa){ const r=await pool.query('SELECT * FROM users WHERE whatsapp_number=$1 LIMIT 1',[normWA(wa)]); return r.rows[0]||null; }
 async function byEmp(emp){ const r=await pool.query('SELECT * FROM users WHERE employee_number=$1 LIMIT 1',[String(emp)]); return r.rows[0]||null; }
@@ -1841,12 +1848,27 @@ function ingestPackV878(p){
   return {document_type:'OTHER',detected_languages:[],document_summary:'',full_text:'',review_text_english:'',extracted_items:[],records:raw};
 }
 function packForDBV878(pack){return [{__v878_pack:pack}];}
+function verifiedReferenceRowsV8158(pack){
+  const rows=Array.isArray(pack.records)?pack.records:[];
+  if(pack.relevance==='UNRELATED'||pack.relevance==='UNCERTAIN'||pack.needs_review_pages?.length)return rows;
+  const type=String(pack.document_type||'').toUpperCase();
+  const refTypes=new Set(['DRAWING_LIST','PARTS_LIST','BOQ','MANUAL','MANUAL_REFERENCE','REFERENCE','TECHNICAL_REFERENCE','EQUIPMENT_DATA','DRAWING','DRAWING_DOCS','TECHNICAL_DRAWING','ASSEMBLY_DRAWING','EQUIPMENT_DRAWING']);
+  if(!refTypes.has(type))return rows;
+  const verified=rows.filter(x=>['DRAWING_DOCS','MANUAL_REFERENCE'].includes(String(x.module||'').toUpperCase())&&['HIGH','MEDIUM'].includes(String(x.confidence||'').toUpperCase()));
+  if(verified.length)return verified;
+  if(rows.some(x=>['HIGH','MEDIUM'].includes(String(x.confidence||'').toUpperCase())))return rows;
+  const tb=(pack.drawing_details?.title_block||[])[0]||{};
+  const title=sourceValueV8157(tb.title),summary=sourceValueV8157(pack.document_summary);
+  const description=title||(summary&&!/^Technical reference document[.]?$/i.test(summary)?summary:null);
+  if(!description)return rows;
+  return [{module:/MANUAL/.test(type)?'MANUAL_REFERENCE':'DRAWING_DOCS',area:null,equipment:sourceValueV8157(tb.equipment_assembly),sub_equipment:null,event_date:null,event_time:null,shift:null,description,action_taken:null,status:'REFERENCE',remarks:sourceValueV8157(tb.drawing_no)?`Drawing No: ${tb.drawing_no}`:null,confidence:'MEDIUM'}];
+}
 function ingestPreviewV877(packOrRows,filename){
   const pack=Array.isArray(packOrRows)?{document_type:'OTHER',detected_languages:[],document_summary:'',full_text:'',extracted_items:[],records:packOrRows}:packOrRows;
   const rows=Array.isArray(pack.records)?pack.records:[];
   const recordReview=rows.filter(x=>String(x.confidence||'').toUpperCase()==='NEEDS_REVIEW'||(!x.equipment && !['DRAWING_DOCS','MANUAL_REFERENCE'].includes(String(x.module||'').toUpperCase()))).length;
   const reviewPages=Array.isArray(pack.needs_review_pages)?pack.needs_review_pages.length:0;
-  const review=recordReview+reviewPages;
+  const review=recordReview+reviewPages+(pack.needs_review&&!reviewPages?1:0);
   const lines=rows.slice(0,5).map((x,i)=>`${i+1}. ${String(x.module||'NEEDS_REVIEW').toUpperCase()} | ${x.equipment||'Equipment: not confirmed'} | ${x.event_date||'Date: not confirmed'}\n${String(x.description||'-').slice(0,220)}`);
   const items=Array.isArray(pack.extracted_items)?pack.extracted_items.length:0;
   return `File identified & extracted — NOT STORED\nSource: ${filename}\nFile Type: ${pack.document_type||'OTHER'}\nLanguage: ${(pack.detected_languages||[]).join(', ')||'Not confirmed'}\nRecords: ${rows.length} | Detailed items: ${items}\nNeeds Review: ${review}\n\n${String(pack.document_summary||'').slice(0,700)}`;
@@ -1857,19 +1879,19 @@ async function setPendingIngestSessionV877(from,id){
 async function getPendingIngestV877(from){
   const s=await pool.query(`SELECT session_value FROM ui_sessions WHERE whatsapp_number=$1 AND session_key='PENDING_FILE_INGEST'`,[normWA(from)]);
   const id=s.rows[0]?.session_value?.id;if(!id)return null;
-  return (await pool.query(`SELECT * FROM pending_file_ingests WHERE id=$1 AND submitted_by_whatsapp=$2 AND status='PENDING_CONFIRMATION'`,[id,normWA(from)])).rows[0]||null;
+  return (await pool.query(`SELECT * FROM pending_file_ingests WHERE id=$1 AND submitted_by_whatsapp=$2 AND status='PENDING_CONFIRMATION' AND confirmation_expires_at>now()`,[id,normWA(from)])).rows[0]||null;
 }
 async function clearPendingIngestV877(from,id,status='DISCARDED'){
   if(id)await pool.query(`UPDATE pending_file_ingests SET status=$2,workflow_state=CASE WHEN $2='STORED' THEN 'COMPLETED' ELSE workflow_state END,updated_at=now() WHERE id=$1`,[id,status]);
-  await pool.query(`DELETE FROM ui_sessions WHERE whatsapp_number=$1 AND session_key='PENDING_FILE_INGEST'`,[normWA(from)]);
+  await pool.query(`DELETE FROM ui_sessions WHERE whatsapp_number=$1 AND session_key='PENDING_FILE_INGEST' AND session_value->>'id'=$2`,[normWA(from),String(id)]);
 }
 async function showIngestOptionsV877(from,p){
   const pack=ingestPackV878(p);
   await sendText(from,ingestPreviewV877(pack,p.source_filename));
   await sendAdaptiveExtractionPreviewV881(from,p);
-  await sendList(from,'Check the extracted data, then choose','Choose',[
-    {id:'INGEST_STORE_VERIFIED',title:'Store Data',description:'Store only verified maintenance data'},
-    {id:'INGEST_CONVERT',title:'Convert / Export',description:'PDF, Excel, TXT, CSV or JSON'}
+  await sendList(from,`Review and confirm within ${TEMP_CONFIRMATION_MINUTES_V8120} minutes`,'Choose',[
+    {id:`INGEST_STORE_VERIFIED:${p.id}`,title:'Store Data',description:'Store only verified maintenance data'},
+    {id:`INGEST_CONVERT:${p.id}`,title:'Convert / Export',description:'PDF, Excel, TXT, CSV or JSON'}
   ],'File Action');
 }
 function adaptivePreviewStatsV881(pack){
@@ -2063,20 +2085,9 @@ async function exportPendingV878(from,p,kind){
 }
 async function storePendingVerifiedV877(from,p){
   const u=await byWA(from); if(!u||!(await hasAuthorityV874(u,'ENTRY'))){await sendText(from,'Permission denied. ENTRY authority is required to store data.');return;}
-  const pack=ingestPackV878(p); let rows=Array.isArray(pack.records)?[...pack.records]:[];let saved=0,review=0,dupe=0;
-  const refTypes=new Set(['DRAWING_LIST','PARTS_LIST','BOQ','MANUAL','MANUAL_REFERENCE','REFERENCE','TECHNICAL_REFERENCE','EQUIPMENT_DATA','DRAWING','DRAWING_DOCS','TECHNICAL_DRAWING','ASSEMBLY_DRAWING','EQUIPMENT_DRAWING']);
+  const pack=ingestPackV878(p); let rows=verifiedReferenceRowsV8158(pack);let saved=0,review=0,dupe=0;
   if(String(pack.document_type||'').toUpperCase()==='UNRELATED'||pack.relevance==='UNRELATED'||pack.relevance==='UNCERTAIN'||pack.needs_review_pages?.length){
     await sendText(from,'The extraction needs source/relevance review before Store Data. Nothing was stored.');return;
-  }
-  if(refTypes.has(String(pack.document_type||'').toUpperCase())){
-    const verifiedRefs=rows.filter(x=>['DRAWING_DOCS','MANUAL_REFERENCE'].includes(String(x.module||'').toUpperCase())&&['HIGH','MEDIUM'].includes(String(x.confidence||'').toUpperCase()));
-    if(verifiedRefs.length)rows=verifiedRefs;
-    else if(!rows.some(x=>['HIGH','MEDIUM'].includes(String(x.confidence||'').toUpperCase()))){
-      const tb=(pack.drawing_details?.title_block||[])[0]||{};
-      const title=sourceValueV8157(tb.title),summary=sourceValueV8157(pack.document_summary);
-      const description=title||(summary&&!/^Technical reference document[.]?$/i.test(summary)?summary:null);
-      if(description)rows=[{module:/MANUAL/.test(String(pack.document_type).toUpperCase())?'MANUAL_REFERENCE':'DRAWING_DOCS',area:null,equipment:sourceValueV8157(tb.equipment_assembly),sub_equipment:null,event_date:null,event_time:null,shift:null,description,action_taken:null,status:'REFERENCE',remarks:sourceValueV8157(tb.drawing_no)?`Drawing No: ${tb.drawing_no}`:null,confidence:'MEDIUM'}];
-    }
   }
   for(const x of rows){
     const confidence=['HIGH','MEDIUM'].includes(String(x.confidence||'').toUpperCase())?String(x.confidence).toUpperCase():'NEEDS_REVIEW';
@@ -2084,7 +2095,7 @@ async function storePendingVerifiedV877(from,p){
     const referenceDoc=['DRAWING_DOCS','MANUAL_REFERENCE'].includes(module);
     if(confidence==='NEEDS_REVIEW'||(!referenceDoc && !x.equipment)){review++;continue;}
     try{const raw={...x,document_type:pack.document_type,document_summary:pack.document_summary,extracted_items:pack.extracted_items,drawing_details:pack.drawing_details||null};
-      const q=await pool.query(`INSERT INTO maintenance_ingest_records(data_class,source_type,source_media_id,source_filename,source_mime_type,source_caption,source_sha256,submitted_by_employee_number,submitted_by_whatsapp,module,area,equipment,sub_equipment,event_date,event_time,shift,description,action_taken,status,remarks,confidence,raw_extraction) VALUES('TEST','WHATSAPP_FILE',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::date,$13::time,$14,$15,$16,$17,$18,$19,$20::jsonb) ON CONFLICT DO NOTHING RETURNING id`,[p.source_media_id,p.source_filename,p.source_mime_type,p.source_caption,p.source_sha256,u.employee_number,normWA(from),module,x.area||null,x.equipment||null,x.sub_equipment||null,x.event_date||null,x.event_time||null,x.shift||null,x.description||pack.document_summary||null,x.action_taken||null,x.status||null,x.remarks||null,confidence,JSON.stringify(raw)]);if(q.rowCount)saved++;else dupe++;}catch(e){console.error('[INGEST_STORE]',e.message);review++;}
+      const q=await pool.query(`INSERT INTO maintenance_ingest_records(data_class,source_type,source_media_id,source_filename,source_mime_type,source_caption,source_sha256,submitted_by_employee_number,submitted_by_whatsapp,module,area,equipment,sub_equipment,event_date,event_time,shift,description,action_taken,status,remarks,confidence,raw_extraction) VALUES('VERIFIED','WHATSAPP_FILE',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::date,$13::time,$14,$15,$16,$17,$18,$19,$20::jsonb) ON CONFLICT DO NOTHING RETURNING id`,[p.source_media_id,p.source_filename,p.source_mime_type,p.source_caption,p.source_sha256,u.employee_number,normWA(from),module,x.area||null,x.equipment||null,x.sub_equipment||null,x.event_date||null,x.event_time||null,x.shift||null,x.description||pack.document_summary||null,x.action_taken||null,x.status||null,x.remarks||null,confidence,JSON.stringify(raw)]);if(q.rowCount)saved++;else dupe++;}catch(e){console.error('[INGEST_STORE]',e.message);review++;}
   }
   if(saved===0 && dupe===0){
     await sendText(from,'Nothing was stored because no verified source-backed record was available. The extraction remains pending for review.');return;
@@ -2092,27 +2103,45 @@ async function storePendingVerifiedV877(from,p){
   if(review){const missing=rows.filter(x=>String(x.confidence||'').toUpperCase()==='NEEDS_REVIEW'||(!x.equipment&&!['DRAWING_DOCS','MANUAL_REFERENCE'].includes(String(x.module||'').toUpperCase()))).slice(0,8).map((x,i)=>`${i+1}. ${x.module||'NEEDS_REVIEW'} — ${!x.equipment?'Equipment missing/uncertain; ':''}${!x.event_date?'Date missing/uncertain; ':''}${x.description||''}`).join('\n');await sendText(from,`Not stored completely because ${review} record(s) need confirmation.\n\n${missing}\n\nSend the correct source-backed details in a simple message, for example:\nEDIT 1 | Equipment=WBF-2 | Date=2026-09-22 | Module=DEFECT\n\nThen choose Store Data again.`);return;}
   await purgeConfirmedSourceBytesV8120(p.id);
   await clearPendingIngestV877(from,p.id,'STORED');
-  await sendText(from,`✅ Confirmed TEST data stored\nStored: ${saved}\nDuplicates skipped: ${dupe}\nSource: ${p.source_filename}`);
+  await sendText(from,`✅ Verified maintenance data stored\nRecords stored: ${saved}\nDuplicates skipped: ${dupe}\nSource: ${p.source_filename}`);
 }
 async function handlePendingIngestCommandV877(from,cmd){
   if(!/^INGEST_/.test(cmd) && !/^EDIT\s+\d+\s*\|/i.test(cmd))return false;
-  const p=await getPendingIngestV877(from);if(!p){await sendText(from,'No pending file extraction. Please send the file again.');return true;}
+  // WhatsApp buttons remain visible after a new upload or expiry: bind confirmation to its own file.
+  const bound=cmd.match(/^INGEST_(STORE_VERIFIED|CONVERT|EXPORT_(?:PDF|EXCEL|TXT|CSV|JSON)):(\d+)$/);
+  if(cmd==='INGEST_STORE_VERIFIED'){
+    await sendText(from,'This is an older Store Data button. Open the latest extraction and use its Store Data button so the correct file is confirmed.');return true;
+  }
+  let p;
+  if(bound){
+    p=(await pool.query(`SELECT * FROM pending_file_ingests WHERE id=$1 AND submitted_by_whatsapp=$2 AND status='PENDING_CONFIRMATION' AND confirmation_expires_at>now()`,[bound[2],normWA(from)])).rows[0]||null;
+  }else p=await getPendingIngestV877(from);
+  if(!p){
+    const latest=(await pool.query(`SELECT status FROM pending_file_ingests WHERE submitted_by_whatsapp=$1 ORDER BY created_at DESC,id DESC LIMIT 1`,[normWA(from)])).rows[0];
+    const message=['RECEIVED','PROCESSING','EXTRACTING','RETRY_PENDING'].includes(latest?.status)
+      ?'Your latest file is processing or queued. Please wait for its new review and Store Data button.'
+      :latest?.status==='EXPIRED'?'The review window expired and the temporary source was removed. Please upload the file again.'
+      :latest?.status==='STORED'?'That file was already stored. Send a new file for another extraction.'
+      :'No active extraction is awaiting confirmation. Check Status for the latest upload.';
+    await sendText(from,message);return true;
+  }
+  if(bound)cmd=`INGEST_${bound[1]}`;
   const pack=ingestPackV878(p),rows=Array.isArray(pack.records)?pack.records:[];
   if(cmd==='INGEST_STORE_VERIFIED'){await storePendingVerifiedV877(from,p);return true;}
   if(cmd==='INGEST_CONVERT'){
     await sendList(from,'Choose file format','Convert',[
-      {id:'INGEST_EXPORT_PDF',title:'PDF',description:'Complete extraction as PDF'},
-      {id:'INGEST_EXPORT_EXCEL',title:'Excel',description:'Structured extracted data for Excel'},
-      {id:'INGEST_EXPORT_TXT',title:'TXT',description:'Complete extracted text'},
-      {id:'INGEST_EXPORT_CSV',title:'CSV',description:'Spreadsheet-friendly extracted data'},
-      {id:'INGEST_EXPORT_JSON',title:'JSON',description:'Complete structured extraction'}
+      {id:`INGEST_EXPORT_PDF:${p.id}`,title:'PDF',description:'Complete extraction as PDF'},
+      {id:`INGEST_EXPORT_EXCEL:${p.id}`,title:'Excel',description:'Structured extracted data for Excel'},
+      {id:`INGEST_EXPORT_TXT:${p.id}`,title:'TXT',description:'Complete extracted text'},
+      {id:`INGEST_EXPORT_CSV:${p.id}`,title:'CSV',description:'Spreadsheet-friendly extracted data'},
+      {id:`INGEST_EXPORT_JSON:${p.id}`,title:'JSON',description:'Complete structured extraction'}
     ],'File Conversion');return true;
   }
   if(/^INGEST_EXPORT_(PDF|EXCEL|TXT|CSV|JSON)$/.test(cmd)){
     const kind=cmd.replace('INGEST_EXPORT_','');await exportPendingV878(from,p,kind);
     await sendList(from,'Conversion sent. Store the verified maintenance data only if it is correct.','Choose',[
-      {id:'INGEST_STORE_VERIFIED',title:'Store Data',description:'Store verified, complete maintenance data'},
-      {id:'INGEST_CONVERT',title:'Convert Again',description:'Choose another output format'}
+      {id:`INGEST_STORE_VERIFIED:${p.id}`,title:'Store Data',description:'Store verified maintenance data'},
+      {id:`INGEST_CONVERT:${p.id}`,title:'Convert Again',description:'Choose another output format'}
     ],'Next Action');return true;
   }
   // Backward-compatible handling for old WhatsApp list messages; these are no longer shown in the UI.
@@ -2171,7 +2200,7 @@ async function extractQueuedIngestV895(from,row,bytesOverride=null){
     const {createHash}=await import('node:crypto');
     const sourceHash=createHash('sha256').update(bytes).digest('hex');
     await pool.query(`UPDATE pending_file_ingests SET source_bytes=$2,source_mime_type=$3,source_sha256=$4,
-      source_purged_at=NULL,confirmation_expires_at=NULL,workflow_state='AI_PROCESSING',extraction_engine_version='V8.15.7',updated_at=now() WHERE id=$1`,[row.id,bytes,effectiveMime,sourceHash]);
+      source_purged_at=NULL,confirmation_expires_at=NULL,workflow_state='AI_PROCESSING',extraction_engine_version='V8.15.8',updated_at=now() WHERE id=$1`,[row.id,bytes,effectiveMime,sourceHash]);
     row.source_bytes=bytes; row.source_mime_type=effectiveMime; row.source_sha256=sourceHash;
     const sourceIsTiffV8135=isTiffSourceV8135(bytes,effectiveMime,row.source_filename||'');
     const pack=await extractMaintenanceV874(bytes,effectiveMime,row.source_filename||'upload',row.source_caption||'');
@@ -2189,7 +2218,8 @@ async function extractQueuedIngestV895(from,row,bytesOverride=null){
       await pool.query(`UPDATE pending_file_ingests SET status='UNRELATED',workflow_state='COMPLETED',source_bytes=NULL,source_purged_at=now(),extracted_rows=$2::jsonb,locked_at=NULL,updated_at=now() WHERE id=$1`,[row.id,JSON.stringify(packForDBV878(pack))]);
       await sendText(from,'This upload is not relevant to LMMM plant / maintenance knowledge. Nothing was stored.'); return true;
     }
-    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',source_purged_at=NULL,confirmation_expires_at=now()+($3::text||' minutes')::interval,extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.15.7',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack)),TEMP_CONFIRMATION_MINUTES_V8120]);
+    pack.records=verifiedReferenceRowsV8158(pack);
+    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',source_purged_at=NULL,confirmation_expires_at=now()+($3::text||' minutes')::interval,extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.15.8',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack)),TEMP_CONFIRMATION_MINUTES_V8120]);
     await reliabilityEventV8100(row,'AI_EXTRACTION','SUCCEEDED',pack?._provider||null);
     await setPendingIngestSessionV877(from,row.id); await setIngestModeV874(from,false); await showIngestOptionsV877(from,q.rows[0]); return true;
   }catch(e){
@@ -2381,7 +2411,7 @@ async function queuedStatusV895(from){
   await sendText(from,`Upload: ${r.source_filename||'source'}
 Status: ${r.status}
 Attempts: ${r.retry_count}
-Engine: ${r.extraction_engine_version||'V8.15.7'}
+Engine: ${r.extraction_engine_version||'V8.15.8'}
 Source: ${r.has_source_bytes?'temporarily retained':r.source_media_id?'media reference available':'unavailable'}`);
   return true;
 }
@@ -2399,7 +2429,7 @@ async function processMediaMessageV874(from,m){
     // Queue metadata first; the worker durably saves downloaded bytes before AI extraction.
     const q=await pool.query(`INSERT INTO pending_file_ingests
       (submitted_by_whatsapp,submitted_by_employee_number,source_media_id,source_filename,source_mime_type,source_caption,source_sha256,source_bytes,extracted_rows,status,workflow_state,extraction_engine_version)
-      VALUES($1,$2,$3,$4,$5,$6,NULL,NULL,$7::jsonb,'RECEIVED','RECEIVED','V8.15.7') RETURNING *`,
+      VALUES($1,$2,$3,$4,$5,$6,NULL,NULL,$7::jsonb,'RECEIVED','RECEIVED','V8.15.8') RETURNING *`,
       [normWA(from),u.employee_number,mediaId,filename,mime,caption,JSON.stringify({})]);
     const row=q.rows[0]; await setPendingIngestSessionV877(from,row.id);
     await sendText(from,isAudio?'Voice received. Processing…':'Received. Processing…');
@@ -2654,15 +2684,15 @@ Shift: ${u.shift||'-'}`,[{id:'REMOVE_ME_CONFIRM',title:'Remove Me'},{id:'ACCOUNT
   }
   if(u.approval_status==='pending'){await sendText(from,'Your registration is pending approval.');return;}
   if(u.approval_status==='approved' && u.is_active){
-    await sendText(from,'Registration module is verified. Maintenance modules will be enabled section-by-section after acceptance testing.');
+    await sendText(from,'Registration approved. Send a maintenance file, or send Check Status for your latest upload.');
     return;
   }
   await sendText(from,registrationTemplate('Re-register for LMMM Maintenance:'));
 }
 
 app.get('/health', async (_req,res)=>{
-  try{await pool.query('SELECT 1');res.json({ok:true,version:'8.7.6',phase:'registration',db:true});}
-  catch(e){res.status(500).json({ok:false,version:'8.7.6',error:e.message});}
+  try{await pool.query('SELECT 1');res.json({ok:true,version:'8.15.8',phase:'registration-and-file-ingestion',db:true});}
+  catch(e){res.status(500).json({ok:false,version:'8.15.8',error:e.message});}
 });
 app.get('/webhook',(req,res)=>{
   const mode=req.query['hub.mode'], token=req.query['hub.verify_token'], challenge=req.query['hub.challenge'];
@@ -2708,4 +2738,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.7 DURABLE SOURCE + DRAWING EXTRACTION FIX listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.8 VERIFIED DRAWING STORE + FILE-BOUND CONFIRMATION listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
