@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.8 VERIFIED DRAWING STORE + FILE-BOUND CONFIRMATION
+// LMMM AI Maintenance V8.15.9 DRAWING EXPLANATION + STORE BUTTON ROUTING
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -1509,6 +1509,7 @@ DIM|page|dimension/callout reference|exact value|unit|what the dimension applies
 NOTE|page|note number|exact technical note
 MATERIAL|page|item number|exact material/specification
 FUNCTION|page|short source-backed explanation of what the shown assembly/component does or how parts relate
+Classify the drawing discipline from printed content: mechanical, electrical, civil/structural, or unconfirmed. For mechanical drawings, capture coupling/part type and nomenclature, item labels, fits, tolerances, material and printed standard/designation numbers. For electrical drawings capture circuit symbols, ratings, terminal and cable identifiers, wiring and protective devices. For civil drawings capture grids, levels, foundation and reinforcement callouts, material grades and notes. State a standard number ONLY when printed on this drawing. Keep printed facts separate from any engineering interpretation; never calculate a tolerance limit without its verified standard table.
 Read visible dimensions, tolerances, fits, threads, diameters, radii, angles, section/callout labels and title-block data. Never infer a missing dimension or function; use [UNREADABLE] when unclear.
 `;
   const content=[{type:'input_text',text:prompt}];
@@ -1527,6 +1528,7 @@ DIM|page|dimension/callout reference|exact value|unit|what the dimension applies
 NOTE|page|note number|exact technical note
 MATERIAL|page|item number|exact material/specification
 FUNCTION|page|short source-backed explanation of what the shown assembly/component does or how parts relate
+Classify the drawing discipline from printed content: mechanical, electrical, civil/structural, or unconfirmed. For mechanical drawings, capture coupling/part type and nomenclature, item labels, fits, tolerances, material and printed standard/designation numbers. For electrical drawings capture circuit symbols, ratings, terminal and cable identifiers, wiring and protective devices. For civil drawings capture grids, levels, foundation and reinforcement callouts, material grades and notes. State a standard number ONLY when printed on this drawing. Keep printed facts separate from any engineering interpretation; never calculate a tolerance limit without its verified standard table.
 Read visible dimensions, tolerances, fits, threads, diameters, radii, angles, section/callout labels and title-block data. Never infer a missing dimension or function; use [UNREADABLE] when unclear.
 `;
   const content=[{type:'text',text:prompt}];
@@ -1545,6 +1547,7 @@ DIM|page|dimension/callout reference|exact value|unit|what the dimension applies
 NOTE|page|note number|exact technical note
 MATERIAL|page|item number|exact material/specification
 FUNCTION|page|short source-backed explanation of what the shown assembly/component does or how parts relate
+Classify the drawing discipline from printed content: mechanical, electrical, civil/structural, or unconfirmed. For mechanical drawings, capture coupling/part type and nomenclature, item labels, fits, tolerances, material and printed standard/designation numbers. For electrical drawings capture circuit symbols, ratings, terminal and cable identifiers, wiring and protective devices. For civil drawings capture grids, levels, foundation and reinforcement callouts, material grades and notes. State a standard number ONLY when printed on this drawing. Keep printed facts separate from any engineering interpretation; never calculate a tolerance limit without its verified standard table.
 Read visible dimensions, tolerances, fits, threads, diameters, radii, angles, section/callout labels and title-block data. Never infer a missing dimension or function; use [UNREADABLE] when unclear.
 `;
   const parts=[{text:prompt}]; for(const p of batch){parts.push({text:`SOURCE PAGE ${p.page}`});parts.push({inline_data:{mime_type:p.mime||'image/jpeg',data:p.bytes.toString('base64')}});}
@@ -1906,12 +1909,13 @@ function adaptivePreviewStatsV881(pack){
 }
 async function sendAdaptiveExtractionPreviewV881(from,p){
   const pack=ingestPackV878(p),st=adaptivePreviewStatsV881(pack);
+  const drawing=drawingOverviewV8159(pack);
   if(!st.text && !st.items.length && !st.records.length){
     await sendText(from,'Detailed extraction unavailable. Nothing has been stored.');
     return;
   }
   if(!st.large){
-    let body=`EXTRACTED DATA — NOT STORED\n\n${st.text}`;
+    let body=`EXTRACTED DATA — NOT STORED\n\n${drawing?`${drawing.text}\n\n`:''}${st.text}`;
     if(st.items.length){
       const rows=st.items.slice(0,8).map((x,i)=>`${i+1}. ${x.identifier||x.item_no||''} ${x.description||''}${x.quantity?` | Qty: ${x.quantity}${x.unit?` ${x.unit}`:''}`:''}`.trim()).join('\n');
       if(rows && !st.text.includes(rows)) body+=`\n\n${rows}`;
@@ -1921,7 +1925,7 @@ async function sendAdaptiveExtractionPreviewV881(from,p){
   }
   const pdf=tablePdfV880(pack,p.source_filename);
   const base=String(p.source_filename||'extraction').replace(/\.[^.]+$/,'').replace(/[^a-zA-Z0-9._-]+/g,'_').slice(0,70)||'extraction';
-  await sendText(from,`Extraction complete. This file contains ${st.items.length||st.records.length||'large'} detailed item(s), so I prepared a clean review PDF instead of sending long WhatsApp messages.\n\nNothing is stored until you choose Store Data.`);
+  await sendText(from,`Extraction complete. This file contains ${st.items.length||st.records.length||'large'} detailed item(s), so I prepared a clean review PDF instead of sending long WhatsApp messages.${drawing?`\n\n${drawing.text}`:''}\n\nNothing is stored until you choose Store Data.`);
   // This PDF is a private preview of the uploader's own submitted file, not a repository/report export.
   await sendGeneratedDocumentV878(from,pdf,`${base}_review.pdf`,'application/pdf');
 }
@@ -1931,9 +1935,48 @@ async function sendAdaptiveExtractionPreviewV881(from,p){
 // - Any PDF/report generated from stored/retrieved data for any user remains governed by that user's normal authorities/scope.
 async function sendFullExtractionV878(from,p){ return sendAdaptiveExtractionPreviewV881(from,p); }
 function escPdfV879(v){return String(v??'').replace(/\\/g,'\\\\').replace(/\(/g,'\\(').replace(/\)/g,'\\)').replace(/[^\x20-\x7E]/g,'?');}
+function drawingOverviewV8159(pack){
+  const d=pack?.drawing_details||{};
+  const title=(d.title_block||[]).map(x=>sourceValueV8157(x.title)).find(Boolean);
+  const source=[title,(d.title_block||[]).map(x=>sourceValueV8157(x.equipment_assembly)).filter(Boolean).join(' '),
+    ...(pack?.extracted_items||[]).slice(0,12).map(x=>sourceValueV8157(x.description))].filter(Boolean).join(' ');
+  const isDrawing=/(?:DRAWING|SCHEMATIC|LAYOUT)/i.test(String(pack?.document_type||'')) ||
+    (d.title_block||[]).length>0 || (d.dimensions||[]).length>0;
+  if(!isDrawing)return null;
+  const groups=[
+    ['Electrical',/\b(?:electrical|wiring|circuit|single.line|terminal|voltage|transformer|switchgear|cable|motor starter|plc|panel)\b/i],
+    ['Civil',/\b(?:civil|foundation|reinforcement|rebar|concrete|column|beam|footing|grid line|elevation level|structural)\b/i],
+    ['Mechanical',/\b(?:mechanical|shaft|coupling|gear|bearing|flange|shear|pin|keyway|bolt|pulley|roller|hydraulic)\b/i]
+  ];
+  const hits=groups.filter(([,re])=>re.test(source));
+  const discipline=hits.length===1?hits[0][0]:'Engineering (discipline unconfirmed)';
+  const titleBlock=(d.title_block||[])[0]||{};
+  const lines=[`Drawing explanation (${discipline}; source: uploaded drawing)`];
+  if(title)lines.push(`Type / designation: ${title}`);
+  if(sourceValueV8157(titleBlock.drawing_no))lines.push(`Drawing number: ${titleBlock.drawing_no}`);
+  if(sourceValueV8157(titleBlock.revision))lines.push(`Revision: ${titleBlock.revision}`);
+  const dims=(d.dimensions||[]).filter(x=>sourceValueV8157(x.value));
+  const tolerances=dims.filter(x=>/[±+−-]\s*\d|\b(?:[A-Za-z]{1,2}\d{1,2}|tolerance|fit|clearance|interference|runout|datum)\b/i.test([x.value,x.context].join(' ')));
+  const examples=(tolerances.length?tolerances:dims).slice(0,3).map(x=>
+    `${sourceValueV8157(x.context)?`${x.context}: `:''}${x.value}${sourceValueV8157(x.unit)?` ${x.unit}`:''}`);
+  if(examples.length)lines.push(`${tolerances.length?'Fits / tolerances':'Dimensions'} shown: ${examples.join('; ')}`);
+  const materials=(d.materials||[]).map(x=>sourceValueV8157(x.material_spec)).filter(Boolean);
+  if(materials.length)lines.push(`Materials: ${materials.slice(0,3).join('; ')}`);
+  const standards=[...new Set([...(d.notes||[]).map(x=>x.text),...materials,...(pack.extracted_items||[]).map(x=>x.description)]
+    .flatMap(x=>String(x||'').match(/\b(?:ISO|DIN|IEC|IS|ASTM|ASME|EN|BS)\s*[-:]?\s*\d[\w./-]*/gi)||[]))];
+  if(standards.length)lines.push(`Standards printed: ${standards.slice(0,5).join(', ')}`);
+  const parts=(pack.extracted_items||[]).filter(x=>sourceValueV8157(x.item_no)&&sourceValueV8157(x.description));
+  if(parts.length)lines.push(`Parts / callouts: ${parts.slice(0,3).map(x=>`${x.item_no} ${x.description}`).join('; ')}`);
+  const functions=(d.functions||[]).map(x=>sourceValueV8157(x.text)).filter(Boolean);
+  if(functions.length)lines.push(`Function stated in drawing: ${functions[0]}`);
+  lines.push('Missing or unreadable specifications are unconfirmed; no tolerance limits or standard numbers are assumed.');
+  return {discipline,text:lines.join('\n'),lines};
+}
 function reportRowsV880(pack){
   const items=Array.isArray(pack.extracted_items)&&pack.extracted_items.length?pack.extracted_items:(pack.records||[]);
   const d=pack?.drawing_details||{}, extra=[];
+  const overview=drawingOverviewV8159(pack);
+  if(overview)for(const line of overview.lines)extra.push({item_no:'EXPLANATION',identifier:'',description:line,quantity:'',unit:'',remarks:'Source-based drawing interpretation',page:''});
   for(const x of (d.title_block||[])) extra.push({item_no:'DRAWING',identifier:x.drawing_no||'',description:[x.title,x.equipment_assembly].filter(Boolean).join(' | '),quantity:'',unit:'',remarks:[x.revision&&`Rev ${x.revision}`,x.scale&&`Scale ${x.scale}`].filter(Boolean).join(' | '),page:x.page||''});
   for(const x of (d.dimensions||[])) extra.push({item_no:'DIMENSION',identifier:x.reference||'',description:x.context||'',quantity:x.value||'',unit:x.unit||'',remarks:'',page:x.page||''});
   for(const x of (d.notes||[])) extra.push({item_no:'NOTE',identifier:x.note_no||'',description:x.text||'',quantity:'',unit:'',remarks:'',page:x.page||''});
@@ -2200,7 +2243,7 @@ async function extractQueuedIngestV895(from,row,bytesOverride=null){
     const {createHash}=await import('node:crypto');
     const sourceHash=createHash('sha256').update(bytes).digest('hex');
     await pool.query(`UPDATE pending_file_ingests SET source_bytes=$2,source_mime_type=$3,source_sha256=$4,
-      source_purged_at=NULL,confirmation_expires_at=NULL,workflow_state='AI_PROCESSING',extraction_engine_version='V8.15.8',updated_at=now() WHERE id=$1`,[row.id,bytes,effectiveMime,sourceHash]);
+      source_purged_at=NULL,confirmation_expires_at=NULL,workflow_state='AI_PROCESSING',extraction_engine_version='V8.15.9',updated_at=now() WHERE id=$1`,[row.id,bytes,effectiveMime,sourceHash]);
     row.source_bytes=bytes; row.source_mime_type=effectiveMime; row.source_sha256=sourceHash;
     const sourceIsTiffV8135=isTiffSourceV8135(bytes,effectiveMime,row.source_filename||'');
     const pack=await extractMaintenanceV874(bytes,effectiveMime,row.source_filename||'upload',row.source_caption||'');
@@ -2219,7 +2262,7 @@ async function extractQueuedIngestV895(from,row,bytesOverride=null){
       await sendText(from,'This upload is not relevant to LMMM plant / maintenance knowledge. Nothing was stored.'); return true;
     }
     pack.records=verifiedReferenceRowsV8158(pack);
-    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',source_purged_at=NULL,confirmation_expires_at=now()+($3::text||' minutes')::interval,extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.15.8',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack)),TEMP_CONFIRMATION_MINUTES_V8120]);
+    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',source_purged_at=NULL,confirmation_expires_at=now()+($3::text||' minutes')::interval,extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.15.9',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack)),TEMP_CONFIRMATION_MINUTES_V8120]);
     await reliabilityEventV8100(row,'AI_EXTRACTION','SUCCEEDED',pack?._provider||null);
     await setPendingIngestSessionV877(from,row.id); await setIngestModeV874(from,false); await showIngestOptionsV877(from,q.rows[0]); return true;
   }catch(e){
@@ -2411,7 +2454,7 @@ async function queuedStatusV895(from){
   await sendText(from,`Upload: ${r.source_filename||'source'}
 Status: ${r.status}
 Attempts: ${r.retry_count}
-Engine: ${r.extraction_engine_version||'V8.15.8'}
+Engine: ${r.extraction_engine_version||'V8.15.9'}
 Source: ${r.has_source_bytes?'temporarily retained':r.source_media_id?'media reference available':'unavailable'}`);
   return true;
 }
@@ -2429,7 +2472,7 @@ async function processMediaMessageV874(from,m){
     // Queue metadata first; the worker durably saves downloaded bytes before AI extraction.
     const q=await pool.query(`INSERT INTO pending_file_ingests
       (submitted_by_whatsapp,submitted_by_employee_number,source_media_id,source_filename,source_mime_type,source_caption,source_sha256,source_bytes,extracted_rows,status,workflow_state,extraction_engine_version)
-      VALUES($1,$2,$3,$4,$5,$6,NULL,NULL,$7::jsonb,'RECEIVED','RECEIVED','V8.15.8') RETURNING *`,
+      VALUES($1,$2,$3,$4,$5,$6,NULL,NULL,$7::jsonb,'RECEIVED','RECEIVED','V8.15.9') RETURNING *`,
       [normWA(from),u.employee_number,mediaId,filename,mime,caption,JSON.stringify({})]);
     const row=q.rows[0]; await setPendingIngestSessionV877(from,row.id);
     await sendText(from,isAudio?'Voice received. Processing…':'Received. Processing…');
@@ -2446,6 +2489,13 @@ async function processMessage(from,text,payload=''){
   if(cmd==='RETRY_LAST_UPLOAD' || /^retry( extraction| upload)?$/i.test(cmd)){await retryLastQueuedV895(from);return;}
   if(cmd==='INGEST_STATUS' || /^(check |upload |extraction )?status$/i.test(cmd)){await queuedStatusV895(from);return;}
   try{await pool.query(`CREATE TABLE IF NOT EXISTS ui_sessions(whatsapp_number TEXT NOT NULL,session_key TEXT NOT NULL,session_value JSONB,updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),PRIMARY KEY(whatsapp_number,session_key))`);}catch(e){console.error('[SESSION_SCHEMA]',e.message);}
+  // Route WhatsApp action IDs before free-text employee-name lookup. A list reply's
+  // visible title is "Store Data", which otherwise looks like a person's name.
+  if(/^INGEST_/.test(cmd)){
+    const user=await byWA(from);
+    if(!user||user.approval_status!=='approved'||!user.is_active){await sendText(from,'Approved registration required for file actions.');return;}
+    if(await handlePendingIngestCommandV877(from,cmd))return;
+  }
   if(isOwner(from) && /^PURGE_TESTERS$/i.test(cmd)){await sendButtons(from,'Delete all TESTER registrations/profile/contact/roster data? MAIN users and Super Admin are preserved.',[{id:'PURGE_TESTERS_CONFIRM',title:'Confirm Delete'},{id:'BACK',title:'Cancel'}]);return;}
   if(isOwner(from) && cmd==='PURGE_TESTERS_CONFIRM'){const n=await purgeTesterUsersV854(normWA(from));await sendText(from,`✅ Tester cleanup completed.\nTester users removed: ${n}\nMAIN users preserved.`);return;}
   // V8.7.0 Super Admin contact-directory free-text edit continuation.
@@ -2516,7 +2566,7 @@ async function processMessage(from,text,payload=''){
     }
   }
   // V8.7.0 approved-user employee directory: basic public internal fields only.
-  if(!isOwner(from) && selfUser && selfUser.approval_status==='approved' && selfUser.is_active!==false){
+  if(!payload && !isOwner(from) && selfUser && selfUser.approval_status==='approved' && selfUser.is_active!==false){
     const q853=String(text||'').trim();
     const empQuery=/^\d{3,}$/.test(q853);
     const nameQuery=/^[A-Za-z][A-Za-z .'-]{2,50}$/.test(q853) &&
@@ -2691,8 +2741,8 @@ Shift: ${u.shift||'-'}`,[{id:'REMOVE_ME_CONFIRM',title:'Remove Me'},{id:'ACCOUNT
 }
 
 app.get('/health', async (_req,res)=>{
-  try{await pool.query('SELECT 1');res.json({ok:true,version:'8.15.8',phase:'registration-and-file-ingestion',db:true});}
-  catch(e){res.status(500).json({ok:false,version:'8.15.8',error:e.message});}
+  try{await pool.query('SELECT 1');res.json({ok:true,version:'8.15.9',phase:'registration-and-file-ingestion',db:true});}
+  catch(e){res.status(500).json({ok:false,version:'8.15.9',error:e.message});}
 });
 app.get('/webhook',(req,res)=>{
   const mode=req.query['hub.mode'], token=req.query['hub.verify_token'], challenge=req.query['hub.challenge'];
@@ -2738,4 +2788,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.8 VERIFIED DRAWING STORE + FILE-BOUND CONFIRMATION listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.9 DRAWING EXPLANATION + STORE BUTTON ROUTING listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
