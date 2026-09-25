@@ -1,9 +1,10 @@
-// LMMM AI Maintenance V8.15.15 EQUIPMENT CONTEXT AND SEARCH CHOICES
+// LMMM AI Maintenance V8.15.16 SOURCE ARCHIVE DRAWING REFERENCE SAFETY
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
 import pg from 'pg';
 import { inflateRawSync } from 'node:zlib';
+import { readFileSync } from 'node:fs';
 
 const { Pool } = pg;
 const app = express();
@@ -2279,7 +2280,7 @@ async function extractQueuedIngestV895(from,row,bytesOverride=null){
     const {createHash}=await import('node:crypto');
     const sourceHash=createHash('sha256').update(bytes).digest('hex');
     await pool.query(`UPDATE pending_file_ingests SET source_bytes=$2,source_mime_type=$3,source_sha256=$4,
-      source_purged_at=NULL,confirmation_expires_at=NULL,workflow_state='AI_PROCESSING',extraction_engine_version='V8.15.15',updated_at=now() WHERE id=$1`,[row.id,bytes,effectiveMime,sourceHash]);
+      source_purged_at=NULL,confirmation_expires_at=NULL,workflow_state='AI_PROCESSING',extraction_engine_version='V8.15.16',updated_at=now() WHERE id=$1`,[row.id,bytes,effectiveMime,sourceHash]);
     row.source_bytes=bytes; row.source_mime_type=effectiveMime; row.source_sha256=sourceHash;
     const sourceIsTiffV8135=isTiffSourceV8135(bytes,effectiveMime,row.source_filename||'');
     const pack=await extractMaintenanceV874(bytes,effectiveMime,row.source_filename||'upload',row.source_caption||'');
@@ -2298,7 +2299,7 @@ async function extractQueuedIngestV895(from,row,bytesOverride=null){
       await sendText(from,'This upload is not relevant to LMMM plant / maintenance knowledge. Nothing was stored.'); return true;
     }
     pack.records=verifiedReferenceRowsV8158(pack);
-    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',source_purged_at=NULL,confirmation_expires_at=now()+($3::text||' minutes')::interval,extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.15.15',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack)),TEMP_CONFIRMATION_MINUTES_V8120]);
+    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',source_purged_at=NULL,confirmation_expires_at=now()+($3::text||' minutes')::interval,extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.15.16',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack)),TEMP_CONFIRMATION_MINUTES_V8120]);
     await reliabilityEventV8100(row,'AI_EXTRACTION','SUCCEEDED',pack?._provider||null);
     await setPendingIngestSessionV877(from,row.id); await setIngestModeV874(from,false); await showIngestOptionsV877(from,q.rows[0]); return true;
   }catch(e){
@@ -2490,7 +2491,7 @@ async function queuedStatusV895(from){
   await sendText(from,`Upload: ${r.source_filename||'source'}
 Status: ${r.status}
 Attempts: ${r.retry_count}
-Engine: ${r.extraction_engine_version||'V8.15.15'}
+Engine: ${r.extraction_engine_version||'V8.15.16'}
 Source: ${r.has_source_bytes?'temporarily retained':r.source_media_id?'media reference available':'unavailable'}`);
   return true;
 }
@@ -2508,7 +2509,7 @@ async function processMediaMessageV874(from,m){
     // Queue metadata first; the worker durably saves downloaded bytes before AI extraction.
     const q=await pool.query(`INSERT INTO pending_file_ingests
       (submitted_by_whatsapp,submitted_by_employee_number,source_media_id,source_filename,source_mime_type,source_caption,source_sha256,source_bytes,extracted_rows,status,workflow_state,extraction_engine_version)
-      VALUES($1,$2,$3,$4,$5,$6,NULL,NULL,$7::jsonb,'RECEIVED','RECEIVED','V8.15.15') RETURNING *`,
+      VALUES($1,$2,$3,$4,$5,$6,NULL,NULL,$7::jsonb,'RECEIVED','RECEIVED','V8.15.16') RETURNING *`,
       [normWA(from),u.employee_number,mediaId,filename,mime,caption,JSON.stringify({})]);
     const row=q.rows[0]; await setPendingIngestSessionV877(from,row.id);
     await sendText(from,isAudio?'Voice received. Processing…':'Received. Processing…');
@@ -2877,6 +2878,41 @@ async function handleSearchChoiceV81515(from,cmd,user){
   }
   return false;
 }
+let unlinkedPartArchiveV81516;
+function unlinkedDrawingReferencesV81516(subject){
+  // GitHub's preserved source rows are read-only; this lookup never confirms an
+  // equipment link or promotes a value into permanent maintenance records.
+  if(unlinkedPartArchiveV81516===undefined){
+    try{const archive=JSON.parse(readFileSync('data/unresolved_parts.json','utf8'));
+      unlinkedPartArchiveV81516=Array.isArray(archive.records)?archive.records:[];
+    }catch(e){console.error('[UNLINKED_DRAWING_ARCHIVE]',e.message);unlinkedPartArchiveV81516=[];}
+  }
+  const raw=String(subject||'').trim().toUpperCase(),tokens=raw.match(/[A-Z]{3,}/g)||[];
+  const key=tokens.find(t=>!['DRAWINGS','DRAWING','PARTS','HISTORY','JOBS','SOURCES','EQUIPMENT'].includes(t));
+  if(!key)return [];
+  const variant=raw.match(new RegExp(`(?:^|[^A-Z])${key}[- ]?(\\d+)(?:$|[^0-9])`))?.[1];
+  const exactAsset=!!variant,pattern=new RegExp(`(^|[^A-Z])${key}([^A-Z]|$)`);
+  const found=[],seen=new Set();
+  for(const record of unlinkedPartArchiveV81516){
+    const equipment=String(record.equipment||'').trim(),drawing=String(record.drawing||'').trim(),source=String(record.source||'').trim();
+    const equipmentVariant=equipment.toUpperCase().match(new RegExp(`(?:^|[^A-Z])${key}[- ]?(\\d+)(?:$|[^0-9])`))?.[1];
+    if(!pattern.test(equipment.toUpperCase())||variant&&equipmentVariant&&variant!==equipmentVariant||!/[0-9]/.test(drawing)||
+       /\b(?:NM|BAR|MM|DEG|PROCEDURE|CRITERION|TEMPERATURE)\b/i.test(drawing))continue;
+    const signature=`${equipment.toUpperCase()}:${drawing.toUpperCase()}`;
+    if(seen.has(signature))continue;seen.add(signature);
+    found.push({equipment,drawing,source,status:String(record['Equipment Link Status']||'Unresolved')});
+    if(found.length>=5)break;
+  }
+  return found.map(x=>({...x,linkUnconfirmed:exactAsset||x.equipment.toUpperCase()!==raw}));
+}
+async function showUnlinkedDrawingRefsV81516(from,subject){
+  if(!isOwner(from))return false; // Archive lacks per-user and per-section access provenance.
+  const references=unlinkedDrawingReferencesV81516(subject);
+  if(!references.length)return false;
+  const lines=references.map(x=>`• ${x.drawing}\n  Source equipment: ${x.equipment}\n  Source: ${x.source}`).join('\n');
+  await sendText(from,`${subject}: No confirmed drawing is linked to this exact equipment.\nRelated references in the uploaded source archive (equipment link unverified):\n${lines}\nThese references are not stored as confirmed equipment drawings.`.slice(0,2600));
+  return true;
+}
 async function handleUniversalSearchV81513(from,question,user,options={}){
   const {request,rows:allRows,failed,partialFailure}=await universalSearchV81513(from,user,question);
   const language=options.language||await searchLanguageV81515(from,question),te=language==='TE';
@@ -2893,7 +2929,8 @@ async function handleUniversalSearchV81513(from,question,user,options={}){
   }):allRows;
   if(!request.primary){await sendText(from,te?'ఏ equipment, number, part లేదా విషయం గురించి వెతకాలో చెప్పండి.':'Specify an equipment, number, part or subject to search.');return true;}
   if(failed||(partialFailure&&!rows.length)){await sendText(from,'Some data sources are temporarily unavailable. Please try again; I cannot confirm a complete search.');return true;}
-  if(!rows.length){if(!module&&await proposeSearchCorrectionV81515(from,question,user))return true;
+  if(!rows.length){if(module==='DRAWINGS'&&await showUnlinkedDrawingRefsV81516(from,request.exact||request.primary))return true;
+    if(!module&&await proposeSearchCorrectionV81515(from,question,user))return true;
     await sendText(from,te?`${request.primary}: అందుబాటులో ఉన్న, మీకు అనుమతి ఉన్న డేటాలో ఆధారం దొరకలేదు. నిర్ధారించలేను.`:
     `${request.primary}: No source-backed ${module?module.toLowerCase()+' ':''}match in data you can access. Data ledu / confirm cheyyalenu.`);return true;}
   if(!module&&bareAssetQuestionV81515(question,request)){
@@ -3258,8 +3295,8 @@ Shift: ${u.shift||'-'}`,[{id:'REMOVE_ME_CONFIRM',title:'Remove Me'},{id:'ACCOUNT
 }
 
 app.get('/health', async (_req,res)=>{
-  try{await pool.query('SELECT 1');res.json({ok:true,version:'8.15.15',phase:'registration-and-file-ingestion',db:true});}
-  catch(e){res.status(500).json({ok:false,version:'8.15.15',error:e.message});}
+  try{await pool.query('SELECT 1');res.json({ok:true,version:'8.15.16',phase:'registration-and-file-ingestion',db:true});}
+  catch(e){res.status(500).json({ok:false,version:'8.15.16',error:e.message});}
 });
 app.get('/webhook',(req,res)=>{
   const mode=req.query['hub.mode'], token=req.query['hub.verify_token'], challenge=req.query['hub.challenge'];
@@ -3305,4 +3342,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.15 EQUIPMENT CONTEXT AND SEARCH CHOICES listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.16 SOURCE ARCHIVE DRAWING REFERENCE SAFETY listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
