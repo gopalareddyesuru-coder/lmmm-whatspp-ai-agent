@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.9 DRAWING EXPLANATION + STORE BUTTON ROUTING
+// LMMM AI Maintenance V8.15.10 SOURCE COLUMN SAFETY FOR DRAWING PARTS
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -1307,7 +1307,7 @@ async function extractPdfBatchesV897(bytes,mime,filename,caption){
       const p=line.split('|');
       const pg=forcedPage||Number(String(p[1]||'').replace(/\D/g,''))||null;
       const row={page:pg?String(pg):null,item_no:(p[2]||'').trim()||null,identifier:(p[3]||'').trim()||null,description:(p[4]||'').trim()||null,quantity:(p[5]||'').trim()||null,unit:(p[6]||'').trim()||null,remarks:(p.slice(7).join('|')||'').trim()||null};
-      if(row.identifier||row.description) rows.push(row);
+      if(row.identifier||row.description) rows.push(normalizeTechnicalRowV81510(row));
     }
     return rows;
   };
@@ -1320,7 +1320,7 @@ async function extractPdfBatchesV897(bytes,mime,filename,caption){
 Extract EVERY legible printed data row from EVERY page. Do not summarize, sample, merge or omit repeated-looking rows.
 Return ONLY lines in this exact format:
 ROW|printed page number|item number|exact identifier|exact designation/description|quantity|unit|remarks
-Preserve drawing/part identifiers character-for-character. Leave absent fields empty. Never copy the filename into quantity/unit/remarks.
+Preserve drawing/part identifiers character-for-character. UNIT must be a printed measurement unit (mm, kg, nos), never an extra numeric value such as weight per part. Put additional columns in remarks with their printed headings. Leave absent fields empty. Never copy the filename into quantity/unit/remarks.
 Use the actual PDF page number (1,2,3...). Continue through the final page.${expected?` Expected PDF pages: ${expected}.`:''}`;
   const body={contents:[{parts:[{text:prompt},{inline_data:{mime_type:mime,data:bytes.toString('base64')}}]}],generationConfig:{maxOutputTokens:32768}};
   let gx=null;
@@ -1466,6 +1466,22 @@ function sourceValueV8157(v){
   const t=String(v??'').trim();
   return !t || /^(?:\[?UNREADABLE\]?|UNKNOWN|N\/A|NULL|NONE|NOT (?:VISIBLE|AVAILABLE|SPECIFIED)|-)$/i.test(t)?null:t;
 }
+function normalizeTechnicalRowV81510(input){
+  const row={...input};
+  // AI sometimes puts a drawing's unit weight (or another numeric column) in
+  // the ROW "unit" slot. A bare number cannot be a verified quantity unit.
+  if(/^[-+]?\d+(?:[.,]\d+)?$/.test(String(row.unit||'').trim())){
+    row.unclassified_source_value=row.unit;
+    row.unit=null;
+  }
+  // A repeated item number in description is not a part designation.
+  if(row.item_no && String(row.description||'').trim()===String(row.item_no).trim() &&
+     sourceValueV8157(row.identifier) && /[A-Za-z]/.test(row.identifier)){
+    row.description=row.identifier;
+    row.identifier=null;
+  }
+  return row;
+}
 function drawingRowsV8157(details={}){
   const rows=[];
   const add=(x,identifier,description,remarks=null,item=null,unit=null)=>{
@@ -1493,7 +1509,7 @@ function parseDelimitedRowsV8133(txt,forcedPage=null){
     if(/^MATERIAL\|/i.test(line)){const p=line.split('|');drawing_details.materials.push({page:String(forcedPage||p[1]||'')||null,item_no:(p[2]||'').trim()||null,material_spec:(p.slice(3).join('|')||'').trim()||null});continue;}
     if(/^FUNCTION\|/i.test(line)){const p=line.split('|');drawing_details.functions.push({page:String(forcedPage||p[1]||'')||null,text:(p.slice(2).join('|')||'').trim()||null});continue;}
     if(!/^ROW\|/i.test(line))continue; const p=line.split('|');
-    rows.push({page:String(forcedPage||Number(String(p[1]||'').replace(/\D/g,''))||'')||null,item_no:(p[2]||'').trim()||null,identifier:(p[3]||'').trim()||null,description:(p[4]||'').trim()||null,quantity:(p[5]||'').trim()||null,unit:(p[6]||'').trim()||null,remarks:(p.slice(7).join('|')||'').trim()||null});
+    rows.push(normalizeTechnicalRowV81510({page:String(forcedPage||Number(String(p[1]||'').replace(/\D/g,''))||'')||null,item_no:(p[2]||'').trim()||null,identifier:(p[3]||'').trim()||null,description:(p[4]||'').trim()||null,quantity:(p[5]||'').trim()||null,unit:(p[6]||'').trim()||null,remarks:(p.slice(7).join('|')||'').trim()||null}));
   }
   return {rows:rows.filter(x=>sourceValueV8157(x.identifier)||sourceValueV8157(x.description)),docType,title,drawing_details};
 }
@@ -1502,6 +1518,7 @@ async function openAIImageBatchV8133(batch,filename,caption,timeoutMs=150000){
   const prompt=`Classify and extract these consecutive pages from one LMMM industrial source. Filename: ${filename}. Caption: ${caption||'(none)'}.
 First line MUST be DOC|<MANUAL|PARTS_LIST|DRAWING_LIST|EQUIPMENT_DATA|JOB|HISTORY|DEFECT|FORMAT|PERMIT|BOQ|LOGBOOK|INSPECTION|TECHNICAL_REFERENCE|OTHER>|<short factual title based on heading/content>.
 Then extract EVERY legible row/maintenance line as ROW|page|item no|exact identifier|exact description/designation|quantity|unit|remarks.
+Use UNIT only for a printed measurement unit such as mm, kg, or nos. Put each additional numeric column and its printed heading in remarks; do not append a weight or size to Qty. Never treat a part name as a part number.
 Preserve exact IDs, drawing/part numbers, dates and quantities. Do not guess. Do not copy filename numbers into data fields. Unreadable=[UNREADABLE].
 If the source is an engineering drawing/assembly/parts drawing, ALSO extract source-backed drawing intelligence using these exact line formats BEFORE ROW lines:
 DRAWING|page|exact drawing number|exact title/designation|revision|scale|equipment/assembly
@@ -1521,7 +1538,7 @@ Read visible dimensions, tolerances, fits, threads, diameters, radii, angles, se
 }
 async function openRouterImageBatchV8134(batch,filename,caption,timeoutMs=90000){
   if(!OPENROUTER_API_KEY) throw new Error('OPENROUTER_API_KEY missing');
-  const prompt=`Classify and extract these consecutive pages from one LMMM industrial source. Filename: ${filename}. Caption: ${caption||'(none)'}. First line DOC|<MANUAL|PARTS_LIST|DRAWING_LIST|EQUIPMENT_DATA|JOB|HISTORY|DEFECT|FORMAT|PERMIT|BOQ|LOGBOOK|INSPECTION|TECHNICAL_REFERENCE|OTHER>|<short factual title>. Then EVERY legible row as ROW|page|item no|exact identifier|exact description/designation|quantity|unit|remarks. Preserve exact values; never guess.
+  const prompt=`Classify and extract these consecutive pages from one LMMM industrial source. Filename: ${filename}. Caption: ${caption||'(none)'}. First line DOC|<MANUAL|PARTS_LIST|DRAWING_LIST|EQUIPMENT_DATA|JOB|HISTORY|DEFECT|FORMAT|PERMIT|BOQ|LOGBOOK|INSPECTION|TECHNICAL_REFERENCE|OTHER>|<short factual title>. Then EVERY legible row as ROW|page|item no|exact identifier|exact description/designation|quantity|unit|remarks. UNIT is only a printed measurement unit, never another numeric column such as a part weight; include other numeric columns with their printed headings in remarks. Never use a part name as a part number. Preserve exact values; never guess.
 If the source is an engineering drawing/assembly/parts drawing, ALSO extract source-backed drawing intelligence using these exact line formats BEFORE ROW lines:
 DRAWING|page|exact drawing number|exact title/designation|revision|scale|equipment/assembly
 DIM|page|dimension/callout reference|exact value|unit|what the dimension applies to
@@ -1541,6 +1558,7 @@ async function geminiImageBatchV8133(batch,filename,caption){
   const prompt=`Classify and extract these consecutive pages from one LMMM industrial source. Filename: ${filename}. Caption: ${caption||'(none)'}.
 First line DOC|<MANUAL|PARTS_LIST|DRAWING_LIST|EQUIPMENT_DATA|JOB|HISTORY|DEFECT|FORMAT|PERMIT|BOQ|LOGBOOK|INSPECTION|TECHNICAL_REFERENCE|OTHER>|<short factual title based on heading/content>.
 Then EVERY legible row as ROW|page|item no|exact identifier|exact description/designation|quantity|unit|remarks. Preserve exact source values; never guess.
+Use UNIT only for a printed measurement unit, never for a numeric column such as a part weight. Put additional numeric values with printed headings in remarks; a part name is a description, not a part number.
 If the source is an engineering drawing/assembly/parts drawing, ALSO extract source-backed drawing intelligence using these exact line formats BEFORE ROW lines:
 DRAWING|page|exact drawing number|exact title/designation|revision|scale|equipment/assembly
 DIM|page|dimension/callout reference|exact value|unit|what the dimension applies to
@@ -1578,7 +1596,7 @@ async function extractLargeTiffV8133(bytes,mime,filename,caption){
         }
         if(!out&&GROQ_API_KEY){
           try{
-            const parts=[{text:`Extract every legible technical row and drawing detail from SOURCE PAGE ${page} of ${filename}. Preserve exact identifiers, descriptions, quantities, units, dimensions and notes. Output DOC|TECHNICAL_REFERENCE|<factual title>. For drawings also output DRAWING|page|drawing number|title|revision|scale|equipment/assembly, DIM|page|reference|exact value|unit|context, NOTE|page|note number|exact note, MATERIAL|page|item|material/specification, FUNCTION|page|source-backed assembly/component explanation. Then ROW|${page}|item no|exact identifier|exact description/designation|quantity|unit|remarks. Never guess; unreadable=[UNREADABLE].`},{inline_data:{mime_type:pageMime,data:jpg.toString('base64')}}];
+            const parts=[{text:`Extract every legible technical row and drawing detail from SOURCE PAGE ${page} of ${filename}. Preserve exact identifiers, descriptions, quantities, units, dimensions and notes. Output DOC|TECHNICAL_REFERENCE|<factual title>. For drawings also output DRAWING|page|drawing number|title|revision|scale|equipment/assembly, DIM|page|reference|exact value|unit|context, NOTE|page|note number|exact note, MATERIAL|page|item|material/specification, FUNCTION|page|source-backed assembly/component explanation. Then ROW|${page}|item no|exact identifier|exact description/designation|quantity|unit|remarks. UNIT is a printed measurement unit only: put numeric part weight or size with its printed heading in remarks, not in UNIT. Never use a part name as a part number. Never guess; unreadable=[UNREADABLE].`},{inline_data:{mime_type:pageMime,data:jpg.toString('base64')}}];
             const gx=await groqGenerateV8110({contents:[{parts}],generationConfig:{maxOutputTokens:8192}},20000);
             const gj=await gx.response.json(); out={text:(gj.candidates?.[0]?.content?.parts||[]).map(x=>x.text||'').join(''),provider:'GROQ',model:gx.model};
             if(!out.text.trim()) throw new Error('Groq TIFF empty response');
@@ -1633,7 +1651,7 @@ Preserve identifiers character-for-character. Do not invent values. Continue unt
     if(/^DOC\|/i.test(line)){const p=line.split('|');docType=(p[1]||docType).trim().toUpperCase().replace(/\s+/g,'_');title=(p.slice(2).join('|')||title).trim();continue;}
     if(!/^ROW\|/i.test(line)) continue;
     const p=line.split('|');
-    rows.push({page:(p[1]||'').trim()||null,item_no:(p[2]||'').trim()||null,identifier:(p[3]||'').trim()||null,description:(p[4]||'').trim()||null,quantity:(p[5]||'').trim()||null,unit:(p[6]||'').trim()||null,remarks:(p.slice(7).join('|')||'').trim()||null});
+    rows.push(normalizeTechnicalRowV81510({page:(p[1]||'').trim()||null,item_no:(p[2]||'').trim()||null,identifier:(p[3]||'').trim()||null,description:(p[4]||'').trim()||null,quantity:(p[5]||'').trim()||null,unit:(p[6]||'').trim()||null,remarks:(p.slice(7).join('|')||'').trim()||null}));
   }
   if(!rows.length) throw new Error('No structured rows were returned from technical reference');
   const cleanRows=rows.filter((x,i,a)=>{
@@ -1871,7 +1889,8 @@ function ingestPreviewV877(packOrRows,filename){
   const rows=Array.isArray(pack.records)?pack.records:[];
   const recordReview=rows.filter(x=>String(x.confidence||'').toUpperCase()==='NEEDS_REVIEW'||(!x.equipment && !['DRAWING_DOCS','MANUAL_REFERENCE'].includes(String(x.module||'').toUpperCase()))).length;
   const reviewPages=Array.isArray(pack.needs_review_pages)?pack.needs_review_pages.length:0;
-  const review=recordReview+reviewPages+(pack.needs_review&&!reviewPages?1:0);
+  const reviewFields=(pack.extracted_items||[]).filter(x=>normalizeTechnicalRowV81510(x).unclassified_source_value).length;
+  const review=recordReview+reviewPages+reviewFields+(pack.needs_review&&!reviewPages?1:0);
   const lines=rows.slice(0,5).map((x,i)=>`${i+1}. ${String(x.module||'NEEDS_REVIEW').toUpperCase()} | ${x.equipment||'Equipment: not confirmed'} | ${x.event_date||'Date: not confirmed'}\n${String(x.description||'-').slice(0,220)}`);
   const items=Array.isArray(pack.extracted_items)?pack.extracted_items.length:0;
   return `File identified & extracted — NOT STORED\nSource: ${filename}\nFile Type: ${pack.document_type||'OTHER'}\nLanguage: ${(pack.detected_languages||[]).join(', ')||'Not confirmed'}\nRecords: ${rows.length} | Detailed items: ${items}\nNeeds Review: ${review}\n\n${String(pack.document_summary||'').slice(0,700)}`;
@@ -1917,7 +1936,9 @@ async function sendAdaptiveExtractionPreviewV881(from,p){
   if(!st.large){
     let body=`EXTRACTED DATA — NOT STORED\n\n${drawing?`${drawing.text}\n\n`:''}${st.text}`;
     if(st.items.length){
-      const rows=st.items.slice(0,8).map((x,i)=>`${i+1}. ${x.identifier||x.item_no||''} ${x.description||''}${x.quantity?` | Qty: ${x.quantity}${x.unit?` ${x.unit}`:''}`:''}`.trim()).join('\n');
+      const rows=st.items.slice(0,8).map((item,i)=>{const x=normalizeTechnicalRowV81510(item);
+        return `${i+1}. ${x.item_no||''} ${x.description||x.identifier||''}${x.quantity?` | Qty: ${x.quantity}${x.unit?` ${x.unit}`:''}`:''}${x.unclassified_source_value?` | Other: ${x.unclassified_source_value} (column unconfirmed)`:''}`.trim();
+      }).join('\n');
       if(rows && !st.text.includes(rows)) body+=`\n\n${rows}`;
     }
     await sendText(from,body.slice(0,3800));
@@ -1982,7 +2003,7 @@ function reportRowsV880(pack){
   for(const x of (d.notes||[])) extra.push({item_no:'NOTE',identifier:x.note_no||'',description:x.text||'',quantity:'',unit:'',remarks:'',page:x.page||''});
   for(const x of (d.materials||[])) extra.push({item_no:'MATERIAL',identifier:x.item_no||'',description:x.material_spec||'',quantity:'',unit:'',remarks:'',page:x.page||''});
   for(const x of (d.functions||[])) extra.push({item_no:'FUNCTION',identifier:'',description:x.text||'',quantity:'',unit:'',remarks:'',page:x.page||''});
-  return [...extra,...items.map(x=>x||{})];
+  return [...extra,...items.map(x=>normalizeTechnicalRowV81510(x||{}))];
 }
 function reportColumnsV880(rows){
   const keys=[...new Set(rows.flatMap(x=>Object.keys(x||{})))];
@@ -2146,7 +2167,8 @@ async function storePendingVerifiedV877(from,p){
   if(review){const missing=rows.filter(x=>String(x.confidence||'').toUpperCase()==='NEEDS_REVIEW'||(!x.equipment&&!['DRAWING_DOCS','MANUAL_REFERENCE'].includes(String(x.module||'').toUpperCase()))).slice(0,8).map((x,i)=>`${i+1}. ${x.module||'NEEDS_REVIEW'} — ${!x.equipment?'Equipment missing/uncertain; ':''}${!x.event_date?'Date missing/uncertain; ':''}${x.description||''}`).join('\n');await sendText(from,`Not stored completely because ${review} record(s) need confirmation.\n\n${missing}\n\nSend the correct source-backed details in a simple message, for example:\nEDIT 1 | Equipment=WBF-2 | Date=2026-09-22 | Module=DEFECT\n\nThen choose Store Data again.`);return;}
   await purgeConfirmedSourceBytesV8120(p.id);
   await clearPendingIngestV877(from,p.id,'STORED');
-  await sendText(from,`✅ Verified maintenance data stored\nRecords stored: ${saved}\nDuplicates skipped: ${dupe}\nSource: ${p.source_filename}`);
+  const unclassified=(pack.extracted_items||[]).filter(x=>normalizeTechnicalRowV81510(x).unclassified_source_value).length;
+  await sendText(from,`✅ Verified maintenance reference stored\nRecords stored: ${saved}\nDuplicates skipped: ${dupe}\nSource: ${p.source_filename}${unclassified?`\n${unclassified} extracted numeric column(s) still need source review; do not treat these as units.`:''}`);
 }
 async function handlePendingIngestCommandV877(from,cmd){
   if(!/^INGEST_/.test(cmd) && !/^EDIT\s+\d+\s*\|/i.test(cmd))return false;
@@ -2243,7 +2265,7 @@ async function extractQueuedIngestV895(from,row,bytesOverride=null){
     const {createHash}=await import('node:crypto');
     const sourceHash=createHash('sha256').update(bytes).digest('hex');
     await pool.query(`UPDATE pending_file_ingests SET source_bytes=$2,source_mime_type=$3,source_sha256=$4,
-      source_purged_at=NULL,confirmation_expires_at=NULL,workflow_state='AI_PROCESSING',extraction_engine_version='V8.15.9',updated_at=now() WHERE id=$1`,[row.id,bytes,effectiveMime,sourceHash]);
+      source_purged_at=NULL,confirmation_expires_at=NULL,workflow_state='AI_PROCESSING',extraction_engine_version='V8.15.10',updated_at=now() WHERE id=$1`,[row.id,bytes,effectiveMime,sourceHash]);
     row.source_bytes=bytes; row.source_mime_type=effectiveMime; row.source_sha256=sourceHash;
     const sourceIsTiffV8135=isTiffSourceV8135(bytes,effectiveMime,row.source_filename||'');
     const pack=await extractMaintenanceV874(bytes,effectiveMime,row.source_filename||'upload',row.source_caption||'');
@@ -2262,7 +2284,7 @@ async function extractQueuedIngestV895(from,row,bytesOverride=null){
       await sendText(from,'This upload is not relevant to LMMM plant / maintenance knowledge. Nothing was stored.'); return true;
     }
     pack.records=verifiedReferenceRowsV8158(pack);
-    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',source_purged_at=NULL,confirmation_expires_at=now()+($3::text||' minutes')::interval,extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.15.9',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack)),TEMP_CONFIRMATION_MINUTES_V8120]);
+    const q=await pool.query(`UPDATE pending_file_ingests SET status='PENDING_CONFIRMATION',workflow_state='CONFIRMATION_PENDING',source_purged_at=NULL,confirmation_expires_at=now()+($3::text||' minutes')::interval,extracted_rows=$2::jsonb,last_error=NULL,next_retry_at=NULL,locked_at=NULL,extraction_engine_version='V8.15.10',updated_at=now() WHERE id=$1 RETURNING *`,[row.id,JSON.stringify(packForDBV878(pack)),TEMP_CONFIRMATION_MINUTES_V8120]);
     await reliabilityEventV8100(row,'AI_EXTRACTION','SUCCEEDED',pack?._provider||null);
     await setPendingIngestSessionV877(from,row.id); await setIngestModeV874(from,false); await showIngestOptionsV877(from,q.rows[0]); return true;
   }catch(e){
@@ -2454,7 +2476,7 @@ async function queuedStatusV895(from){
   await sendText(from,`Upload: ${r.source_filename||'source'}
 Status: ${r.status}
 Attempts: ${r.retry_count}
-Engine: ${r.extraction_engine_version||'V8.15.9'}
+Engine: ${r.extraction_engine_version||'V8.15.10'}
 Source: ${r.has_source_bytes?'temporarily retained':r.source_media_id?'media reference available':'unavailable'}`);
   return true;
 }
@@ -2472,7 +2494,7 @@ async function processMediaMessageV874(from,m){
     // Queue metadata first; the worker durably saves downloaded bytes before AI extraction.
     const q=await pool.query(`INSERT INTO pending_file_ingests
       (submitted_by_whatsapp,submitted_by_employee_number,source_media_id,source_filename,source_mime_type,source_caption,source_sha256,source_bytes,extracted_rows,status,workflow_state,extraction_engine_version)
-      VALUES($1,$2,$3,$4,$5,$6,NULL,NULL,$7::jsonb,'RECEIVED','RECEIVED','V8.15.9') RETURNING *`,
+      VALUES($1,$2,$3,$4,$5,$6,NULL,NULL,$7::jsonb,'RECEIVED','RECEIVED','V8.15.10') RETURNING *`,
       [normWA(from),u.employee_number,mediaId,filename,mime,caption,JSON.stringify({})]);
     const row=q.rows[0]; await setPendingIngestSessionV877(from,row.id);
     await sendText(from,isAudio?'Voice received. Processing…':'Received. Processing…');
@@ -2741,8 +2763,8 @@ Shift: ${u.shift||'-'}`,[{id:'REMOVE_ME_CONFIRM',title:'Remove Me'},{id:'ACCOUNT
 }
 
 app.get('/health', async (_req,res)=>{
-  try{await pool.query('SELECT 1');res.json({ok:true,version:'8.15.9',phase:'registration-and-file-ingestion',db:true});}
-  catch(e){res.status(500).json({ok:false,version:'8.15.9',error:e.message});}
+  try{await pool.query('SELECT 1');res.json({ok:true,version:'8.15.10',phase:'registration-and-file-ingestion',db:true});}
+  catch(e){res.status(500).json({ok:false,version:'8.15.10',error:e.message});}
 });
 app.get('/webhook',(req,res)=>{
   const mode=req.query['hub.mode'], token=req.query['hub.verify_token'], challenge=req.query['hub.challenge'];
@@ -2788,4 +2810,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.9 DRAWING EXPLANATION + STORE BUTTON ROUTING listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.10 SOURCE COLUMN SAFETY FOR DRAWING PARTS listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
