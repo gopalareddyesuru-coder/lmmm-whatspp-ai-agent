@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.21 COMPLETE ECS DRAWING SEARCH
+// LMMM AI Maintenance V8.15.22 SEARCH COVERAGE AND HISTORY ANSWERS
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -2540,7 +2540,7 @@ async function processMediaMessageV874(from,m){
 function documentQuestionIntentV81511(text){
   const s=String(text||'').trim();
   return !!s && (/[?？]/.test(s) || /[\u0c00-\u0c7f]/.test(s) || /^\d{8,}$/.test(s) || /^(?:bp|ecs)[- ]?[12]?$/i.test(s) ||
-    /\b(bloom pusher|ecs|shear pin|trunnion|coupling|furnace|hydraulic|pump|motor|shaft|gearbox|bearing)\b/i.test(s) ||
+    /\b(bloom pusher|ecs|bdm|downcomer|nitrogen|leak|burst|puncture|replacement|replaced|incident|shear pin|trunnion|coupling|furnace|hydraulic|pump|motor|shaft|gearbox|bearing)\b/i.test(s) ||
     /^(ask|explain|describe|tell me|what|which|where|why|how|does|is there|show me|find|check|verify|lookup|drawing|manual|document|file|part|dimension|tolerance|material|standard|specification|meaning|doubt|query|history|jobs|job|spares|spare|equipment|sap|defects|defect|smp|sop|maintenance|production|vibration)\b/i.test(s) ||
     /\b(explain|drawing|manual|document|tolerance|dimension|specification|meaning|gurinchi|enti|entha|cheppandi|deniki|sambandhanchindi|samjhao|batao|history|jobs|job|spares|spare|equipment|sap|defects|defect|smp|sop)\b/i.test(s));
 }
@@ -2926,8 +2926,10 @@ async function universalSearchV81513(from,user,question,archiveMode='ALL'){
   if(isOwner(from)){
     try{archived=sourceArchiveRowsV81517(question,request,archiveMode);}catch(e){archiveFailure=true;console.error('[EQUIPMENT_SOURCE_ARCHIVE]',e.message);}
   }
+  // Each source has a bounded query. A bound reached means the search may have more rows.
+  const truncated=results.some(x=>x.status==='fulfilled'&&[25,41,51,61,81].includes(x.value.length))||archived.length>=25;
   return {request,rows:[...relevant,...archived],failed:results.every(x=>x.status==='rejected')&&!archived.length,
-    partialFailure:results.some(x=>x.status==='rejected')||archiveFailure};
+    truncated,partialFailure:results.some(x=>x.status==='rejected')||archiveFailure};
 }
 async function searchLanguageV81515(from,question){
   const old=documentSessionValueV81511(await safeSessionV855(from,'SEARCH_LANGUAGE'));
@@ -2989,6 +2991,7 @@ async function showAssetChoicesV81515(from,question,rows,language,warning=''){
 }
 async function handleSearchChoiceV81515(from,cmd,user){
   if(cmd==='MAINT_DRAW_MORE'){await showDrawingPageV81521(from,user,true);return true;}
+  if(cmd==='MAINT_RESULT_MORE'){await showSearchPageV81522(from,user,true);return true;}
   const state=documentSessionValueV81511(await safeSessionV855(from,'MAINT_SEARCH_FLOW'));
   if(!state?.query||state.expiresAt<Date.now()){
     await sendText(from,'Search selection expired. Send the equipment or subject again.');return true;
@@ -3131,6 +3134,12 @@ function parseEcsDrawingV81521(row){
     const index=fields.findIndex(x=>/^\d{7,}(?:\.0)?$/.test(x));
     if(index>=0){number=fields[index].replace(/\.0$/,'');title=fields.slice(index+1).find(x=>/[A-Z]{3}/i.test(x))||'';}
   }
+  if(!number&&row.content_type==='DRAWING'&&/^(?:LMMM\s*\/\s*M|PD-LMMM)/i.test(fields[1]||'')){
+    number=fields[1];title=[fields[2],fields[4]].filter(Boolean).join(' ');
+  }
+  if(!number){const index=fields.findIndex(x=>/^\d{7,}(?:\.0)?$/.test(x));
+    if(index>=0){number=fields[index].replace(/\.0$/,'');title=fields.slice(index+1).find(x=>/[A-Z]{3}/i.test(x))||'';}
+  }
   number=String(number||'').replace(/\.0$/,'').trim();title=String(title||'').replace(/\s+/g,' ').trim();
   if(!/^(?:\d{7,}|(?:LMMM\s*\/\s*M|PD-LMMM)[\w/(). -]+)$/i.test(number)||
     !/[a-z]{3}/i.test(title)||/^(?:\?+|unreadable)$/i.test(title))return null;
@@ -3138,15 +3147,51 @@ function parseEcsDrawingV81521(row){
   const one=/\b(?:ECS|FURNACE|WBF)[ -]?1\b/.test(context),two=/\b(?:ECS|FURNACE|WBF)[ -]?2\b/.test(context);
   return {number,title,variant:one&&!two?'1':two&&!one?'2':'',key:number.toUpperCase().replace(/\s+/g,'')};
 }
+function readableSearchItemV81522(row,request){
+  const content=conciseSourceEvidenceV81520(row,request).excerpt;
+  return `${row.date?row.date+' — ':''}${row.title&&row.title!==content?row.title+' — ':''}${content}`.replace(/\s+/g,' ').trim().slice(0,180);
+}
+async function showSearchPageV81522(from,user,more=false){
+  if(!(await hasAuthorityV874(user,'VIEW')))return false;
+  const state=documentSessionValueV81511(await safeSessionV855(from,'MAINT_RESULT_PAGE'));
+  if(!state?.items||state.expiresAt<Date.now()){await sendText(from,'Results expired. Search again.');return true;}
+  const start=more?state.offset||0:0,items=state.items.slice(start,start+20);
+  if(!items.length){await sendText(from,'No more matches.');return true;}
+  // WhatsApp text messages have a length limit. Keep every result visible, in several messages if needed.
+  let chunk=`Matches ${start+1}–${start+items.length} of ${state.items.length}:`;
+  for(let i=0;i<items.length;i++){
+    const line=`\n${start+i+1}. ${items[i]}`;
+    if(chunk.length+line.length>3000){await sendText(from,chunk);chunk='';}
+    chunk+=line;
+  }
+  if(chunk)await sendText(from,chunk);
+  state.offset=start+items.length;await saveDocumentSessionV81511(from,'MAINT_RESULT_PAGE',state);
+  if(state.offset<state.items.length)await sendButtons(from,'More results?', [{id:'MAINT_RESULT_MORE',title:'More results'}]);
+  return true;
+}
+async function sendFullDrawingPdfV81522(from,user,state){
+  if(!(await hasAuthorityV874(user,'VIEW'))||!(await hasAuthorityV874(user,'PDF')))return false;
+  const items=state.items.map((x,i)=>({item_no:i+1,description:`${x.number} — ${x.title}${x.generic?' (furnace unspecified)':''}`,remarks:''}));
+  const bytes=tablePdfV880({document_type:'DRAWING_SEARCH',extracted_items:items},`${state.label}: ${items.length} distinct drawing references`);
+  await sendGeneratedDocumentV878(from,bytes,'lmmm_drawing_results.pdf','application/pdf');return true;
+}
 async function showDrawingPageV81521(from,user,more=false){
   if(!isOwner(from)||!(await hasAuthorityV874(user,'VIEW')))return false;
   const state=documentSessionValueV81511(await safeSessionV855(from,'MAINT_DRAW_PAGE'));
   if(!state?.items||state.expiresAt<Date.now()){await sendText(from,'Drawing results expired. Search ECS again.');return true;}
-  const start=more?state.offset||0:0,items=state.items.slice(start,start+8);
+  const start=more?state.offset||0:0,items=state.items.slice(start,start+20);
   if(!items.length){await sendText(from,'No more drawing matches.');return true;}
-  await sendText(from,`${state.label} drawings (${start+1}–${start+items.length} of ${state.items.length}):\n${items.map((x,i)=>`${start+i+1}. ${x.number} — ${x.title}${x.generic?' (furnace unspecified)':''}`).join('\n')}`.slice(0,1900));
+  let chunk=`${state.label} drawings (${start+1}–${start+items.length} of ${state.items.length}):`;
+  for(let i=0;i<items.length;i++){
+    const line=`\n${start+i+1}. ${items[i].number} — ${items[i].title}${items[i].generic?' (furnace unspecified)':''}`;
+    if(chunk.length+line.length>3000){await sendText(from,chunk);chunk='';}
+    chunk+=line;
+  }
+  if(chunk)await sendText(from,chunk);
   state.offset=start+items.length;await saveDocumentSessionV81511(from,'MAINT_DRAW_PAGE',state);
-  if(state.offset<state.items.length)await sendButtons(from,'More drawings?', [{id:'MAINT_DRAW_MORE',title:'More drawings'}]);
+  if(state.offset<state.items.length){
+    if(!(await sendFullDrawingPdfV81522(from,user,state)))await sendButtons(from,'More drawings?', [{id:'MAINT_DRAW_MORE',title:'More drawings'}]);
+  }
   return true;
 }
 async function searchEcsDrawingsV81521(from,question,user){
@@ -3155,7 +3200,7 @@ async function searchEcsDrawingsV81521(from,question,user){
   if(!/(^|[^A-Z])ECS(?:[- ]?[12])?(?![A-Z])/.test(term)||!/(?:DRAWING|DRAWINGS|DRG)/.test(term))return false;
   const variant=term.match(/\bECS[- ]?([12])\b/)?.[1]||'';
   // File names are provenance, not equipment location: a BAR MILL list may contain furnace rows.
-  const result=await pool.query(`SELECT source_file,location,source_text FROM lmmm_source_review
+  const result=await pool.query(`SELECT source_file,location,source_text,content_type FROM lmmm_source_review
     WHERE (content_type='DRAWING' OR source_file ~* 'drawings list|drg list|tracings list|drg_pd')
       AND source_text ~* '(^|[^[:alnum:]])ECS([^[:alnum:]]|$)'
     ORDER BY source_file,location LIMIT 600`);
@@ -3173,9 +3218,33 @@ async function searchEcsDrawingsV81521(from,question,user){
   await saveDocumentSessionV81511(from,'MAINT_DRAW_PAGE',{items,offset:0,label:variant?`ECS / Furnace-${variant} references`:'ECS references',expiresAt:Date.now()+30*60000});
   return showDrawingPageV81521(from,user);
 }
+async function searchDrawingCatalogV81522(from,question,user){
+  if(!isOwner(from)||!(await hasAuthorityV874(user,'VIEW')))return false;
+  const q=String(question||'').trim();
+  if(!/\b(?:drawings?|drg)\b/i.test(q))return false;
+  const request=universalTermsV81513(q),term=request.primary;
+  if(!term||term.length<3||/^\d{7,}$/.test(term))return false;
+  if(/^ecs(?:[12])?$/i.test(term))return searchEcsDrawingsV81521(from,question,user);
+  const token=term.replace(/[^\p{L}\p{N} -]/gu,'').trim();
+  if(token.length<3)return false;
+  const result=await pool.query(`SELECT source_file,location,source_text,content_type FROM lmmm_source_review
+    WHERE (content_type='DRAWING' OR source_file ~* 'drawings list|drg list|tracings list|drg_pd')
+      AND source_text ILIKE $1 ORDER BY source_file,location LIMIT 5001`,[`%${token}%`]);
+  const byNumber=new Map();
+  for(const row of result.rows){const item=parseEcsDrawingV81521(row);if(!item)continue;
+    const old=byNumber.get(item.key);
+    if(!old||item.title.length>old.title.length)byNumber.set(item.key,item);
+  }
+  if(!byNumber.size)return false;
+  if(result.rows.length>5000){await sendText(from,'Too many drawing-list rows to confirm a complete result. Add an equipment or part name.');return true;}
+  const items=[...byNumber.values()].sort((a,b)=>a.number.localeCompare(b.number,undefined,{numeric:true}));
+  await saveDocumentSessionV81511(from,'MAINT_DRAW_PAGE',{items,offset:0,label:term,expiresAt:Date.now()+30*60000});
+  return showDrawingPageV81521(from,user);
+}
 async function handleUniversalSearchV81513(from,question,user,options={}){
   if((!options.module||options.module==='DRAWINGS')&&await searchEcsDrawingsV81521(from,question,user))return true;
-  const {request,rows:allRows,failed,partialFailure}=await universalSearchV81513(from,user,question,options.module||'ALL');
+  if((!options.module||options.module==='DRAWINGS')&&await searchDrawingCatalogV81522(from,question,user))return true;
+  const {request,rows:allRows,failed,partialFailure,truncated}=await universalSearchV81513(from,user,question,options.module||'ALL');
   const language=options.language||await searchLanguageV81515(from,question),te=language==='TE';
   const module=options.module;
   const rows=filterSearchRowsV81518(allRows,module);
@@ -3213,6 +3282,32 @@ async function handleUniversalSearchV81513(from,question,user,options={}){
     if(!partialFailure)await sendSearchExportButtonsV81518(from,user,question,module,rows.length);return true;
   }
   const strong=!!request.exact;
+  const asksIncident=/\b(?:when|date|dates|why|how|previous|earlier|happen|happened|replac(?:e|ed)|leak|burst|puncture|problem|issue|incident|repair|fixed|chesam|eppudu|appudu|mundu)\b/i.test(question)&&
+    !/\b(?:drawings?|drg)\b/i.test(question);
+  if(asksIncident){
+    const eventRows=rows.filter(r=>/job|defect|event|history|maintenance|source line/i.test(r.kind));
+    if(eventRows.length){
+      const evidence=eventRows.slice(0,15).map(r=>universalEvidenceV81513(r,request)).join('\n\n').slice(0,19000);
+      const prompt=`Answer this maintenance incident question using only these access-authorized records. State recorded incident date(s), observed problem, attempted action, outcome, and planned work separately where the record supports each. A planned replacement is not a completed replacement. Never guess missing dates, equipment links, causes or actions. If the date or result is absent say Data ledu / confirm cheyyalenu. Concise answer in ${language==='TE'?'Telugu':language==='HI'?'Hindi':'English'}. No data changes.\nQUESTION: ${question.slice(0,750)}\nEVIDENCE:\n${evidence}`;
+      try{const gx=await geminiGenerateWithFallbackV892({contents:[{parts:[{text:prompt}]}],generationConfig:{maxOutputTokens:950}},45000);
+        const data=await gx.response.json(),answer=(data.candidates?.[0]?.content?.parts||[]).map(x=>x.text||'').join('').trim();
+        if(answer){await sendText(from,answer.slice(0,2800));return true;}
+      }catch(e){console.error('[INCIDENT_SEARCH_ANSWER]',e);}
+    }
+  }
+  if(!strong&&rows.length>8){
+    const items=[],seen=new Set();
+    for(const row of rows){const item=readableSearchItemV81522(row,request),key=item.toUpperCase().replace(/[^A-Z0-9]+/g,'');
+      if(!key||seen.has(key))continue;seen.add(key);items.push(item);
+    }
+    await saveDocumentSessionV81511(from,'MAINT_RESULT_PAGE',{items,offset:0,expiresAt:Date.now()+30*60000});
+    await showSearchPageV81522(from,user);
+    if(items.length>20&&!truncated&&!partialFailure&&await hasAuthorityV874(user,'PDF')){
+      const pack={document_type:'SEARCH_RESULTS',extracted_items:items.map((x,i)=>({item_no:i+1,description:x,remarks:''}))};
+      await sendGeneratedDocumentV878(from,tablePdfV880(pack,`${items.length} accessible matches`),'lmmm_search_results.pdf','application/pdf');
+    }else if(truncated&&items.length>20){await sendText(from,'More matching records may exist. Narrow the search for a complete PDF.');}
+    return true;
+  }
   if(strong || rows.length>8){
     const unique=[],seen=new Set();
     for(const row of rows){const item=conciseSourceEvidenceV81520(row,request);
@@ -3248,7 +3343,7 @@ async function answerDocumentQuestionV81511(from,question,doc){
 async function handleDocumentQuestionV81511(from,text,cmd,user){
   if(!user||user.approval_status!=='approved'||!user.is_active){await sendText(from,'Approved registration required to ask about documents.');return;}
   if(/^MAINT_EXPORT:(PDF|EXCEL)$/.test(cmd)){await handleSearchExportV81518(from,cmd,user);return;}
-  if(/^MAINT_(?:DRAW_MORE|ASSET:(?:ALL|[0-7])|MOD:(?:HISTORY|JOBS|DEFECTS|DRAWINGS|PARTS|SPARES|MANUALS|ALL)|SUGGEST:(?:SHOW|CANCEL))$/.test(cmd)){
+  if(/^MAINT_(?:DRAW_MORE|RESULT_MORE|ASSET:(?:ALL|[0-7])|MOD:(?:HISTORY|JOBS|DEFECTS|DRAWINGS|PARTS|SPARES|MANUALS|ALL)|SUGGEST:(?:SHOW|CANCEL))$/.test(cmd)){
     await handleSearchChoiceV81515(from,cmd,user);return;
   }
   if(cmd==='MENU_SEARCH'){await saveDocumentSessionV81511(from,'DOC_QA_CONTEXT',{mode:true,expiresAt:Date.now()+30*60000});await sendText(from,'Ask about equipment, jobs, history, parts, spares, SAP, drawings or manuals. I will search the available maintenance data and cite the source.');return;}
@@ -3311,7 +3406,7 @@ async function processMessage(from,text,payload=''){
   // Ask a document question before the employee-name directory catches natural phrases.
   const qaContext=documentSessionValueV81511(await safeSessionV855(from,'DOC_QA_CONTEXT'));
   const qaSelection=/^DOC_QA_SELECT:(stored|pending):\d+$/.test(cmd)||/^MAINT_EXPORT:(PDF|EXCEL)$/.test(cmd)||
-    /^MAINT_(?:DRAW_MORE|ASSET:(?:ALL|[0-7])|MOD:(?:HISTORY|JOBS|DEFECTS|DRAWINGS|PARTS|SPARES|MANUALS|ALL)|SUGGEST:(?:SHOW|CANCEL))$/.test(cmd);
+    /^MAINT_(?:DRAW_MORE|RESULT_MORE|ASSET:(?:ALL|[0-7])|MOD:(?:HISTORY|JOBS|DEFECTS|DRAWINGS|PARTS|SPARES|MANUALS|ALL)|SUGGEST:(?:SHOW|CANCEL))$/.test(cmd);
   const qaFreeText=!payload&&(documentQuestionIntentV81511(text)||
     (qaContext?.mode && qaContext.expiresAt>Date.now() && !/^(hi|hello|hey|start|back|search|version|menu|add entry|store data|check status|retry extraction|my account|my details|contact details|profile|remove me|exit|quit)$/i.test(cmd) && (!/^\d{6}$/.test(cmd)) && !/^[A-Z][a-z.'-]+(?: [A-Z][a-z.'-]+){1,2}$/.test(cmd)));
   // A bare equipment/part name can look exactly like an employee's name.
