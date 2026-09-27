@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.25 SOURCE HISTORY RECOVERY
+// LMMM AI Maintenance V8.15.26 BLOOM PUSHER ASSET MATCHING
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -2703,13 +2703,15 @@ async function handleDrawingLookupV81512(from,question,user,selectedDoc=null){
 }
 function universalTermsV81513(question){
   const q=String(question||'').trim();
+  const bp=q.match(/\b(?:bloom\s*pusher|bp)[\s-]*([12])\b/i);
   const refs=q.match(/[A-Za-z0-9]+(?:[./-][A-Za-z0-9]+)+|\b\d{7,}\b/g)||[];
   const date=q.match(/\b(?:19|20)\d{2}-\d{2}-\d{2}(?!\d)/)?.[0]||null;
-  const exact=refs.filter(x=>/\d/.test(x)&&x!==date&&!/^\d{1,4}[./-]\d{1,2}[./-]\d{2,4}$/.test(x))
+  const exact=refs.filter(x=>/\d/.test(x)&&x!==date&&!/^\d{1,4}[./-]\d{1,2}[./-]\d{2,4}$/.test(x)&&
+      !(/^FURNACE[-./]?[12]$/i.test(x)&&/\bBLOOM\s+PUSHER\b/i.test(q)))
     .sort((a,b)=>b.length-a.length)[0]||null;
   const stop=new Set(['what','which','where','when','why','how','are','the','and','for','this','that','with','from','about','there','any','all','show','give','tell','please','check','find','search','number','name','data','record','records','lo','ki','di','enti','entha','deniki','gurinchi','cheppandi','sambandhanchindi','drawing','drawings','manual','manuals','file','sources','related','sambandham','details','history','jobs','job','spares','spare','equipment','maintenance','part','parts','sap','defect','defects','smp','sop','production','troubleshooting','problems','problem','issue','issues','failure','failed','fail','last','previous','before','during','today','yesterday','chudu','ivvu','kavali','ayyindi','chesaru','chesam','eppudu','year','date','dates','nunchi','entha','details','list','total']);
   const terms=[...new Set((q.toLowerCase().match(/[a-z0-9]{3,}|[\u0c00-\u0c7f]{2,}|[\u0900-\u097f]{2,}/g)||[]).filter(x=>!stop.has(x)&&x!==date))];
-  return {exact,date,terms,primary:exact||terms.sort((a,b)=>b.length-a.length)[0]||null};
+  return {exact,date,terms,primary:bp?'bloom pusher':/\b(?:bloom\s+pusher|bp)\b/i.test(q)?'bloom pusher':exact||terms.sort((a,b)=>b.length-a.length)[0]||null,bpNumber:bp?.[1]||null,bloomPusher:/\b(?:bloom\s+pusher|bp)(?:[\s-]*[12])?\b/i.test(q),furnaceQualifier:/\b(?:in\s+front\s+of\s+)?furnace\s*[- ]?[12]\b/i.test(q)&&/\bBLOOM\s+PUSHER\b/i.test(q)};
 }
 function searchIntentV81524(question,module){
   if(module&&module!=='ALL')return module;
@@ -2728,7 +2730,8 @@ function searchIntentV81524(question,module){
 }
 function normalizeMaintenanceQueryV81524(question){
   // Correct a small set of widely used names; retain numbered identities as printed.
-  return String(question||'').replace(/\b(?:bloom|blom|boom|bum)[ -]+(?:pusher|puser|pusr|pushr)\b/gi,'bloom pusher');
+  return String(question||'').replace(/\b(?:bloom|blom|boom|bum)[ -]+(?:pusher|puser|pusr|pushr)\b/gi,'bloom pusher')
+    .replace(/\bBP[ -]?([12])\b/gi,(_,n)=>`bloom pusher ${n}`).replace(/\bBP\b/gi,'bloom pusher');
 }
 function searchTextV81524(row){
   return String(row.content||'').replace(/^Source status:[^;]*; candidate area:[^;]*; mapping:[^;]*;\s*/i,'')
@@ -2756,12 +2759,19 @@ function rankSearchRowsV81524(rows,request,module){
     if(module==='MANUALS')score+=/manual|smp|sop|procedure/i.test(kind+' '+source)?10:-8;
     return {...row,searchScore:score,subjectHits:hitCount,searchBody:body};
   }).filter(row=>{
+    if(request.bloomPusher){
+      const body=row.searchBody;
+      if(!/\bBLOOM\s+PUSHER\b/i.test(body)&&!/(?:^|[^a-z0-9])BP[ -]?[12](?:[^a-z0-9]|$)/i.test(body))return false;
+      const numbered=body.match(/\b(?:BLOOM\s+PUSHER|BP)[ -]?([12])\b/i)?.[1];
+      if(request.bpNumber&&numbered!==request.bpNumber)return false;
+      if(request.furnaceQualifier&&!/\bBLOOM\s+PUSHER\s+IN\s+FRONT\s+OF\s+FURNACE\s*[- ]?[12]\b/i.test(body))return false;
+    }
     if(request.date&&row.date&&row.date!==request.date&&!row.searchBody.includes(request.date))return false;
     if(request.exact&&!exactDrawingTokenV81512(row.searchBody,request.exact))return false;
     // Two-part equipment names need both words in the record, not a filename-only hit.
-    if(subject.length>=2&&!request.exact&&row.subjectHits<2&&
+    if(subject.length>=2&&!request.exact&&!request.bloomPusher&&row.subjectHits<2&&
       !/^(?:ecs|bdm|wbf|bp)$/.test(subject[0]))return false;
-    if(!request.exact&&subject.includes('bloom')&&subject.includes('pusher')&&
+    if(!request.exact&&!request.bloomPusher&&subject.includes('bloom')&&subject.includes('pusher')&&
       !['bloom','pusher'].every(x=>searchTermMatchV81524(row.searchBody,x)))return false;
     if(subject.length===1&&!request.exact&&!row.subjectHits)return false;
     return row.searchScore>0;
@@ -3035,6 +3045,13 @@ async function showAssetModulesV81515(from,term,language,warning=''){
   await sendList(from,`${language==='TE'?'ఎంచుకున్న అంశం':'Selected subject'}: ${term}${warning?`\n${warning}`:''}\n${language==='TE'?'ఏ సమాచారం కావాలి?':'What would you like to find?'}`, 'Choose',options.map(([id,title])=>({id:`MAINT_MOD:${id}`,title})), 'Maintenance Search');
 }
 async function showAssetChoicesV81515(from,question,rows,language,warning=''){
+  if(universalTermsV81513(normalizeMaintenanceQueryV81524(question)).bloomPusher){
+    const names=['BP-1','BP-2'];
+    await saveDocumentSessionV81511(from,'MAINT_SEARCH_FLOW',{query:question,names,selected:'',warning,expiresAt:Date.now()+30*60000});
+    await sendList(from,'Which bloom pusher? Choose BP-1, BP-2, or search both.', 'Choose',[
+      {id:'MAINT_ASSET:0',title:'BP-1'},{id:'MAINT_ASSET:1',title:'BP-2'},
+      {id:'MAINT_ASSET:ALL',title:'Both bloom pushers'}],'Equipment');return;
+  }
   const names=[...new Set(rows.filter(r=>r.kind!=='Source line (mapping unconfirmed)').map(r=>
     String(r.content||'').match(/^Equipment: ([^;\n]{2,65});/i)?.[1]?.trim()).filter(n=>n&&!/^(unconfirmed|unknown|[-])$/i.test(n)))].slice(0,8);
   const state={query:question,names,selected:'',warning,expiresAt:Date.now()+30*60000};
@@ -3435,6 +3452,37 @@ async function searchScopedSourceCatalogV81524(from,user,request,module){
   }
   return {rows,truncated:result.rows.length>800};
 }
+function bpHistoryDateV81526(value){
+  const s=String(value||'').trim();
+  const iso=s.match(/^(20\d{2}|19\d{2})-(\d{1,2})-(\d{1,2})(?:\s|$)/);
+  const us=s.match(/^(\d{1,2})\/(\d{1,2})\/(20\d{2}|19\d{2})(?:\b|$)/);
+  const y=iso?+iso[1]:us?+us[3]:0,m=iso?+iso[2]:us?+us[1]:0,d=iso?+iso[3]:us?+us[2]:0;
+  if(!y||!m||!d||new Date(Date.UTC(y,m-1,d)).toISOString().slice(0,10)!==`${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`)return '';
+  return `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+}
+async function bpHistoryRowsV81526(from,user,request,module){
+  if(!request.bloomPusher||request.furnaceQualifier||!['JOBS','HISTORY','ALL'].includes(module)||
+    !isOwner(from)||!(await hasAuthorityV874(user,'VIEW')))return [];
+  const result=await pool.query(`SELECT source_key,source_file,location,source_text FROM lmmm_source_review
+    WHERE source_file='CH SIDE HISTORY(2).numbers' AND content_type='JOB_HISTORY' AND location LIKE 'sheet:BP:row:%'
+    ORDER BY (substring(location from 'row:([0-9]+)'))::int LIMIT 150`);
+  let bp='',car='',part='',heading='guide wheel',rows=[];
+  for(const row of result.rows){
+    const cells=String(row.source_text||'').split('|').map(x=>x.trim());
+    const explicit=cells[0]?.match(/^BP[ -]?([12])$/i);
+    if(explicit){bp=explicit[1];car='';part='';}
+    if(/^CAR\s*[1-9]$/i.test(cells[1]||''))car=cells[1].toUpperCase();
+    if(/^\b(?:BS|SS)\s*\d+\b$/i.test(cells[2]||''))part=cells[2].toUpperCase();
+    if(/LINER PLATE/i.test(cells[0]||''))heading='liner plate';
+    if(!bp||request.bpNumber&&request.bpNumber!==bp)continue;
+    for(let i=0;i<cells.length;i++){
+      const date=bpHistoryDateV81526(cells[i]);if(!date)continue;
+      rows.push({kind:'Source maintenance history',content:`BLOOM PUSHER BP-${bp}; ${car||'car unspecified'}; ${part||heading}; recorded ${heading} history date: ${date}`,date,
+        source:row.source_file,page:row.location,key:`review:${row.source_key}:${i}`});
+    }
+  }
+  return rows;
+}
 function dateForSearchV81524(question,now=new Date()){
   const q=String(question||'');
   const explicit=q.match(/\b((?:19|20)\d{2}-\d{2}-\d{2})\b/)?.[1];
@@ -3481,7 +3529,10 @@ async function handleUniversalSearchV81513(from,question,user,options={}){
   let catalog={rows:[],truncated:false},catalogFailed=false;
   try{catalog=await searchScopedSourceCatalogV81524(from,user,request,module)}
   catch(e){catalogFailed=true;console.error('[SCOPED_SOURCE_CATALOG]',e.message);}
-  const scopedRows=filterSearchRowsV81518([...allRows,...catalog.rows],module);
+  let bpRows=[];
+  try{bpRows=await bpHistoryRowsV81526(from,user,request,module)}
+  catch(e){catalogFailed=true;console.error('[BP_HISTORY]',e.message);}
+  const scopedRows=filterSearchRowsV81518([...allRows,...catalog.rows,...bpRows],module);
   const rows=rankSearchRowsV81524(scopedRows,request,module).filter(r=>{
     if(module==='JOBS'&&/^Source maintenance history/i.test(r.kind)&&
       !/\b(?:19|20)\d{2}(?:-\d{2}-\d{2})?\b/.test(r.content))return false;
