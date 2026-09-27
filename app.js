@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.27 CHARGING HISTORY AND PDF
+// LMMM AI Maintenance V8.15.28 HYDRAULIC SUMMARY AND DEFECT PDF
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -3169,7 +3169,7 @@ async function handleSearchExportV81518(from,cmd,user){
   catch(e){console.error('[SEARCH_EXPORT_BP]',e);await sendText(from,'Cannot read BP history right now. Please try again.');return true;}
   const rows=rankSearchRowsV81524(filterSearchRowsV81518([...result.rows,...catalog.rows,...bpRows],state.module),result.request,state.module);
   const scopedBpArchive=isOwner(from)&&result.request.bloomPusher&&!result.request.furnaceQualifier&&
-    ['ALL','JOBS','HISTORY'].includes(state.module);
+    ['ALL','JOBS','HISTORY','DEFECTS'].includes(state.module);
   if(result.failed||result.partialFailure||(!scopedBpArchive&&result.truncated)||catalog.truncated||!rows.length||rows.length>1000){
     await sendText(from,'Cannot confirm a complete accessible result. Narrow the search and try again.');return true;
   }
@@ -3245,8 +3245,17 @@ function readableSearchItemV81522(row,request){
     const fields=Object.fromEntries(raw.split('|').map(x=>x.trim().match(/^([^:]{2,35}):\s*(.*)$/)).filter(Boolean).map(x=>[x[1].toUpperCase(),x[2].trim()]));
     const date=fields['DATE OF FIX']?.match(/\d{4}-\d{2}-\d{2}/)?.[0];
     const asset=[fields.AREA,fields.CELLAR&&`cellar ${fields.CELLAR}`,fields.EQPT,fields.ASSEMBLY||fields.ASSY].filter(Boolean).join(' / ');
-    const reason=fields['REASONS FOR FIX']||'',remarks=fields.REMARKS&&fields.REMARKS!=='nan'?`; ${fields.REMARKS}`:'';
-    if(date&&asset&&reason)return `${date} · ${asset} — ${reason}${remarks}`.replace(/\s+/g,' ').slice(0,210);
+    const reason=fields['REASONS FOR FIX']||'',remarks=fields.REMARKS&&fields.REMARKS!=='nan'?fields.REMARKS:'';
+    if(date&&asset&&reason){
+      // OSCAR is a literal remark in the hydraulic source, not a confirmed
+      // equipment, person, or instruction. Preserve the original row in the
+      // archive and leave that ambiguous label out of the short answer.
+      const clean=s=>String(s||'').replace(/(?:"?OSCAR(?:\s+NEW)?"?)/gi,'').replace(/\bREPLACED\s+WITH\s*(?=;|$)/gi,'REPLACED').replace(/\s+/g,' ').trim();
+      const fault=/\b(?:leak\w*|damag\w*|punctur\w*|burst|fail\w*|break\w*|worn)\b/i.test(reason)?clean(reason).replace(/^DUE TO\s+/i,''):'';
+      const action=clean(remarks)||(/\bREPLACED\b/i.test(reason)?'CYLINDER REPLACED':'');
+      const situation=!fault&&/PREVENTIVE/i.test(reason)?'PREVENTIVE CYLINDER REPLACEMENT':fault||clean(reason);
+      return `${date} · ${asset} — ${situation}${action&&!situation.includes(action)&&!(/PREVENTIVE CYLINDER REPLACEMENT/.test(situation)&&/CYLINDER REPLACED/i.test(action))?`; ${action}`:''}`.replace(/\s+/g,' ').slice(0,210);
+    }
   }
   if(/^Source job reference/i.test(row.kind))raw=raw.replace(/^Equipment:[^;]*;\s*/i,'').replace(/;\s*source record:.*$/i,'');
   if(/^Source maintenance history/i.test(row.kind))raw=raw.replace(/^[^|]*\.xlsx\s*\/\s*[^|]*\|\s*\d+\s*\|\s*/i,'');
@@ -3550,7 +3559,7 @@ async function handleUniversalSearchV81513(from,question,user,options={}){
   // The generic archive lookup is capped at 25 rows. For Bloom Pusher jobs
   // the dedicated dated source catalogue and BP sheet cover the raw records.
   const scopedBpArchive=isOwner(from)&&request.bloomPusher&&!request.furnaceQualifier&&
-    ['ALL','JOBS','HISTORY'].includes(module)&&!catalogFailed;
+    ['ALL','JOBS','HISTORY','DEFECTS'].includes(module)&&!catalogFailed;
   const limited=(scopedBpArchive?false:truncated)||catalog.truncated;
   if((failed&&!catalog.rows.length)||(incomplete&&!rows.length)){await sendText(from,'Some data sources are temporarily unavailable. Please try again; I cannot confirm a complete search.');return true;}
   if(!rows.length){if(module==='DRAWINGS'&&await showUnlinkedDrawingRefsV81516(from,request.exact||request.primary))return true;
