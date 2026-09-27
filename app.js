@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.30 BP MECHANICAL HISTORY CONTEXT
+// LMMM AI Maintenance V8.15.31 BP MECHANICAL DEFECT LABELS
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -3518,7 +3518,7 @@ async function explainBpMechanicalAlongsideDefectsV81530(from,user,request,modul
   if(!related.length)return;
   const recent=related.sort((a,b)=>b.date.localeCompare(a.date)).slice(0,3)
     .map(r=>readableSearchItemV81522(r,request));
-  await sendText(from,`These are hydraulic defect records. Charging-side mechanical guide-wheel changes are recorded separately in job history:\n${recent.join('\n')}\nSend “BP1 jobs”, “BP2 jobs”, or “Bloom pusher jobs” for the mechanical history. The BP sheet does not state defect causes.`.slice(0,900));
+  await sendText(from,`The cylinder and seal issues above are mechanical maintenance defects. Other Bloom Pusher maintenance recorded in the charging-side history:\n${recent.join('\n')}\nThe guide-wheel sheet records change dates, without defect causes.`.slice(0,750));
 }
 function dateForSearchV81524(question,now=new Date()){
   const q=String(question||'');
