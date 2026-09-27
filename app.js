@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.20 CONCISE SOURCE ANSWERS
+// LMMM AI Maintenance V8.15.21 COMPLETE ECS DRAWING SEARCH
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -2988,6 +2988,7 @@ async function showAssetChoicesV81515(from,question,rows,language,warning=''){
   }
 }
 async function handleSearchChoiceV81515(from,cmd,user){
+  if(cmd==='MAINT_DRAW_MORE'){await showDrawingPageV81521(from,user,true);return true;}
   const state=documentSessionValueV81511(await safeSessionV855(from,'MAINT_SEARCH_FLOW'));
   if(!state?.query||state.expiresAt<Date.now()){
     await sendText(from,'Search selection expired. Send the equipment or subject again.');return true;
@@ -3119,7 +3120,61 @@ function conciseDrawingMatchesV81520(rows,request){
   }
   return found;
 }
+function parseEcsDrawingV81521(row){
+  const fields=String(row.source_text||'').split('|').map(x=>x.trim());
+  const filename=String(row.source_file||'').toUpperCase();
+  let number='',title='';
+  if(/DEPARTMENT DRG LIST/.test(filename)){number=fields[1];title=[fields[2],fields[4]].filter(Boolean).join(' ');}
+  else if(/DRG_PD/.test(filename)){number=fields[1];title=[fields[2],fields[4]].filter(Boolean).join(' ');}
+  else if(/TDIS-DRG/.test(filename)){number=fields[0];title=fields[1];}
+  else if(/DRAWINGS LIST|DRG LIST MECON|TRACINGS LIST/.test(filename)){
+    const index=fields.findIndex(x=>/^\d{7,}(?:\.0)?$/.test(x));
+    if(index>=0){number=fields[index].replace(/\.0$/,'');title=fields.slice(index+1).find(x=>/[A-Z]{3}/i.test(x))||'';}
+  }
+  number=String(number||'').replace(/\.0$/,'').trim();title=String(title||'').replace(/\s+/g,' ').trim();
+  if(!/^(?:\d{7,}|(?:LMMM\s*\/\s*M|PD-LMMM)[\w/(). -]+)$/i.test(number)||
+    !/[a-z]{3}/i.test(title)||/^(?:\?+|unreadable)$/i.test(title))return null;
+  const context=`${row.source_text||''} ${row.location||''}`.toUpperCase();
+  const one=/\b(?:ECS|FURNACE|WBF)[ -]?1\b/.test(context),two=/\b(?:ECS|FURNACE|WBF)[ -]?2\b/.test(context);
+  return {number,title,variant:one&&!two?'1':two&&!one?'2':'',key:number.toUpperCase().replace(/\s+/g,'')};
+}
+async function showDrawingPageV81521(from,user,more=false){
+  if(!isOwner(from)||!(await hasAuthorityV874(user,'VIEW')))return false;
+  const state=documentSessionValueV81511(await safeSessionV855(from,'MAINT_DRAW_PAGE'));
+  if(!state?.items||state.expiresAt<Date.now()){await sendText(from,'Drawing results expired. Search ECS again.');return true;}
+  const start=more?state.offset||0:0,items=state.items.slice(start,start+8);
+  if(!items.length){await sendText(from,'No more drawing matches.');return true;}
+  await sendText(from,`${state.label} drawings (${start+1}–${start+items.length} of ${state.items.length}):\n${items.map((x,i)=>`${start+i+1}. ${x.number} — ${x.title}${x.generic?' (furnace unspecified)':''}`).join('\n')}`.slice(0,1900));
+  state.offset=start+items.length;await saveDocumentSessionV81511(from,'MAINT_DRAW_PAGE',state);
+  if(state.offset<state.items.length)await sendButtons(from,'More drawings?', [{id:'MAINT_DRAW_MORE',title:'More drawings'}]);
+  return true;
+}
+async function searchEcsDrawingsV81521(from,question,user){
+  if(!isOwner(from)||!(await hasAuthorityV874(user,'VIEW')))return false;
+  const term=String(question||'').toUpperCase();
+  if(!/(^|[^A-Z])ECS(?:[- ]?[12])?(?![A-Z])/.test(term)||!/(?:DRAWING|DRAWINGS|DRG)/.test(term))return false;
+  const variant=term.match(/\bECS[- ]?([12])\b/)?.[1]||'';
+  // File names are provenance, not equipment location: a BAR MILL list may contain furnace rows.
+  const result=await pool.query(`SELECT source_file,location,source_text FROM lmmm_source_review
+    WHERE (content_type='DRAWING' OR source_file ~* 'drawings list|drg list|tracings list|drg_pd')
+      AND source_text ~* '(^|[^[:alnum:]])ECS([^[:alnum:]]|$)'
+    ORDER BY source_file,location LIMIT 600`);
+  const matches=new Map();
+  for(const row of result.rows){const parsed=parseEcsDrawingV81521(row);if(!parsed||variant&&parsed.variant&&parsed.variant!==variant)continue;
+    const old=matches.get(parsed.key);
+    if(!old||(!old.variant&&parsed.variant)||parsed.title.length>old.title.length&&parsed.variant===old.variant)
+      matches.set(parsed.key,parsed);
+  }
+  const items=[...matches.values()].sort((a,b)=>{
+    const rank=x=>variant?(x.variant===variant?0:x.variant?2:1):0;
+    return rank(a)-rank(b)||a.number.localeCompare(b.number,undefined,{numeric:true});
+  }).map(x=>({number:x.number,title:x.title,generic:!!variant&&!x.variant}));
+  if(!items.length){await sendText(from,'No ECS drawings found in the accessible drawing lists.');return true;}
+  await saveDocumentSessionV81511(from,'MAINT_DRAW_PAGE',{items,offset:0,label:variant?`ECS / Furnace-${variant} references`:'ECS references',expiresAt:Date.now()+30*60000});
+  return showDrawingPageV81521(from,user);
+}
 async function handleUniversalSearchV81513(from,question,user,options={}){
+  if((!options.module||options.module==='DRAWINGS')&&await searchEcsDrawingsV81521(from,question,user))return true;
   const {request,rows:allRows,failed,partialFailure}=await universalSearchV81513(from,user,question,options.module||'ALL');
   const language=options.language||await searchLanguageV81515(from,question),te=language==='TE';
   const module=options.module;
@@ -3135,8 +3190,7 @@ async function handleUniversalSearchV81513(from,question,user,options={}){
   }
   const drawingMatches=conciseDrawingMatchesV81520(rows,request);
   if(drawingMatches.length){
-    const answer=drawingMatches.slice(0,3).map(x=>
-      `${request.exact} — ${x.title}\n${te?'జాబితా మూలం':'Drawing-list source'}: ${x.file}`).join('\n\n');
+    const answer=drawingMatches.slice(0,3).map(x=>`${request.exact} — ${x.title}`).join('\n');
     await sendText(from,answer.slice(0,900));return true;
   }
   // Imported SMP file names and their document IDs are not drawing numbers.
@@ -3194,7 +3248,7 @@ async function answerDocumentQuestionV81511(from,question,doc){
 async function handleDocumentQuestionV81511(from,text,cmd,user){
   if(!user||user.approval_status!=='approved'||!user.is_active){await sendText(from,'Approved registration required to ask about documents.');return;}
   if(/^MAINT_EXPORT:(PDF|EXCEL)$/.test(cmd)){await handleSearchExportV81518(from,cmd,user);return;}
-  if(/^MAINT_(?:ASSET:(?:ALL|[0-7])|MOD:(?:HISTORY|JOBS|DEFECTS|DRAWINGS|PARTS|SPARES|MANUALS|ALL)|SUGGEST:(?:SHOW|CANCEL))$/.test(cmd)){
+  if(/^MAINT_(?:DRAW_MORE|ASSET:(?:ALL|[0-7])|MOD:(?:HISTORY|JOBS|DEFECTS|DRAWINGS|PARTS|SPARES|MANUALS|ALL)|SUGGEST:(?:SHOW|CANCEL))$/.test(cmd)){
     await handleSearchChoiceV81515(from,cmd,user);return;
   }
   if(cmd==='MENU_SEARCH'){await saveDocumentSessionV81511(from,'DOC_QA_CONTEXT',{mode:true,expiresAt:Date.now()+30*60000});await sendText(from,'Ask about equipment, jobs, history, parts, spares, SAP, drawings or manuals. I will search the available maintenance data and cite the source.');return;}
@@ -3257,7 +3311,7 @@ async function processMessage(from,text,payload=''){
   // Ask a document question before the employee-name directory catches natural phrases.
   const qaContext=documentSessionValueV81511(await safeSessionV855(from,'DOC_QA_CONTEXT'));
   const qaSelection=/^DOC_QA_SELECT:(stored|pending):\d+$/.test(cmd)||/^MAINT_EXPORT:(PDF|EXCEL)$/.test(cmd)||
-    /^MAINT_(?:ASSET:(?:ALL|[0-7])|MOD:(?:HISTORY|JOBS|DEFECTS|DRAWINGS|PARTS|SPARES|MANUALS|ALL)|SUGGEST:(?:SHOW|CANCEL))$/.test(cmd);
+    /^MAINT_(?:DRAW_MORE|ASSET:(?:ALL|[0-7])|MOD:(?:HISTORY|JOBS|DEFECTS|DRAWINGS|PARTS|SPARES|MANUALS|ALL)|SUGGEST:(?:SHOW|CANCEL))$/.test(cmd);
   const qaFreeText=!payload&&(documentQuestionIntentV81511(text)||
     (qaContext?.mode && qaContext.expiresAt>Date.now() && !/^(hi|hello|hey|start|back|search|version|menu|add entry|store data|check status|retry extraction|my account|my details|contact details|profile|remove me|exit|quit)$/i.test(cmd) && (!/^\d{6}$/.test(cmd)) && !/^[A-Z][a-z.'-]+(?: [A-Z][a-z.'-]+){1,2}$/.test(cmd)));
   // A bare equipment/part name can look exactly like an employee's name.
