@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.26 BLOOM PUSHER ASSET MATCHING
+// LMMM AI Maintenance V8.15.27 CHARGING HISTORY AND PDF
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -2830,12 +2830,13 @@ function archiveMatchesV81517(raw,subject,{candidate=false}={}){
 function sourceArchiveRowsV81517(question,request,mode='ALL'){
   const archive=readEquipmentArchiveV81517(),subject=archiveSubjectV81517(question,request);
   if(!subject)return [];
+  const maxRows=['JOBS','HISTORY'].includes(mode)?3000:25;
   const rows=[];
   function append(kind,items,match,make){
     for(const record of items){
       if(!match(record))continue;
       rows.push(make(record));
-      if(rows.length>=25)return;
+      if(rows.length>=maxRows)return;
     }
   }
   if(mode==='ALL'||mode==='EQUIPMENT')append('equipment',archive.equipment,
@@ -2849,7 +2850,7 @@ function sourceArchiveRowsV81517(question,request,mode='ALL'){
       archiveMatchesV81517(x.raw_text,subject); // exact drawing-list identifier lookup
     return archiveMatchesV81517(x.raw_text,subject,{candidate:!linked});
   };
-  if((mode==='ALL'||mode==='DRAWINGS')&&rows.length<25){
+  if((mode==='ALL'||mode==='DRAWINGS')&&rows.length<maxRows){
     const matches=archive.drawings.filter(drawingMatch).sort((a,b)=>{
       const score=x=>Number(!!x.equipment_link?.equipment&&(archiveMatchesV81517(x.equipment_link.equipment['Equipment Name'],subject)||archiveMatchesV81517(x.equipment_link.equipment['Equipment UID'],subject)))*3+
         Number(archiveMatchesV81517(x.raw_text,subject));
@@ -2862,19 +2863,19 @@ function sourceArchiveRowsV81517(question,request,mode='ALL'){
       key:`archive:drawing:${x._record_id}`};
     });
   }
-  if((mode==='ALL'||mode==='JOBS')&&rows.length<25)append('jobs',archive.jobs,
+  if((mode==='ALL'||mode==='JOBS')&&rows.length<maxRows)append('jobs',archive.jobs,
     x=>archiveMatchesV81517(x['Equipment'],subject)||archiveMatchesV81517(x['Equipment No'],subject),
     x=>({kind:'Source job reference (not a new work order)',source:x.Source||x['Original Text']||'Jobs Register',
       content:`Equipment: ${x.Equipment||'unconfirmed'}; ${x['Job Description']||x['Job / Task']||''}; date: ${x['Event Date']||'unconfirmed'}; source record: ${x['Record ID']||x._record_id}`,
       key:`archive:job:${x._record_id}`}));
-  if((mode==='ALL'||mode==='HISTORY'||mode==='JOBS')&&rows.length<25)append('history',archive.history,
+  if((mode==='ALL'||mode==='HISTORY'||mode==='JOBS')&&rows.length<maxRows)append('history',archive.history,
     x=>!/^SNO\s*\|\s*DATE\s*\|/i.test(String(x['Original Record']||''))&&
       (archiveMatchesV81517(x['Original Record'],subject)||archiveMatchesV81517(x.Source,subject))&&
       (!/^ECS [12]$/.test(subject)||archiveMatchesV81517(x['Original Record'],subject,{candidate:true})||
         !/\bECS[- .]?[12]\b/i.test(String(x['Original Record']||''))),
     x=>({kind:'Source maintenance history (row unverified)',source:x.Source,
       content:x['Original Record'],key:`archive:history:${x._record_id}`}));
-  if((mode==='ALL'||mode==='DEFECTS')&&rows.length<25)append('defects',archive.defects,
+  if((mode==='ALL'||mode==='DEFECTS')&&rows.length<maxRows)append('defects',archive.defects,
     x=>archiveMatchesV81517(x.eq,subject)||archiveMatchesV81517(x.subeq,subject),
     x=>({kind:'Source defect (not a new report)',source:`Defects register ${x._record_id}`,
       content:`Equipment: ${x.eq||'unconfirmed'}; sub-equipment: ${x.subeq||'unconfirmed'}; date: ${x.date||'unconfirmed'}; ${x.description||''}; action: ${x.remarks||'unconfirmed'}`,
@@ -2997,7 +2998,7 @@ async function universalSearchV81513(from,user,question,archiveMode='ALL'){
     try{archived=sourceArchiveRowsV81517(question,request,archiveMode);}catch(e){archiveFailure=true;console.error('[EQUIPMENT_SOURCE_ARCHIVE]',e.message);}
   }
   // Each source has a bounded query. A bound reached means the search may have more rows.
-  const truncated=results.some(x=>x.status==='fulfilled'&&[25,41,51,61,81].includes(x.value.length))||archived.length>=25;
+  const truncated=results.some(x=>x.status==='fulfilled'&&[25,41,51,61,81].includes(x.value.length))||archived.length>=(['JOBS','HISTORY'].includes(archiveMode)?3000:25);
   return {request,rows:[...relevant,...archived],failed:results.every(x=>x.status==='rejected')&&!archived.length,
     truncated,partialFailure:results.some(x=>x.status==='rejected')||archiveFailure};
 }
@@ -3045,9 +3046,11 @@ async function showAssetModulesV81515(from,term,language,warning=''){
   await sendList(from,`${language==='TE'?'ఎంచుకున్న అంశం':'Selected subject'}: ${term}${warning?`\n${warning}`:''}\n${language==='TE'?'ఏ సమాచారం కావాలి?':'What would you like to find?'}`, 'Choose',options.map(([id,title])=>({id:`MAINT_MOD:${id}`,title})), 'Maintenance Search');
 }
 async function showAssetChoicesV81515(from,question,rows,language,warning=''){
-  if(universalTermsV81513(normalizeMaintenanceQueryV81524(question)).bloomPusher){
-    const names=['BP-1','BP-2'];
-    await saveDocumentSessionV81511(from,'MAINT_SEARCH_FLOW',{query:question,names,selected:'',warning,expiresAt:Date.now()+30*60000});
+  const bpRequest=universalTermsV81513(normalizeMaintenanceQueryV81524(question));
+  if(bpRequest.bloomPusher&&!bpRequest.furnaceQualifier){
+    const names=bpRequest.bpNumber?[`BP-${bpRequest.bpNumber}`]:['BP-1','BP-2'];
+    await saveDocumentSessionV81511(from,'MAINT_SEARCH_FLOW',{query:question,names,selected:bpRequest.bpNumber?names[0]:'',warning,expiresAt:Date.now()+30*60000});
+    if(bpRequest.bpNumber){await showAssetModulesV81515(from,names[0],language,warning);return;}
     await sendList(from,'Which bloom pusher? Choose BP-1, BP-2, or search both.', 'Choose',[
       {id:'MAINT_ASSET:0',title:'BP-1'},{id:'MAINT_ASSET:1',title:'BP-2'},
       {id:'MAINT_ASSET:ALL',title:'Both bloom pushers'}],'Equipment');return;
@@ -3161,8 +3164,13 @@ async function handleSearchExportV81518(from,cmd,user){
   let catalog={rows:[],truncated:false};
   try{catalog=await searchScopedSourceCatalogV81524(from,user,result.request,state.module);}
   catch(e){console.error('[SEARCH_EXPORT_SOURCE]',e);await sendText(from,'Cannot confirm the full result right now. Please try again.');return true;}
-  const rows=rankSearchRowsV81524(filterSearchRowsV81518([...result.rows,...catalog.rows],state.module),result.request,state.module);
-  if(result.failed||result.partialFailure||result.truncated||catalog.truncated||!rows.length||rows.length>1000){
+  let bpRows=[];
+  try{bpRows=await bpHistoryRowsV81526(from,user,result.request,state.module)}
+  catch(e){console.error('[SEARCH_EXPORT_BP]',e);await sendText(from,'Cannot read BP history right now. Please try again.');return true;}
+  const rows=rankSearchRowsV81524(filterSearchRowsV81518([...result.rows,...catalog.rows,...bpRows],state.module),result.request,state.module);
+  const scopedBpArchive=isOwner(from)&&result.request.bloomPusher&&!result.request.furnaceQualifier&&
+    ['ALL','JOBS','HISTORY'].includes(state.module);
+  if(result.failed||result.partialFailure||(!scopedBpArchive&&result.truncated)||catalog.truncated||!rows.length||rows.length>1000){
     await sendText(from,'Cannot confirm a complete accessible result. Narrow the search and try again.');return true;
   }
   // Exports contain source references exactly as searched; they do not create verified equipment mappings.
@@ -3464,7 +3472,7 @@ async function bpHistoryRowsV81526(from,user,request,module){
   if(!request.bloomPusher||request.furnaceQualifier||!['JOBS','HISTORY','ALL'].includes(module)||
     !isOwner(from)||!(await hasAuthorityV874(user,'VIEW')))return [];
   const result=await pool.query(`SELECT source_key,source_file,location,source_text FROM lmmm_source_review
-    WHERE source_file='CH SIDE HISTORY(2).numbers' AND content_type='JOB_HISTORY' AND location LIKE 'sheet:BP:row:%'
+    WHERE source_file='CH SIDE HISTORY(2).numbers' AND content_type='JOB_HISTORY' AND location ~ '^sheet:BP:.*row:[0-9]+$'
     ORDER BY (substring(location from 'row:([0-9]+)'))::int LIMIT 150`);
   let bp='',car='',part='',heading='guide wheel',rows=[];
   for(const row of result.rows){
@@ -3538,7 +3546,12 @@ async function handleUniversalSearchV81513(from,question,user,options={}){
       !/\b(?:19|20)\d{2}(?:-\d{2}-\d{2})?\b/.test(r.content))return false;
     return true;
   });
-  const incomplete=partialFailure||catalogFailed,limited=truncated||catalog.truncated;
+  const incomplete=partialFailure||catalogFailed;
+  // The generic archive lookup is capped at 25 rows. For Bloom Pusher jobs
+  // the dedicated dated source catalogue and BP sheet cover the raw records.
+  const scopedBpArchive=isOwner(from)&&request.bloomPusher&&!request.furnaceQualifier&&
+    ['ALL','JOBS','HISTORY'].includes(module)&&!catalogFailed;
+  const limited=(scopedBpArchive?false:truncated)||catalog.truncated;
   if((failed&&!catalog.rows.length)||(incomplete&&!rows.length)){await sendText(from,'Some data sources are temporarily unavailable. Please try again; I cannot confirm a complete search.');return true;}
   if(!rows.length){if(module==='DRAWINGS'&&await showUnlinkedDrawingRefsV81516(from,request.exact||request.primary))return true;
     if(module==='ALL'&&await proposeSearchCorrectionV81515(from,question,user))return true;
@@ -3606,7 +3619,18 @@ async function handleUniversalSearchV81513(from,question,user,options={}){
     if(items.length>20&&!limited&&!incomplete&&await hasAuthorityV874(user,'PDF')){
       const pack={document_type:'SEARCH_RESULTS',extracted_items:items.map((x,i)=>({item_no:i+1,description:x,remarks:''}))};
       await sendGeneratedDocumentV878(from,tablePdfV880(pack,`${items.length} accessible matches`),'lmmm_search_results.pdf','application/pdf');
-    }else if(limited&&items.length>20){await sendText(from,'More matching records may exist. Narrow the search for a complete PDF.');}
+    }else if(limited&&items.length>20){
+      const imported=rows.filter(r=>String(r.key||'').startsWith('archive:history:')&&/\.xlsx/i.test(String(r.source||'')));
+      if(isOwner(from)&&!incomplete&&!catalog.truncated&&imported.length>20&&imported.length<3000&&
+        await hasAuthorityV874(user,'PDF')){
+        const seenImported=new Set(),excelItems=[];
+        for(const row of imported){const item=readableSearchItemV81522(row,request),key=item.toUpperCase().replace(/[^A-Z0-9]+/g,'');
+          if(!key||seenImported.has(key))continue;seenImported.add(key);excelItems.push(item);}
+        if(excelItems.length>20){const pack={document_type:'IMPORTED_EXCEL_HISTORY',extracted_items:excelItems.map((x,i)=>({item_no:i+1,description:x,remarks:''}))};
+          await sendGeneratedDocumentV878(from,tablePdfV880(pack,`${excelItems.length} imported Excel history matches`),'lmmm_excel_history_matches.pdf','application/pdf');}
+      }
+      await sendText(from,'More matching records may exist outside the displayed sources. Narrow the search to confirm a complete cross-source result.');
+    }
     return true;
   }
   if(strong || rows.length>8){
