@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.24 MULTI-SOURCE SEARCH RELEVANCE
+// LMMM AI Maintenance V8.15.25 SOURCE HISTORY RECOVERY
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -2704,7 +2704,7 @@ async function handleDrawingLookupV81512(from,question,user,selectedDoc=null){
 function universalTermsV81513(question){
   const q=String(question||'').trim();
   const refs=q.match(/[A-Za-z0-9]+(?:[./-][A-Za-z0-9]+)+|\b\d{7,}\b/g)||[];
-  const date=q.match(/\b(?:19|20)\d{2}-\d{2}-\d{2}\b/)?.[0]||null;
+  const date=q.match(/\b(?:19|20)\d{2}-\d{2}-\d{2}(?!\d)/)?.[0]||null;
   const exact=refs.filter(x=>/\d/.test(x)&&x!==date&&!/^\d{1,4}[./-]\d{1,2}[./-]\d{2,4}$/.test(x))
     .sort((a,b)=>b.length-a.length)[0]||null;
   const stop=new Set(['what','which','where','when','why','how','are','the','and','for','this','that','with','from','about','there','any','all','show','give','tell','please','check','find','search','number','name','data','record','records','lo','ki','di','enti','entha','deniki','gurinchi','cheppandi','sambandhanchindi','drawing','drawings','manual','manuals','file','sources','related','sambandham','details','history','jobs','job','spares','spare','equipment','maintenance','part','parts','sap','defect','defects','smp','sop','production','troubleshooting','problems','problem','issue','issues','failure','failed','fail','last','previous','before','during','today','yesterday','chudu','ivvu','kavali','ayyindi','chesaru','chesam','eppudu','year','date','dates','nunchi','entha','details','list','total']);
@@ -2723,6 +2723,7 @@ function searchIntentV81524(question,module){
   if(/\b(production|blooms rolled|tonnage|delay minutes|shift output)\b/i.test(q))return 'PRODUCTION';
   if(/\b(spares?|stock|inventory|cat(?:alog)?\s*no)\b/i.test(q))return 'SPARES';
   if(/\b(parts?|assembly|sub[- ]?equipment)\b/i.test(q))return 'PARTS';
+  if(/\b(?:when|eppudu|replaced|changed|repaired|failed|leaked|happened|incident|breakdown)\b/i.test(q))return 'HISTORY';
   return 'ALL';
 }
 function normalizeMaintenanceQueryV81524(question){
@@ -2760,8 +2761,8 @@ function rankSearchRowsV81524(rows,request,module){
     // Two-part equipment names need both words in the record, not a filename-only hit.
     if(subject.length>=2&&!request.exact&&row.subjectHits<2&&
       !/^(?:ecs|bdm|wbf|bp)$/.test(subject[0]))return false;
-    if(!request.exact&&subject.length>=2&&/^(?:bloom|blooming)$/.test(subject[0])&&
-      !subject.slice(0,2).every(x=>searchTermMatchV81524(row.searchBody,x)))return false;
+    if(!request.exact&&subject.includes('bloom')&&subject.includes('pusher')&&
+      !['bloom','pusher'].every(x=>searchTermMatchV81524(row.searchBody,x)))return false;
     if(subject.length===1&&!request.exact&&!row.subjectHits)return false;
     return row.searchScore>0;
   }).sort((a,b)=>b.searchScore-a.searchScore||String(b.date||'').localeCompare(String(a.date||'')));
@@ -3118,7 +3119,7 @@ function filterSearchRowsV81518(rows,module){
     if(module==='DEFECTS')return kind==='defect'||kind.startsWith('source defect');
     if(module==='DRAWINGS')return /drawing/.test(kind)||kind==='verified maintenance file'&&/draw|\.tiff?/i.test(src);
     if(module==='MANUALS')return /manual|smp|sop|procedure/.test(kind+' '+src);
-    if(module==='HISTORY')return /job_action|defect|history/.test(kind+' '+src);
+    if(module==='HISTORY')return /job_action|defect|history|source job reference|maintenance event/.test(kind+' '+src);
     if(module==='PARTS'||module==='SPARES')return new RegExp(module==='PARTS'?'part|drawing|spare':'spare|stock|part').test(kind+' '+src);
     if(module==='PRODUCTION')return /production shift|production delay/i.test(kind);
     if(module==='TROUBLESHOOTING')return /job_action|defect|history|manual|smp|sop|production delay/i.test(kind+' '+src);
@@ -3215,6 +3216,13 @@ function parseEcsDrawingV81521(row){
 }
 function readableSearchItemV81522(row,request){
   let raw=String(row.content||'').replace(/^Source status:[^;]*; candidate area:[^;]*; mapping:[^;]*;\s*/i,'');
+  if(/^Source (?:maintenance history|defect)/i.test(row.kind)&&/\bDATE OF FIX:\s*(?:19|20)\d{2}-\d{2}-\d{2}/i.test(raw)){
+    const fields=Object.fromEntries(raw.split('|').map(x=>x.trim().match(/^([^:]{2,35}):\s*(.*)$/)).filter(Boolean).map(x=>[x[1].toUpperCase(),x[2].trim()]));
+    const date=fields['DATE OF FIX']?.match(/\d{4}-\d{2}-\d{2}/)?.[0];
+    const asset=[fields.AREA,fields.CELLAR&&`cellar ${fields.CELLAR}`,fields.EQPT,fields.ASSEMBLY||fields.ASSY].filter(Boolean).join(' / ');
+    const reason=fields['REASONS FOR FIX']||'',remarks=fields.REMARKS&&fields.REMARKS!=='nan'?`; ${fields.REMARKS}`:'';
+    if(date&&asset&&reason)return `${date} · ${asset} — ${reason}${remarks}`.replace(/\s+/g,' ').slice(0,210);
+  }
   if(/^Source job reference/i.test(row.kind))raw=raw.replace(/^Equipment:[^;]*;\s*/i,'').replace(/;\s*source record:.*$/i,'');
   if(/^Source maintenance history/i.test(row.kind))raw=raw.replace(/^[^|]*\.xlsx\s*\/\s*[^|]*\|\s*\d+\s*\|\s*/i,'');
   if(/^Source defect/i.test(row.kind))raw=raw.replace(/;\s*sub-equipment:\s*unconfirmed/i,'');
@@ -3228,9 +3236,12 @@ function incidentSearchTermsV81523(question){
   const variant=q.match(/\b(?:ecs|furnace|wbf)[- ]?([12])\b/)?.[1];
   const groups=[];
   if(/\becs\b|\becs[- ]?[12]\b/.test(q))groups.push(variant?`ECS[- ]?${variant}`:'ECS');
+  if(/\bbloom\b/.test(q))groups.push('BLOOM');
+  if(/\bpusher\b/.test(q))groups.push('PUSHER');
   for(const [pattern,source] of [
     [/\bdowncomer\b/,'DOWN[ -]?COMER'],[/\bnrv\b/,'NRV'],
     [/\bgasket\b/,'GASKET|GACKET'],[/\bnitrogen\b/,'NITROGEN'],
+    [/\bcylinder\b/,'CYLINDER|CYL'],[/\brod\b/,'ROD'],[/\bseal\b/,'SEAL'],
     [/\bskid\b/,'SKID'],[/\bvalve\b/,'VALVE'],[/\bpump\b/,'PUMP|PUMO']])if(pattern.test(q))groups.push(source);
   // Motor + pump may be misspelled in source rows (PUMO); keep motor and other distinguishing terms.
   if(/\bmotor\b/.test(q)){const at=groups.indexOf('PUMP|PUMO');if(at>=0)groups.splice(at,1);groups.push('MOTOR');}
@@ -3243,14 +3254,15 @@ async function answerIncidentArchiveV81523(from,user,question,language){
   const groups=incidentSearchTermsV81523(question);if(!groups)return false;
   const where=groups.map((_,i)=>`source_text ~* $${i+1}`).join(' AND ');
   const result=await pool.query(`SELECT source_file,location,source_text FROM lmmm_source_review
-    WHERE (location ~* 'history|defects|jobs' OR content_type='JOB_HISTORY') AND ${where}
+    WHERE (location ~* 'history|defects|jobs' OR source_file ~* 'history|defects|jobs' OR
+      source_text ~* 'DATE OF FIX.*REASONS FOR FIX' OR content_type='JOB_HISTORY') AND ${where}
     ORDER BY CASE WHEN location ~* 'defects' THEN 0 ELSE 1 END,location
     LIMIT 251`,groups);
   if(!result.rows.length)return false;
   if(result.rows.length>250){await sendText(from,'Many incident records match. Add the equipment number, part or approximate year.');return true;}
   const unique=[],seen=new Set();
   for(const row of result.rows){
-    const date=String(row.source_text).match(/\b(?:19|20)\d{2}-\d{2}-\d{2}\b/)?.[0]||'';
+    const date=String(row.source_text).match(/\b(?:19|20)\d{2}-\d{2}-\d{2}(?!\d)/)?.[0]||'';
     // Reimports of the same archive row share the same sheet and row location.
     const duplicateKey=`${row.location}:${date}`;
     if(seen.has(duplicateKey))continue;seen.add(duplicateKey);
@@ -3386,7 +3398,7 @@ async function searchScopedSourceCatalogV81524(from,user,request,module){
   if(!terms.length)return {rows:[],truncated:false};
   const [first,second]=terms.sort((a,b)=>b.length-a.length);
   const isEvent=['JOBS','HISTORY','DEFECTS','TROUBLESHOOTING'].includes(module);
-  const eventFilter=isEvent?`AND (content_type<>'GENERAL_SOURCE' OR location ~* 'history|defects|jobs')`:
+  const eventFilter=isEvent?`AND (content_type<>'GENERAL_SOURCE' OR location ~* 'history|defects|jobs' OR source_file ~* 'history|defects|jobs' OR source_text ~* 'DATE OF FIX.*REASONS FOR FIX')`:
     module==='MANUALS'?`AND (content_type<>'SPARES_PARTS' OR source_file ~* 'smp|manual|procedure')`:'';
   const makeSql=withSecond=>`SELECT source_key,source_file,location,content_type,source_text FROM lmmm_source_review
     WHERE content_type=ANY($1::text[]) ${eventFilter} AND
@@ -3401,19 +3413,25 @@ async function searchScopedSourceCatalogV81524(from,user,request,module){
   }
   const rows=[],seen=new Set();
   for(const x of result.rows){
-    const text=String(x.source_text||'').trim(),date=text.match(/\b(?:19|20)\d{2}-\d{2}-\d{2}\b/)?.[0]||'';
+    const text=String(x.source_text||'').trim(),date=text.match(/\b(?:19|20)\d{2}-\d{2}-\d{2}(?!\d)/)?.[0]||'';
     if(text.length<22||/^(?:nan|unknown|unreadable|[- |.;])+$/i.test(text))continue;
+    const location=String(x.location||''),sourceFile=String(x.source_file||'');
+    const structuredFix=/\bDATE OF FIX:\s*(?:19|20)\d{2}-\d{2}-\d{2}/i.test(text)&&
+      /\bREASONS FOR FIX:/i.test(text);
+    const datedAction=!!date&&/\b(?:changed|replaced|repaired|rectified|attended|fixed|installed|removed|renewed|overhauled|welded|replacement)\b/i.test(text);
+    const planOrInventory=/\b(?:Scheduled Greasing|VIBRATION READINGS|plan20\d\d|BAR CHART|JOBBOLTS|FASTNERS)\b/i.test(location)||
+      /\b(?:TO BE|SHALL BE|PLANNED WORK|PROPOSED WORK)\b/i.test(text);
     if((module==='SPARES'||module==='PARTS')&&/STANDD?ARD MAINTENANCE PROCEDURE|\bJOB CARD\b/i.test(text))continue;
     if(module==='MANUALS'&&x.content_type==='SPARES_PARTS'&&!/STANDD?ARD MAINTENANCE PROCEDURE|\b(?:SMP|JOB PROCEDURE|JOB CARD)\b/i.test(text))continue;
-    if(['JOBS','HISTORY'].includes(module)&&!date)continue; // Undated headings are not completed jobs.
-    if(module==='DEFECTS'&&!/defect/i.test(x.location)&&!/fail|leak|damag|punctur|broken|burst|problem/i.test(text))continue;
+    if(['JOBS','HISTORY'].includes(module)&&(!date||planOrInventory||!(structuredFix||datedAction)))continue;
+    if(module==='DEFECTS'&&(!/defect/i.test(location)&&!/fail|leak|damag|punctur|broken|burst|problem|sheared|seal leak/i.test(text)||planOrInventory))continue;
     const signature=`${x.content_type}:${x.location}:${date}:${text.slice(-90).replace(/[^A-Z0-9]/gi,'').toUpperCase()}`;
     const reimport=`${x.content_type}:${x.location}:${date}`;
     if(seen.has(signature)||seen.has(reimport))continue;seen.add(signature);seen.add(reimport);
     const kind=x.content_type==='MANUAL'?'Source manual reference':x.content_type==='SMP'||module==='MANUALS'?'Source SMP reference':
       x.content_type==='DRAWING'?'Source drawing list':x.content_type==='SPARES_PARTS'?'Source spare reference':
-      /defects/i.test(x.location)?'Source defect':/history/i.test(x.location)?'Source maintenance history':'Source job reference';
-    rows.push({kind,content:text,source:x.source_file,page:x.location,date,key:`review:${x.source_key}`});
+      /defects/i.test(location)||module==='DEFECTS'?'Source defect':/history/i.test(`${location} ${sourceFile}`)||structuredFix?'Source maintenance history':'Source job reference';
+    rows.push({kind,content:text,source:sourceFile,page:location,date,key:`review:${x.source_key}`});
   }
   return {rows,truncated:result.rows.length>800};
 }
