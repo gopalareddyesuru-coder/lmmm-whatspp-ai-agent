@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.31 BP MECHANICAL DEFECT LABELS
+// LMMM AI Maintenance V8.15.32 BP COMBINED MAINTENANCE HISTORY
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -2754,11 +2754,6 @@ function rankSearchRowsV81524(rows,request,module){
     let score=hitCount*5+Number(precise)*35+Number(confirmed)*6-Number(sourceOnly)*6;
     if(request.date)score+=body.includes(request.date)||row.date===request.date?12:-18;
     if(module==='JOBS')score+=/job_action|maintenance history|source job reference/i.test(kind)?10:-12;
-    // The BP sheet is a charging-side mechanical maintenance register. Generic
-    // Bloom Pusher searches should show its dated entries before the much
-    // larger hydraulic cylinder history; explicit dates still win.
-    if(request.bloomPusher&&['JOBS','HISTORY','ALL'].includes(module)&&
-      String(row.key||'').startsWith('bp-mechanical:'))score+=30;
     if(module==='DRAWINGS')score+=/drawing/i.test(kind)?10:-12;
     if(module==='SPARES'||module==='PARTS')score+=/spare|part|drawing/i.test(kind)?8:-8;
     if(module==='MANUALS')score+=/manual|smp|sop|procedure/i.test(kind+' '+source)?10:-8;
@@ -3172,7 +3167,7 @@ async function handleSearchExportV81518(from,cmd,user){
   let bpRows=[];
   try{bpRows=await bpHistoryRowsV81526(from,user,result.request,state.module)}
   catch(e){console.error('[SEARCH_EXPORT_BP]',e);await sendText(from,'Cannot read BP history right now. Please try again.');return true;}
-  const rows=rankSearchRowsV81524(filterSearchRowsV81518([...result.rows,...catalog.rows,...bpRows],state.module),result.request,state.module);
+  const rows=balanceBpMaintenanceRowsV81532(rankSearchRowsV81524(filterSearchRowsV81518([...result.rows,...catalog.rows,...bpRows],state.module),result.request,state.module),result.request,state.module);
   const scopedBpArchive=isOwner(from)&&result.request.bloomPusher&&!result.request.furnaceQualifier&&
     ['ALL','JOBS','HISTORY','DEFECTS'].includes(state.module);
   if(result.failed||result.partialFailure||(!scopedBpArchive&&result.truncated)||catalog.truncated||!rows.length||rows.length>1000){
@@ -3247,6 +3242,8 @@ function parseEcsDrawingV81521(row){
 function readableSearchItemV81522(row,request){
   let raw=String(row.content||'').replace(/^Source status:[^;]*; candidate area:[^;]*; mapping:[^;]*;\s*/i,'');
   if(String(row.key||'').startsWith('bp-mechanical:')){
+    const liner=raw.match(/BLOOM PUSHER BP-([12]);\s*(CAR\s*[12]|car unspecified);\s*LINER PLATE;\s*mill-side liner plate replaced:/i);
+    if(liner)return `${row.date} · BP-${liner[1]}${/CAR/i.test(liner[2])?` / ${liner[2]}`:''} — Mill-side liner plate replaced.`;
     const details=raw.match(/BLOOM PUSHER BP-([12]);\s*(CAR\s*[12]|car unspecified);\s*([^;]+);\s*recorded guide wheel history date:/i);
     if(details)return `${row.date} · BP-${details[1]}${/CAR/i.test(details[2])?` / ${details[2]}`:''} / ${details[3]} — Guide wheel change recorded in charging-side history.`;
   }
@@ -3482,7 +3479,7 @@ function bpHistoryDateV81526(value){
   const s=String(value||'').trim();
   const iso=s.match(/^(20\d{2}|19\d{2})-(\d{1,2})-(\d{1,2})(?:\s|$)/);
   const us=s.match(/^(\d{1,2})\/(\d{1,2})\/(20\d{2}|19\d{2})(?:\b|$)/);
-  const y=iso?+iso[1]:us?+us[3]:0,m=iso?+iso[2]:us?+us[1]:0,d=iso?+iso[3]:us?+us[2]:0;
+  const y=iso?+iso[1]:us?+us[3]:0,m=iso?+iso[2]:us?(+us[1]>12?+us[2]:+us[1]):0,d=iso?+iso[3]:us?(+us[1]>12?+us[1]:+us[2]):0;
   if(!y||!m||!d||new Date(Date.UTC(y,m-1,d)).toISOString().slice(0,10)!==`${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`)return '';
   return `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
 }
@@ -3506,6 +3503,13 @@ async function bpHistoryRowsV81526(from,user,request,module){
       rows.push({kind:'Source maintenance history',content:`BLOOM PUSHER BP-${bp}; ${car||'car unspecified'}; ${part||'part unspecified'}; recorded guide wheel history date: ${date}`,date,
         source:row.source_file,page:row.location,key:`bp-mechanical:${row.source_key}:${i}`});
     }
+    if(part==='LINER PLATE'){
+      const note=cells.find(x=>/MILL SIDE REPLACED ON\s+\d{1,2}\.\d{1,2}\.\d{4}/i.test(x));
+      const match=note?.match(/MILL SIDE REPLACED ON\s+(\d{1,2})\.(\d{1,2})\.(\d{4})/i);
+      if(match){const date=bpHistoryDateV81526(`${match[1]}/${match[2]}/${match[3]}`);
+        if(date)rows.push({kind:'Source maintenance history',content:`BLOOM PUSHER BP-${bp}; ${car||'car unspecified'}; LINER PLATE; mill-side liner plate replaced: ${date}`,date,
+          source:row.source_file,page:row.location,key:`bp-mechanical:${row.source_key}:liner`});}
+    }
   }
   return rows;
 }
@@ -3518,7 +3522,21 @@ async function explainBpMechanicalAlongsideDefectsV81530(from,user,request,modul
   if(!related.length)return;
   const recent=related.sort((a,b)=>b.date.localeCompare(a.date)).slice(0,3)
     .map(r=>readableSearchItemV81522(r,request));
-  await sendText(from,`The cylinder and seal issues above are mechanical maintenance defects. Other Bloom Pusher maintenance recorded in the charging-side history:\n${recent.join('\n')}\nThe guide-wheel sheet records change dates, without defect causes.`.slice(0,750));
+  await sendText(from,`The cylinder and seal defects above are hydraulic. Mechanical work recorded for the Bloom Pusher:\n${recent.join('\n')}\nThe guide-wheel dates do not state defect causes.`.slice(0,750));
+}
+function balanceBpMaintenanceRowsV81532(rows,request,module){
+  if(!request.bloomPusher||request.bpNumber||request.date||request.exact||
+    !['JOBS','HISTORY'].includes(module))return rows;
+  const mechanical=rows.filter(r=>String(r.key||'').startsWith('bp-mechanical:'));
+  const hydraulic=rows.filter(r=>/hyd cyl history/i.test(String(r.source||'')));
+  if(!mechanical.length||!hydraulic.length)return rows;
+  const used=new Set(),balanced=[];
+  for(let i=0;i<Math.max(mechanical.length,hydraulic.length);i++){
+    for(const row of [mechanical[i],hydraulic[i]])if(row&&!used.has(row)){
+      used.add(row);balanced.push(row);
+    }
+  }
+  return balanced.concat(rows.filter(r=>!used.has(r)));
 }
 function dateForSearchV81524(question,now=new Date()){
   const q=String(question||'');
@@ -3570,11 +3588,11 @@ async function handleUniversalSearchV81513(from,question,user,options={}){
   try{bpRows=await bpHistoryRowsV81526(from,user,request,module)}
   catch(e){catalogFailed=true;console.error('[BP_HISTORY]',e.message);}
   const scopedRows=filterSearchRowsV81518([...allRows,...catalog.rows,...bpRows],module);
-  const rows=rankSearchRowsV81524(scopedRows,request,module).filter(r=>{
+  const rows=balanceBpMaintenanceRowsV81532(rankSearchRowsV81524(scopedRows,request,module).filter(r=>{
     if(module==='JOBS'&&/^Source maintenance history/i.test(r.kind)&&
       !/\b(?:19|20)\d{2}(?:-\d{2}-\d{2})?\b/.test(r.content))return false;
     return true;
-  });
+  }),request,module);
   const incomplete=partialFailure||catalogFailed;
   // The generic archive lookup is capped at 25 rows. For Bloom Pusher jobs
   // the dedicated dated source catalogue and BP sheet cover the raw records.
