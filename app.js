@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.29 BP MECHANICAL JOB SEARCH
+// LMMM AI Maintenance V8.15.30 BP MECHANICAL HISTORY CONTEXT
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -3509,6 +3509,17 @@ async function bpHistoryRowsV81526(from,user,request,module){
   }
   return rows;
 }
+async function explainBpMechanicalAlongsideDefectsV81530(from,user,request,module,rows){
+  if(module!=='DEFECTS'||!request.bloomPusher||request.furnaceQualifier||
+    !isOwner(from)||!rows.length||!rows.every(r=>/hyd cyl history/i.test(String(r.source||''))))return;
+  let related=[];
+  try{related=await bpHistoryRowsV81526(from,user,request,'JOBS');}
+  catch(e){console.error('[BP_RELATED_MECHANICAL]',e.message);return;}
+  if(!related.length)return;
+  const recent=related.sort((a,b)=>b.date.localeCompare(a.date)).slice(0,3)
+    .map(r=>readableSearchItemV81522(r,request));
+  await sendText(from,`These are hydraulic defect records. Charging-side mechanical guide-wheel changes are recorded separately in job history:\n${recent.join('\n')}\nSend “BP1 jobs”, “BP2 jobs”, or “Bloom pusher jobs” for the mechanical history. The BP sheet does not state defect causes.`.slice(0,900));
+}
 function dateForSearchV81524(question,now=new Date()){
   const q=String(question||'');
   const explicit=q.match(/\b((?:19|20)\d{2}-\d{2}-\d{2})\b/)?.[1];
@@ -3634,6 +3645,7 @@ async function handleUniversalSearchV81513(from,question,user,options={}){
     }
     await saveDocumentSessionV81511(from,'MAINT_RESULT_PAGE',{items,offset:0,expiresAt:Date.now()+30*60000});
     await showSearchPageV81522(from,user);
+    await explainBpMechanicalAlongsideDefectsV81530(from,user,request,module,rows);
     if(items.length>20&&!limited&&!incomplete&&await hasAuthorityV874(user,'PDF')){
       const pack={document_type:'SEARCH_RESULTS',extracted_items:items.map((x,i)=>({item_no:i+1,description:x,remarks:''}))};
       await sendGeneratedDocumentV878(from,tablePdfV880(pack,`${items.length} accessible matches`),'lmmm_search_results.pdf','application/pdf');
