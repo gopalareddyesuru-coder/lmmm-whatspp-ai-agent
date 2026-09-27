@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.18 SOURCE SEARCH EXPORT OPTIONS
+// LMMM AI Maintenance V8.15.19 PRIVATE SOURCE REVIEW SEARCH
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -435,6 +435,22 @@ async function initDB(){
     message_id TEXT PRIMARY KEY, whatsapp TEXT, message_type TEXT, received_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_wa_dedupe_received ON whatsapp_message_dedupe(received_at)`);
+  // Unverified archive evidence remains separate from confirmed maintenance data.
+  // It has no approved employee/area scope, so only Super Admin may query it.
+  await pool.query(`CREATE TABLE IF NOT EXISTS lmmm_source_review(
+    source_key TEXT PRIMARY KEY,
+    source_file TEXT NOT NULL,
+    archive_member TEXT NOT NULL,
+    source_sha256 TEXT,
+    location TEXT NOT NULL,
+    extraction_status TEXT NOT NULL,
+    candidate_area TEXT NOT NULL,
+    mapping_state TEXT NOT NULL,
+    content_type TEXT NOT NULL,
+    source_text TEXT NOT NULL
+  )`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_source_review_search ON lmmm_source_review
+    USING GIN (to_tsvector('simple',source_file||' '||archive_member||' '||source_text))`);
   await pool.query(`DELETE FROM whatsapp_message_dedupe WHERE received_at < now()-interval '7 days'`).catch(()=>{});
 
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_pending_ingest_retry ON pending_file_ingests(status,next_retry_at,created_at)`);
@@ -2863,6 +2879,26 @@ async function universalSearchV81513(from,user,question,archiveMode='ALL'){
       .then(r=>r.rows.map(k=>({kind:k.record_type||'Master record',source:k.source_name,title:k.equipment,date:k.event_date,
         content:`Area: ${k.area||'unconfirmed'}; ${k.record_text||''}`,key:`master:${k.uid}`}))));
   }
+  if(isOwner(from)){
+    // Archive rows have no approved per-user or per-equipment authorization.
+    // They must never be treated as stored/confirmed maintenance records.
+    jobs.push(pool.query(`SELECT source_key,source_file,archive_member,location,
+        extraction_status,candidate_area,mapping_state,content_type,
+        substring(source_text from greatest(1,strpos(lower(source_text),lower($1))-180) for 1400) AS source_excerpt
+      FROM lmmm_source_review
+      WHERE to_tsvector('simple',source_file||' '||archive_member||' '||source_text)
+        @@ plainto_tsquery('simple',$1)
+      ORDER BY CASE WHEN source_text ILIKE $2 THEN 0 ELSE 1 END,source_key
+      LIMIT 25`,[request.primary,pattern]).then(r=>r.rows.map(k=>({
+        kind:({DRAWING:'Source drawing list',JOB_HISTORY:'Source maintenance history',
+          SPARES_PARTS:'Source spare reference',MANUAL:'Source manual reference',SMP:'Source SMP reference'
+        })[k.content_type]||'Source reference (mapping unconfirmed)',
+        source:`${k.source_file}${k.archive_member?' / '+k.archive_member:''}`,
+        page:k.location,
+        content:`Source status: ${k.extraction_status}; candidate area: ${k.candidate_area}; mapping: ${k.mapping_state}; ${k.source_excerpt}`,
+        key:`review:${k.source_key}`
+      }))));
+  }
   const results=await Promise.allSettled(jobs),rows=[],seen=new Set();
   for(const result of results){
     if(result.status==='rejected'){console.error('[UNIVERSAL_SEARCH_SOURCE]',result.reason);continue;}
@@ -3441,8 +3477,8 @@ Shift: ${u.shift||'-'}`,[{id:'REMOVE_ME_CONFIRM',title:'Remove Me'},{id:'ACCOUNT
 }
 
 app.get('/health', async (_req,res)=>{
-  try{await pool.query('SELECT 1');res.json({ok:true,version:'8.15.18',phase:'registration-and-file-ingestion',db:true});}
-  catch(e){res.status(500).json({ok:false,version:'8.15.18',error:e.message});}
+  try{await pool.query('SELECT 1');res.json({ok:true,version:'8.15.19',phase:'registration-and-file-ingestion',db:true});}
+  catch(e){res.status(500).json({ok:false,version:'8.15.19',error:e.message});}
 });
 app.get('/webhook',(req,res)=>{
   const mode=req.query['hub.mode'], token=req.query['hub.verify_token'], challenge=req.query['hub.challenge'];
@@ -3488,4 +3524,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.18 SOURCE SEARCH EXPORT OPTIONS listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.19 PRIVATE SOURCE REVIEW SEARCH listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));

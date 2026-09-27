@@ -1,0 +1,17 @@
+.env
+.env.*
+!.env.example
+
+# Private source-review data must never be committed to the public repository.
+LMMM_SOURCE_SEARCH_FINAL_REVIEW_*.zip
+LMMM_SOURCE_REVIEW_SEARCH_*.sqlite3
+LMMM_ACCESS_SEARCH_*.sqlite3
+LMMM_ACCESS_COMPLETE_COVERAGE_*.csv
+LMMM_ALL_SOURCES_COVERAGE_*.csv
+LMMM_SKIPPED_PASSWORD_FILES_*.csv
+
+__pycache__/
+*.py[cod]
+node_modules/
+.pnpm-store/
+pnpm-lock.yaml
