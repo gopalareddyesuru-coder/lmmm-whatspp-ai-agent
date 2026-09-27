@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.28 HYDRAULIC SUMMARY AND DEFECT PDF
+// LMMM AI Maintenance V8.15.29 BP MECHANICAL JOB SEARCH
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -2754,6 +2754,11 @@ function rankSearchRowsV81524(rows,request,module){
     let score=hitCount*5+Number(precise)*35+Number(confirmed)*6-Number(sourceOnly)*6;
     if(request.date)score+=body.includes(request.date)||row.date===request.date?12:-18;
     if(module==='JOBS')score+=/job_action|maintenance history|source job reference/i.test(kind)?10:-12;
+    // The BP sheet is a charging-side mechanical maintenance register. Generic
+    // Bloom Pusher searches should show its dated entries before the much
+    // larger hydraulic cylinder history; explicit dates still win.
+    if(request.bloomPusher&&['JOBS','HISTORY','ALL'].includes(module)&&
+      String(row.key||'').startsWith('bp-mechanical:'))score+=30;
     if(module==='DRAWINGS')score+=/drawing/i.test(kind)?10:-12;
     if(module==='SPARES'||module==='PARTS')score+=/spare|part|drawing/i.test(kind)?8:-8;
     if(module==='MANUALS')score+=/manual|smp|sop|procedure/i.test(kind+' '+source)?10:-8;
@@ -3241,6 +3246,10 @@ function parseEcsDrawingV81521(row){
 }
 function readableSearchItemV81522(row,request){
   let raw=String(row.content||'').replace(/^Source status:[^;]*; candidate area:[^;]*; mapping:[^;]*;\s*/i,'');
+  if(String(row.key||'').startsWith('bp-mechanical:')){
+    const details=raw.match(/BLOOM PUSHER BP-([12]);\s*(CAR\s*[12]|car unspecified);\s*([^;]+);\s*recorded guide wheel history date:/i);
+    if(details)return `${row.date} · BP-${details[1]}${/CAR/i.test(details[2])?` / ${details[2]}`:''} / ${details[3]} — Guide wheel change recorded in charging-side history.`;
+  }
   if(/^Source (?:maintenance history|defect)/i.test(row.kind)&&/\bDATE OF FIX:\s*(?:19|20)\d{2}-\d{2}-\d{2}/i.test(raw)){
     const fields=Object.fromEntries(raw.split('|').map(x=>x.trim().match(/^([^:]{2,35}):\s*(.*)$/)).filter(Boolean).map(x=>[x[1].toUpperCase(),x[2].trim()]));
     const date=fields['DATE OF FIX']?.match(/\d{4}-\d{2}-\d{2}/)?.[0];
@@ -3483,19 +3492,19 @@ async function bpHistoryRowsV81526(from,user,request,module){
   const result=await pool.query(`SELECT source_key,source_file,location,source_text FROM lmmm_source_review
     WHERE source_file='CH SIDE HISTORY(2).numbers' AND content_type='JOB_HISTORY' AND location ~ '^sheet:BP:.*row:[0-9]+$'
     ORDER BY (substring(location from 'row:([0-9]+)'))::int LIMIT 150`);
-  let bp='',car='',part='',heading='guide wheel',rows=[];
+  let bp='',car='',part='',rows=[];
   for(const row of result.rows){
     const cells=String(row.source_text||'').split('|').map(x=>x.trim());
     const explicit=cells[0]?.match(/^BP[ -]?([12])$/i);
     if(explicit){bp=explicit[1];car='';part='';}
-    if(/^CAR\s*[1-9]$/i.test(cells[1]||''))car=cells[1].toUpperCase();
-    if(/^\b(?:BS|SS)\s*\d+\b$/i.test(cells[2]||''))part=cells[2].toUpperCase();
-    if(/LINER PLATE/i.test(cells[0]||''))heading='liner plate';
+    if(/^CAR\s*[12]$/i.test(cells[1]||''))car=cells[1].toUpperCase();
+    if(/^(?:BS|SS|BRW|B)\s*\d+$/i.test(cells[2]||''))part=cells[2].toUpperCase().replace(/\s+/g,'');
+    else if(/LINER PLATE/i.test(cells[2]||''))part='LINER PLATE';
     if(!bp||request.bpNumber&&request.bpNumber!==bp)continue;
     for(let i=0;i<cells.length;i++){
       const date=bpHistoryDateV81526(cells[i]);if(!date)continue;
-      rows.push({kind:'Source maintenance history',content:`BLOOM PUSHER BP-${bp}; ${car||'car unspecified'}; ${part||heading}; recorded ${heading} history date: ${date}`,date,
-        source:row.source_file,page:row.location,key:`review:${row.source_key}:${i}`});
+      rows.push({kind:'Source maintenance history',content:`BLOOM PUSHER BP-${bp}; ${car||'car unspecified'}; ${part||'part unspecified'}; recorded guide wheel history date: ${date}`,date,
+        source:row.source_file,page:row.location,key:`bp-mechanical:${row.source_key}:${i}`});
     }
   }
   return rows;
