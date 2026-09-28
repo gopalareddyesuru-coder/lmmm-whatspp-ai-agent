@@ -1,0 +1,5206 @@
+{
+  "scope": "Major drawings transcribed from five LMMM operation and maintenance manuals, charging through finishing",
+  "caution": "Numbers and titles are OCR transcriptions requiring visual review against original pages before treating exact drawing identifiers as verified. Shared manual headings can link multiple item numbers.",
+  "count": 463,
+  "drawings": [
+    {
+      "item_numbers": [
+        1
+      ],
+      "number_core": "22593",
+      "number_as_ocr": "mec /1 /A-22593/00",
+      "title_as_ocr": "Tensioning Device Arrangement.",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 3,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        1
+      ],
+      "number_core": "22595",
+      "number_as_ocr": "MeL /8/A-22595 /oo",
+      "title_as_ocr": "General Arrangement, Views & Sections. SH 1,2,3 & 4",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 3,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        1
+      ],
+      "number_core": "22896",
+      "number_as_ocr": "MEC /1 /A-22896/00",
+      "title_as_ocr": "General Arrangement - Plan.",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 3,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        1
+      ],
+      "number_core": "22913",
+      "number_as_ocr": "mec /o/A-22913/00",
+      "title_as_ocr": "Rope Drum Drive Arrangement for Grid 1. a sarees. + ceremmmmonae toe re",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 3,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        2
+      ],
+      "number_core": "22793",
+      "number_as_ocr": "mec /8/A-22793/00",
+      "title_as_ocr": "General Arrangement.",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 20,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        2
+      ],
+      "number_core": "22851",
+      "number_as_ocr": "Mec /o/A-22851 /o0",
+      "title_as_ocr": "General Arrangement - Sections. Sht. 1&2 General Arrangemmt - Rollers. Mex /8/A~22861 /O0 Sht. 1,283",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 20,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        2
+      ],
+      "number_core": "22852",
+      "number_as_ocr": "Mec /1 /A-22852/00",
+      "title_as_ocr": "Sections General Arrangement & Sections.",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 20,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        3
+      ],
+      "number_core": "22521",
+      "number_as_ocr": "MEE /0/A-22521 /00",
+      "title_as_ocr": "General Arrangement",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 30,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        4
+      ],
+      "number_core": "22763",
+      "number_as_ocr": "MEC /8 /A-22763/00",
+      "title_as_ocr": "Upper Chain Reversing",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 44,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        4
+      ],
+      "number_core": "22765",
+      "number_as_ocr": "EC /8/4-22765/o0",
+      "title_as_ocr": "Lower Chain Reversing",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 44,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        "4.01"
+      ],
+      "number_core": "22722",
+      "number_as_ocr": "MEC /0/A-22722/00",
+      "title_as_ocr": "Lever Type Pusher - Sections",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 44,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        "4.01"
+      ],
+      "number_core": "22738",
+      "number_as_ocr": "MEC /o/A-22738/o0",
+      "title_as_ocr": "Elevation. Lever Type Pusher - General Arrangement",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 44,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        "4.01"
+      ],
+      "number_core": "22937",
+      "number_as_ocr": "MEC /0/A-22937/00",
+      "title_as_ocr": "Lever Type Pusher - Arrgt. of Deg",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 44,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        "4.02"
+      ],
+      "number_core": "22756",
+      "number_as_ocr": "MEC /1 /A-22756/00",
+      "title_as_ocr": "Section Carrying Link",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 44,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        "4.02"
+      ],
+      "number_core": "22759",
+      "number_as_ocr": "MEC /1 /A-22759/00",
+      "title_as_ocr": "Transport Chain",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 44,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        "4.02"
+      ],
+      "number_core": "22760",
+      "number_as_ocr": "MEC/1 /A-22760/00",
+      "title_as_ocr": "Transport Chain",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 44,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        "4.02"
+      ],
+      "number_core": "22764",
+      "number_as_ocr": "MeC/1 /A=22764/o0",
+      "title_as_ocr": "Section Carrying Link “EC /8/4-22765/o00 Lower Chain Reversing",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 44,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        "4.03"
+      ],
+      "number_core": "22732",
+      "number_as_ocr": "EC /O/A-22732/o0",
+      "title_as_ocr": "Bloom Transfer Device - Sections “iC /8/K-22733/00 Bloom Transfer Device Section A-A",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 44,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        "4.03"
+      ],
+      "number_core": "22734",
+      "number_as_ocr": "MEC /0/A-22734/o0",
+      "title_as_ocr": "Bloom Transfer Device - Plan View",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 44,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        "4.03"
+      ],
+      "number_core": "22735",
+      "number_as_ocr": "mec /8/A-22735/o0",
+      "title_as_ocr": "Bloom Transfer Device - Sections earner",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 44,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        5
+      ],
+      "number_core": "22793",
+      "number_as_ocr": "met /6 /A-22793/00",
+      "title_as_ocr": "Gmeral Arrangement MEL /8 /A-22794/00 Arrangement of Rollers & Sections Sht. 1,28 3",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 71,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        5
+      ],
+      "number_core": "22794",
+      "number_as_ocr": "MEL /8 /A-22794/00",
+      "title_as_ocr": "Arrangement of Rollers & Sections Sht. 1,28 3",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 71,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        5
+      ],
+      "number_core": "22795",
+      "number_as_ocr": "MEC /0/A-22795/00",
+      "title_as_ocr": "Arrangement of Rollers & Sections Sht. 1&2",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 71,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        5
+      ],
+      "number_core": "22798",
+      "number_as_ocr": "MEC /0/A-22798/00",
+      "title_as_ocr": "Arrangement of Rollers",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 71,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        5
+      ],
+      "number_core": "22799",
+      "number_as_ocr": "Mec /8/A-22799/00",
+      "title_as_ocr": "Arrangement of Rollers Section thru Rollers",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 71,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        5
+      ],
+      "number_core": "22945",
+      "number_as_ocr": "MEC /8/A-22945/00",
+      "title_as_ocr": "Heat Protection Shield Arrangement",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 71,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        5
+      ],
+      "number_core": "24364",
+      "number_as_ocr": "Mec /1 /A-24364/00",
+      "title_as_ocr": "Drive Arrangement",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 71,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        5
+      ],
+      "number_core": "25612",
+      "number_as_ocr": "mec /0/A-2561 2/00",
+      "title_as_ocr": "Heat Protection Shields - Sections & Views.",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 71,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        6
+      ],
+      "number_core": "22575",
+      "number_as_ocr": "MEC /o/A-22575 /o0",
+      "title_as_ocr": "Arrangement - Tilter Frame",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 80,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        6
+      ],
+      "number_core": "22576",
+      "number_as_ocr": "MEC /0/A-22576/00",
+      "title_as_ocr": "Arrangement - Drive Shaft",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 80,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        6
+      ],
+      "number_core": "22577",
+      "number_as_ocr": "MEC /0/A-22577/00",
+      "title_as_ocr": "Arrangement - Hook Type Bloom Tilter in the area of Furnace Approach Roller Table.",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 80,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        7
+      ],
+      "number_core": "22796",
+      "number_as_ocr": "Mec /o/A-22796 /oo",
+      "title_as_ocr": "Supporting Structure for Weighing Scale. Note Refer \"SCHENCK\" instruction manual for electrical and insta",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 88,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        8
+      ],
+      "number_core": "23656",
+      "number_as_ocr": "MEC /1 /A-23656/00",
+      "title_as_ocr": "Disappearing Stop - Arrangement",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 93,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        8
+      ],
+      "number_core": "24133",
+      "number_as_ocr": "MEC /1 /A~24133/00",
+      "title_as_ocr": "Disappearing Stop - L.S. Arrangement",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 93,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        10
+      ],
+      "number_core": "22608",
+      "number_as_ocr": "mec /o/A-22608/00",
+      "title_as_ocr": "General Arrangement ~ Plan, Sections & Sht. 1,2,3,4 & 5 Limit Switch Arrangement",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 107,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        11
+      ],
+      "number_core": "22853",
+      "number_as_ocr": "MEC /o/A-22853/00",
+      "title_as_ocr": "General Arrangement - Plan & Sections Sht. 1,283",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 116,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        11
+      ],
+      "number_core": "22854",
+      "number_as_ocr": "MEC /1 /A-22854 /o0",
+      "title_as_ocr": "Driving Box Arrangement Sht. 1&2",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 116,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        11
+      ],
+      "number_core": "22856",
+      "number_as_ocr": "mec /1 /A-22856/00",
+      "title_as_ocr": "Arrangement of End Stops and Tooth Rack y",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 116,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        11
+      ],
+      "number_core": "22857",
+      "number_as_ocr": "Mec /1 /A-22857/00",
+      "title_as_ocr": "General Arrangement - Section",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 116,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        11
+      ],
+      "number_core": "22892",
+      "number_as_ocr": "MEC /1 /A-22892/00",
+      "title_as_ocr": "Arrangement of Limit Switch (Lifting Motion) General Arrangement - Sections",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 116,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        11
+      ],
+      "number_core": "24513",
+      "number_as_ocr": "MEC /1 /A-24513/00",
+      "title_as_ocr": "Arrangement of Limit Switches (Travelling Way)",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 116,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        11
+      ],
+      "number_core": "24514",
+      "number_as_ocr": "MEC/1 /A=24514 /00",
+      "title_as_ocr": "Drive Arrangement - Views & Sections Sht. 1 & 2",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 116,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        12,
+        13
+      ],
+      "number_core": "22522",
+      "number_as_ocr": "Met /0/A-22522/00",
+      "title_as_ocr": "Section thru Roller",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 127,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        12,
+        13
+      ],
+      "number_core": "22847",
+      "number_as_ocr": "mec /0/A-22847/00",
+      "title_as_ocr": "Roller Table - General Arrangement Sht. 1,2 & 3",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 127,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        12,
+        13
+      ],
+      "number_core": "22848",
+      "number_as_ocr": "Mec /o/A-22848/o0",
+      "title_as_ocr": "Arrangement of Guide Plates",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 127,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        12,
+        13
+      ],
+      "number_core": "22890",
+      "number_as_ocr": "Mec /o/A-22890/00",
+      "title_as_ocr": "Arrangement of Guide Plates",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 127,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        12,
+        13
+      ],
+      "number_core": "22891",
+      "number_as_ocr": "MEC /o/A-22891 /O0",
+      "title_as_ocr": "Arrangement of Guide Plates",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 127,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        12,
+        13
+      ],
+      "number_core": "22944",
+      "number_as_ocr": "MEC /8/A~22944 /oo",
+      "title_as_ocr": "Arrangement of Heat Protection Shield Heat Protection Shield - Sections",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 127,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        12,
+        13
+      ],
+      "number_core": "24365",
+      "number_as_ocr": "Mec /1 /A-24365/00",
+      "title_as_ocr": "Drive Arrangement",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 127,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        12,
+        13
+      ],
+      "number_core": "24656",
+      "number_as_ocr": "MEC /6 /A~24656/00",
+      "title_as_ocr": "Arrangement of Guide Plates",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 127,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        15
+      ],
+      "number_core": "22575",
+      "number_as_ocr": "Mec /0/A-22575 /oo",
+      "title_as_ocr": "Arrangement - Tilter Frame",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 170,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        15
+      ],
+      "number_core": "22576",
+      "number_as_ocr": "Mec /o/A-22576/00",
+      "title_as_ocr": "Arrangement - Drive Shaft Arrangement - Hook Type Bloom Tilter",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 170,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        15
+      ],
+      "number_core": "22578",
+      "number_as_ocr": "Mec /o/A-22578/00",
+      "title_as_ocr": "in the area of Furnace Delivery Roller Table. f",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 170,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        16
+      ],
+      "number_core": "23656",
+      "number_as_ocr": "MEC /1 /A-236 56 /oo",
+      "title_as_ocr": "Disappearing stop - Arrangement",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 179,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        16
+      ],
+      "number_core": "24133",
+      "number_as_ocr": "mec /1 /a-24133 /o0",
+      "title_as_ocr": "Disappearing Stop - Limit Switch Arrangement.",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 179,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        17
+      ],
+      "number_core": "20525",
+      "number_as_ocr": "Mec /o/a-20525 /oo",
+      "title_as_ocr": "Roll Bearing Assembly 0/7985030",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 3,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        17
+      ],
+      "number_core": "20580",
+      "number_as_ocr": "Mec /o/A-20580/00",
+      "title_as_ocr": "Clamping Device",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 4,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        17
+      ],
+      "number_core": "20690",
+      "number_as_ocr": "Mec /o/A-20690 /o0",
+      "title_as_ocr": "Mil. Guide BH 1 0/7727920",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 3,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        17
+      ],
+      "number_core": "20691",
+      "number_as_ocr": "MEC /o/A~20691 /oo",
+      "title_as_ocr": "Mill Guide BH 2 1/7921200",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 3,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        17
+      ],
+      "number_core": "20772",
+      "number_as_ocr": "mec /o/A-20772/00",
+      "title_as_ocr": "General Layout 1/7626670 “ec A /A-22939/00 Work Roll a/7627000",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 3,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        17
+      ],
+      "number_core": "20774",
+      "number_as_ocr": "mec /o/A-20774 /oo",
+      "title_as_ocr": "Roll Changing Device 0/7727910",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 3,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        17
+      ],
+      "number_core": "20778",
+      "number_as_ocr": "Mec /1 /A-20778/00",
+      "title_as_ocr": "Roll Changing - Operations o/7835040 Device",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 3,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        17
+      ],
+      "number_core": "20965",
+      "number_as_ocr": "mec /1 /A-20965/o0",
+      "title_as_ocr": "Drive Spindle 0/7738000 MzC /o/A-20528/o0 Combined Pinion Gear Unit 1/7918220",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 3,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        17
+      ],
+      "number_core": "22864",
+      "number_as_ocr": "MEC /o/a-22864 /oD",
+      "title_as_ocr": "Roll Changing 1/7833500",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 3,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        17
+      ],
+      "number_core": "22865",
+      "number_as_ocr": "Mec /1 /A-22865/00",
+      "title_as_ocr": "Device Roll Changing Drive Station",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 3,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        17
+      ],
+      "number_core": "22866",
+      "number_as_ocr": "MEC /1 /A-22866/o0",
+      "title_as_ocr": "Roll Changing Device Sht. 1&2 Drive Station Bracket. 1/7833520",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 4,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        17
+      ],
+      "number_core": "22867",
+      "number_as_ocr": "Mec /1 /a~22867/00",
+      "title_as_ocr": "Roll Thanging Device Retum Bracket. 1/7835020",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 4,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        17
+      ],
+      "number_core": "22868",
+      "number_as_ocr": "MEC /1 /A-22868/00",
+      "title_as_ocr": "Roll Changing Device Trackways. 1/7626790",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 4,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        18
+      ],
+      "number_core": "20538",
+      "number_as_ocr": "MEC /o /A-20538/o0",
+      "title_as_ocr": "Spur-Pinion Gear Stand 1/7918240",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 15,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        18
+      ],
+      "number_core": "20779",
+      "number_as_ocr": "MEC /o/A-20779/00",
+      "title_as_ocr": "General Arrangements 0/7 944400 V5",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 15,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        18
+      ],
+      "number_core": "20780",
+      "number_as_ocr": "MEC /o/A-20780/o0",
+      "title_as_ocr": "General Arrangemenis 0/7839860",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 15,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        18
+      ],
+      "number_core": "20781",
+      "number_as_ocr": "MEC /o/A-20781 /oo",
+      "title_as_ocr": "External Stand Sh 2 V5 Sht. 2 0/7816460",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 15,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        18
+      ],
+      "number_core": "20784",
+      "number_as_ocr": "mec /o/A-20784 /oo",
+      "title_as_ocr": "Intemal Stand 1/7839990",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 16,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        18
+      ],
+      "number_core": "20785",
+      "number_as_ocr": "MEC /o/A-20785 /oo",
+      "title_as_ocr": "Roll Bearing Assembly - Bottom 0/7816450",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 15,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        18
+      ],
+      "number_core": "20786",
+      "number_as_ocr": "MEC /0/A-20786 /o0",
+      "title_as_ocr": "Roll Bearing Assembly - Top 0/7839660",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 15,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        18
+      ],
+      "number_core": "20787",
+      "number_as_ocr": "MEC /o/A=20787 /oo",
+      "title_as_ocr": "Screwdown Drive Side 0/783 9650",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 15,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        18
+      ],
+      "number_core": "20792",
+      "number_as_ocr": "MEC /0/A-207 92/00",
+      "title_as_ocr": "Tilting Frame for Mill Guides BV 3 0/7942350",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 16,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        18
+      ],
+      "number_core": "20793",
+      "number_as_ocr": "MEC /o/A-20793/00",
+      "title_as_ocr": "Tilting Frame for Mill Guides BV 5 0/781 7100",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 16,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        18
+      ],
+      "number_core": "20794",
+      "number_as_ocr": "MEC/1 /A-20794 /o0",
+      "title_as_ocr": "Mill Guide BV 3 1/7709040",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 16,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        18
+      ],
+      "number_core": "20795",
+      "number_as_ocr": "MEC /1 /A-20795 /o0",
+      "title_as_ocr": "Mill Guide BV 5 0/783 9670",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 16,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        18
+      ],
+      "number_core": "20954",
+      "number_as_ocr": "MEC /1 /a~20954/o0",
+      "title_as_ocr": "BV5 Drive Spindle 0/7738370",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 15,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        18
+      ],
+      "number_core": "20957",
+      "number_as_ocr": "mec /1 /a-20957 /oo",
+      "title_as_ocr": "BV3 Drive Coupling 1/7918260",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 15,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        18
+      ],
+      "number_core": "20959",
+      "number_as_ocr": "Mec (1 /A-20959/00",
+      "title_as_ocr": "BVS Drive Coupling 1/7920010",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 15,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        18
+      ],
+      "number_core": "20964",
+      "number_as_ocr": "mec /o/A-20964 /o0",
+      "title_as_ocr": "Arrangement of Roll Set Tilter a/7631 950",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 16,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        18
+      ],
+      "number_core": "20967",
+      "number_as_ocr": "MEC/1 /a-20967/00",
+      "title_as_ocr": "Side Screwdown Screw Top Drive 1 /7839640",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 15,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        18
+      ],
+      "number_core": "22865",
+      "number_as_ocr": "MEC/1 /A-22865 /o0",
+      "title_as_ocr": "Roll Changing Device - Drive Station 1/7833510",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 16,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        18
+      ],
+      "number_core": "22866",
+      "number_as_ocr": "mec /1 /A-22866 /o0",
+      "title_as_ocr": "Roll Changing Device - Sht. 18 2 Drive Station Bracket 1 /7833520",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 16,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        18
+      ],
+      "number_core": "22867",
+      "number_as_ocr": "Mec /1 /A-22867 /o0",
+      "title_as_ocr": "Roll Changing Device - Return Bracket 1 /7833530",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 16,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        18
+      ],
+      "number_core": "22870",
+      "number_as_ocr": "Mec /o/A-22870/00",
+      "title_as_ocr": "Roll Changing Device - Stands V 3-5 1/7833500",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 16,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        18
+      ],
+      "number_core": "22871",
+      "number_as_ocr": "mec /1 /A~22871 /oD",
+      "title_as_ocr": "Roll Changing Device - Chain Guide 1/7833540",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 16,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        18
+      ],
+      "number_core": "22872",
+      "number_as_ocr": "Mec /1 /A-22872/00",
+      "title_as_ocr": "Rell Changing Device - Retracting Car 1/7835830",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 16,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        18
+      ],
+      "number_core": "22873",
+      "number_as_ocr": "Mec /1 /A-22873 /o0",
+      "title_as_ocr": "Roll Changing Device - Rail 1/783356D",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 16,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        18
+      ],
+      "number_core": "22874",
+      "number_as_ocr": "vec /1 /A~22874 /o0",
+      "title_as_ocr": "Rell Changing Device - Rail for Moving Floor Plates Roll Changing Device - 1/7833580",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 16,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        18
+      ],
+      "number_core": "22876",
+      "number_as_ocr": "MEC/1 /A=22876/00",
+      "title_as_ocr": "Roll Changing Device - Plate Car",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 16,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        19
+      ],
+      "number_core": "20796",
+      "number_as_ocr": "MEC/1 /A~207 96 /o0",
+      "title_as_ocr": "Guide Tables between BH 1 and HH 2 1/7816770",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 27,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        19
+      ],
+      "number_core": "20797",
+      "number_as_ocr": "Mec /1 /a-20797 /oo",
+      "title_as_ocr": "Guide Tables between BH 2 and BV 3 1/7816780",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 27,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        19
+      ],
+      "number_core": "20798",
+      "number_as_ocr": "Mec /1 /A~20798/o0",
+      "title_as_ocr": "Guide Tables between BV 3 and BH 4",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 27,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        25
+      ],
+      "number_core": "20543",
+      "number_as_ocr": "MEC /o/A-20543/o0",
+      "title_as_ocr": "Roll Bearing Assembly 1/7626600",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 29,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        25
+      ],
+      "number_core": "20545",
+      "number_as_ocr": "MEC/o/A=20545 /o0",
+      "title_as_ocr": "Main Gear 1/7921200",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 29,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        25
+      ],
+      "number_core": "20580",
+      "number_as_ocr": "MEC /o/a-20580/o0",
+      "title_as_ocr": "Clamping Device 1/7628880",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 29,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        25
+      ],
+      "number_core": "20777",
+      "number_as_ocr": "mec /1 /A-20777/o0",
+      "title_as_ocr": "Clutch Mill Guide BH 4 0/7727 930",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 29,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        25
+      ],
+      "number_core": "20799",
+      "number_as_ocr": "MEC/o/A-207 99/00",
+      "title_as_ocr": "Total General Arrangement o/7985040",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 29,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        25
+      ],
+      "number_core": "20801",
+      "number_as_ocr": "Mec /o/A-20801 /oo",
+      "title_as_ocr": "Roll Changing Device 0/7628050",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 29,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        25
+      ],
+      "number_core": "20804",
+      "number_as_ocr": "Mec /i /A-20804/o0",
+      "title_as_ocr": "Roll Changing Roll Changing Device 0/7835040",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 29,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        25
+      ],
+      "number_core": "20958",
+      "number_as_ocr": "MEC /1 /A-20958/00",
+      "title_as_ocr": "Drive Coupling",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 29,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        25
+      ],
+      "number_core": "20970",
+      "number_as_ocr": "vec /1 /A-20970/00",
+      "title_as_ocr": "Drive Spindle 1/791825D",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 29,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        25
+      ],
+      "number_core": "22864",
+      "number_as_ocr": "Mec /p/A-22864 /o0",
+      "title_as_ocr": "Roll Changing Device - 1/7833500 m",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 29,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        25
+      ],
+      "number_core": "22865",
+      "number_as_ocr": "Mec/1 /A-22865/00",
+      "title_as_ocr": "Drive Station Device - 1/7833510 m",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 29,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        25
+      ],
+      "number_core": "22866",
+      "number_as_ocr": "MEC/1 /A-22866/00",
+      "title_as_ocr": "Roll Changing Sht. 1&8 2 Drive Station Brecket 1/7833520",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 29,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        25
+      ],
+      "number_core": "22867",
+      "number_as_ocr": "MEC/1 /A-22867/00",
+      "title_as_ocr": "Roll Changing Device - Retum Bracket 1 /7835020",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 29,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        26
+      ],
+      "number_core": "20545",
+      "number_as_ocr": "mec /o/A-20545 /oo",
+      "title_as_ocr": "Main Gear 1/7921 200",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 45,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        26
+      ],
+      "number_core": "20549",
+      "number_as_ocr": "Mec /o /A-2054 9/00",
+      "title_as_ocr": "Roll Bearing Assembly 1/17626810",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 45,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        26
+      ],
+      "number_core": "20580",
+      "number_as_ocr": "MEC/o/A-20580/00",
+      "title_as_ocr": "Clamping Device 1/7628890",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 45,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        26
+      ],
+      "number_core": "20693",
+      "number_as_ocr": "MEC/o/A=206 93/00",
+      "title_as_ocr": "Mill Guide BH 6 1/7985350",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 45,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        26
+      ],
+      "number_core": "20805",
+      "number_as_ocr": "Mec /o/A-20805 /oo",
+      "title_as_ocr": "Total General Arrangement o/7985050",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 45,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        26
+      ],
+      "number_core": "20807",
+      "number_as_ocr": "Mec /o/a-20807 /oo",
+      "title_as_ocr": "Roll Changing Device o/7628050",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 45,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        26
+      ],
+      "number_core": "20811",
+      "number_as_ocr": "mec (1 /a-20811 /oo",
+      "title_as_ocr": "Roll Changing Functions 1/7918270",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 45,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        26
+      ],
+      "number_core": "20812",
+      "number_as_ocr": "MeC/1 /a-20812/00",
+      "title_as_ocr": "Shear Pin Tooth Coupling 0/7835040",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 45,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        26
+      ],
+      "number_core": "22864",
+      "number_as_ocr": "MEC /o/A-22864/o0",
+      "title_as_ocr": "Roll Changing Device 1/7833500",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 45,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        26
+      ],
+      "number_core": "22865",
+      "number_as_ocr": "mec /1 /A-22865/00",
+      "title_as_ocr": "Roll Changing Device - Drive Station 1 /7833510",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 45,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        26
+      ],
+      "number_core": "22866",
+      "number_as_ocr": "Mec /1 /A-22866/00",
+      "title_as_ocr": "Roll Changing Device - Sht. 1 & 2 Drive Station Bracket 1 /7833520",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 45,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        26
+      ],
+      "number_core": "22867",
+      "number_as_ocr": "MeC/1 /A~22867 /00",
+      "title_as_ocr": "Roll Changing Device - Retur Bracket 1/7835030",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 45,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        26
+      ],
+      "number_core": "22869",
+      "number_as_ocr": "Mec /1 /A~22869/00",
+      "title_as_ocr": "Rell Changing Device - Trackways Stands Drive Spindle 1/7814160",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 45,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        27
+      ],
+      "number_core": "20557",
+      "number_as_ocr": "MEC/o/A-20557/00",
+      "title_as_ocr": "Spur-Pinion Gear Stand , Internal Stend 0/7838210",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 58,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        27
+      ],
+      "number_core": "20813",
+      "number_as_ocr": "MEC/0/A-20813/00",
+      "title_as_ocr": "General Arrmgement 0/7839880",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 58,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        27
+      ],
+      "number_core": "20814",
+      "number_as_ocr": "MEC/o/A-20814/00",
+      "title_as_ocr": "External Stand 0/7944740",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 58,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        27
+      ],
+      "number_core": "20818",
+      "number_as_ocr": "Mec /o/A-20818/00",
+      "title_as_ocr": "Roll Bearing Assembly - Bottom 0/7839260",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 58,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        27
+      ],
+      "number_core": "20819",
+      "number_as_ocr": "mec /p/A-2081 9/00",
+      "title_as_ocr": "Roll Bearing Assembly ~ Top 0/7838050",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 58,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        27
+      ],
+      "number_core": "20821",
+      "number_as_ocr": "MEC/o/A-20821 /oo",
+      "title_as_ocr": "Screwdown - Drive Side 0/7838200",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 58,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        27
+      ],
+      "number_core": "20824",
+      "number_as_ocr": "MEC /o/A-20824 /oo",
+      "title_as_ocr": "Tilting Frame for Mill Guides BV 7 1/7\" 2900",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 58,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        27
+      ],
+      "number_core": "22865",
+      "number_as_ocr": "mec /1 /A-22865/o0",
+      "title_as_ocr": "Roll Changing Device - Drive Station 1/7833510 m",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 58,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        27
+      ],
+      "number_core": "22866",
+      "number_as_ocr": "MeC/1 /A-22866/00",
+      "title_as_ocr": "Roll Changing Device - Sht. 182 Drive Station Bracket 1/7833520",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 58,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        27
+      ],
+      "number_core": "22867",
+      "number_as_ocr": "MEC/1 /A-22867/00",
+      "title_as_ocr": "Roll Changing Device - Returm Bracket",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 58,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        27
+      ],
+      "number_core": "22871",
+      "number_as_ocr": "mec /1 /A-22871 /oo",
+      "title_as_ocr": "Roll Changing Device - Chain Guides 1 /7833540",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 59,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        27
+      ],
+      "number_core": "22873",
+      "number_as_ocr": "MEC/1 /A-22873/00",
+      "title_as_ocr": "Roll Changing Device - 1 /7835830 Rails 1/7833570",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 59,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        27
+      ],
+      "number_core": "22877",
+      "number_as_ocr": "Mec /o/A-22877/00",
+      "title_as_ocr": "Roll Changing Device 1/7833500",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 58,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        27
+      ],
+      "number_core": "22878",
+      "number_as_ocr": "MEC/1 /A-22878/o0",
+      "title_as_ocr": "Roll Changing Device - Rail for Moving Floor Plates 1/78335 90",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 59,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        27
+      ],
+      "number_core": "22879",
+      "number_as_ocr": "mec /1 /A-22879/o0",
+      "title_as_ocr": "Roll Changing Device - Cover Plates 1/7833610",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 59,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        27
+      ],
+      "number_core": "22880",
+      "number_as_ocr": "MEC/1 /A-22880/00",
+      "title_as_ocr": "Roll Changing Device - Plate Car 1/7837330",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 59,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        28
+      ],
+      "number_core": "22955",
+      "number_as_ocr": "mec /1 /A-22955/o0",
+      "title_as_ocr": "Guide Table Between FH6 - V7",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 72,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        28
+      ],
+      "number_core": "22956",
+      "number_as_ocr": "Mec /o /A-22956/o0",
+      "title_as_ocr": "Guide Table Between BHA - BVS, BH6 - BVT",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 72,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        29
+      ],
+      "number_core": "20559",
+      "number_as_ocr": "MEC /0/A-2055 9/00",
+      "title_as_ocr": "General Arrangement of Sht. 1,2,3,& 4 Shear 0/804 2330",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 3,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        29
+      ],
+      "number_core": "20827",
+      "number_as_ocr": "MEC /o/A-20827 /oo",
+      "title_as_ocr": "Shear Housing 1/7839130",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 3,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        29
+      ],
+      "number_core": "20829",
+      "number_as_ocr": "Mec /1 /A-20829/00",
+      "title_as_ocr": "Top Knife Crank Shaft 1/7943890",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 3,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        29
+      ],
+      "number_core": "20830",
+      "number_as_ocr": "mec (1 /A-20830/00",
+      "title_as_ocr": "Bottom Knife Crank Shaft 1/7943910",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 3,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        29
+      ],
+      "number_core": "20831",
+      "number_as_ocr": "MEC/1 /a-20831 /oo",
+      "title_as_ocr": "Top Guide Crank Shaft 1/7943920",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 3,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        29
+      ],
+      "number_core": "20832",
+      "number_as_ocr": "mec /1 /a-20832 /o0",
+      "title_as_ocr": "Bottom Guide Crank Shaft 1/7944450",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 3,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        29
+      ],
+      "number_core": "20833",
+      "number_as_ocr": "mec /1 /A-20833/o0",
+      "title_as_ocr": "Intermediate Gear 1/7943830",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 3,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        29
+      ],
+      "number_core": "20835",
+      "number_as_ocr": "mec /1 /A-20835/00",
+      "title_as_ocr": "Drive Pinion 1/7839155",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 3,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        29
+      ],
+      "number_core": "20836",
+      "number_as_ocr": "Mec /i /A-20836/00",
+      "title_as_ocr": "Pinch Roll",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 3,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        30
+      ],
+      "number_core": "20837",
+      "number_as_ocr": "mec /i /A-20837 /oo",
+      "title_as_ocr": "General Arrangement Measuring Roller 1/7944560",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 11,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        30
+      ],
+      "number_core": "20838",
+      "number_as_ocr": "MEC /1 /A-20838/00",
+      "title_as_ocr": "General Arrangement Guide Trou gh",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 11,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        31
+      ],
+      "number_core": "20839",
+      "number_as_ocr": "Mec /0/A-20839/00",
+      "title_as_ocr": "General Arrangement of Pinch Roll Unit 0/7940130",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 16,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        31
+      ],
+      "number_core": "20840",
+      "number_as_ocr": "MEC /o/a-20840/00",
+      "title_as_ocr": "General Arrangement of Housing, Pinch Roll end Bearing o/7940140",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 16,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        31
+      ],
+      "number_core": "20841",
+      "number_as_ocr": "MEC /o/A-20841 /oo",
+      "title_as_ocr": "General Arrangement of Gear Unit and Base",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 16,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        32
+      ],
+      "number_core": "22883",
+      "number_as_ocr": "Mec /o/A-22883/00",
+      "title_as_ocr": "Sht. 1, 2&3 Structures& Sectional Arrangements General Arrangement of Support",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 29,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        33,
+        34
+      ],
+      "number_core": "22598",
+      "number_as_ocr": "MEC /1 /A-225 98/oD",
+      "title_as_ocr": "Scrap Bucket - General Arrangement",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 37,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        33,
+        34
+      ],
+      "number_core": "22886",
+      "number_as_ocr": "MEC /p /A-22886 /oo",
+      "title_as_ocr": "Scrap Di sposal System at Flying Sht.18&2 Shear - Arrangement",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 37,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        33,
+        34
+      ],
+      "number_core": "22887",
+      "number_as_ocr": "MEC /0/A-22887 /o0",
+      "title_as_ocr": "Arrangement of Scrap Chute, Buckets, Flying Shear & Roller Table",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 37,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        35
+      ],
+      "number_core": "22746",
+      "number_as_ocr": "mec /1 /A-22746 /o0",
+      "title_as_ocr": "x 500 Solid Roller Asseably",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 44,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        35
+      ],
+      "number_core": "22747",
+      "number_as_ocr": "MEC /1 /A-22747 /o0",
+      "title_as_ocr": "Run-out Roller Table ~ Roller Asse mbly",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 44,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        35
+      ],
+      "number_core": "22842",
+      "number_as_ocr": "MEC/1 /A-22842/00",
+      "title_as_ocr": "Run-out Roller Table (R 1-8)",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 44,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        35
+      ],
+      "number_core": "22843",
+      "number_as_ocr": "Mec /o/A-22843/o0",
+      "title_as_ocr": "Run-out Roller Table (R 17-29), Rest End Kick Off Guides & Rest End Pocket.",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 44,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        35
+      ],
+      "number_core": "22844",
+      "number_as_ocr": "Mec /1 /A-22844 /oo",
+      "title_as_ocr": "Run-out Roller Table ~ Sections",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 44,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        35
+      ],
+      "number_core": "22845",
+      "number_as_ocr": "MEC /1 /A-22845 /oo",
+      "title_as_ocr": "Run-out Roller Table - Sections",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 44,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        35
+      ],
+      "number_core": "22908",
+      "number_as_ocr": "MEC /o/A-22908/o0",
+      "title_as_ocr": "Run-out Roller Table (R 30-33)",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 44,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        35
+      ],
+      "number_core": "22912",
+      "number_as_ocr": "MEC /1 /A-22912/00",
+      "title_as_ocr": "Run-out Roller Teble & Rest End Kick Off Guide - Sections",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 44,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        35
+      ],
+      "number_core": "24521",
+      "number_as_ocr": "MEC/1 /A-24521 /o0",
+      "title_as_ocr": "Drive Arrangement",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 44,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        36,
+        37
+      ],
+      "number_core": "22843",
+      "number_as_ocr": "mec /0/A-22843 /o0",
+      "title_as_ocr": "Arrangement - Run Qut Roller Table, Pocket. Rest End Kick-of f Gui des and Rest End",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 51,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        36,
+        37
+      ],
+      "number_core": "22845",
+      "number_as_ocr": "mec /i /A-22845 /o0",
+      "title_as_ocr": "Run Out Roller Table end Rest End Pocket - Section D-D",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 51,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        36,
+        37
+      ],
+      "number_core": "22846",
+      "number_as_ocr": "MEC/1 /n=22846 /oo",
+      "title_as_ocr": "Run Qut Roller Table Section E-E, Rest En d Pocket.",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 51,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        36,
+        37
+      ],
+      "number_core": "22910",
+      "number_as_ocr": "MEC /1 /A-229 10/00",
+      "title_as_ocr": "Arrangement ~ Levers & Rods",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 51,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        36,
+        37
+      ],
+      "number_core": "22912",
+      "number_as_ocr": "Mec /1 /A~22912/00",
+      "title_as_ocr": "Sections = Run Out Roller Table and Rest End Kick Off Guides",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 51,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        39
+      ],
+      "number_core": "22748",
+      "number_as_ocr": "MEC /1 /A-22748/00",
+      "title_as_ocr": "Approach Roller Table - Roller Assembly",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 65,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        39
+      ],
+      "number_core": "22772",
+      "number_as_ocr": "MEC/1 /A~22772/00",
+      "title_as_ocr": "Approach Roller Table = Roller Assembly (Over Hang Roller)",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 65,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        39
+      ],
+      "number_core": "22884",
+      "number_as_ocr": "MEC /o /A-22884 /o0",
+      "title_as_ocr": "Arrangement of Approach Roller Table in Sht. 182° Area of Cooling Bed 1 & Sections",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 65,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        39
+      ],
+      "number_core": "22885",
+      "number_as_ocr": "MEC /o/A-22885 /o0",
+      "title_as_ocr": "Arrangement of Approach Roller Table between Cooling Beds",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 65,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        39
+      ],
+      "number_core": "22919",
+      "number_as_ocr": "mec /o/A-2291 9/00",
+      "title_as_ocr": "Arrangement of Switch in front of Holding Sht. 1, 283 Furnace - Section & Cylinder Fixing Arrangement",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 65,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        39
+      ],
+      "number_core": "22920",
+      "number_as_ocr": "mec /o /A-22920/00",
+      "title_as_ocr": "Arrangement of Approach Roller Table (from Roller 63 to 65)",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 65,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        39
+      ],
+      "number_core": "22922",
+      "number_as_ocr": "Mec /o /A-22922/00",
+      "title_as_ocr": "Arrangement of Approach Roller Table Sht. 1&2 (from Roller 54 to 5B)",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 65,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        39
+      ],
+      "number_core": "24760",
+      "number_as_ocr": "MEC/1 /A-24760/00",
+      "title_as_ocr": "Drive Arrangement",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 65,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        39
+      ],
+      "number_core": "24761",
+      "number_as_ocr": "MEC/o/ A-24761 /oo",
+      "title_as_ocr": "Arrangement ef Approach Roller Table in Area Cooling Bed 2",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 65,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        39
+      ],
+      "number_core": "24775",
+      "number_as_ocr": "MEC /1 /A-24775/00",
+      "title_as_ocr": "Arrangement of Approach Roller Table Key Plan",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 65,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        39
+      ],
+      "number_core": "24862",
+      "number_as_ocr": "MEC /1 /A-24862 /o0",
+      "title_as_ocr": "Roller Table Arrangement of Approach Section C-C",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 65,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        39
+      ],
+      "number_core": "24863",
+      "number_as_ocr": "mec /1 /A-24863/00",
+      "title_as_ocr": "Roller Table Arrangement of Approach Section D-D",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 65,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        40
+      ],
+      "number_core": "22923",
+      "number_as_ocr": "mec /1 /A-22923/o0",
+      "title_as_ocr": "Disappearing Stop - Arrangement",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 71,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        40
+      ],
+      "number_core": "22925",
+      "number_as_ocr": "MEC /1 /A-22925/00",
+      "title_as_ocr": "Fixed Stop - Arrangement",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 71,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        41
+      ],
+      "number_core": "20600",
+      "number_as_ocr": "mec /1 /A-20600/00",
+      "title_as_ocr": "Shifting Drum Type Cross Sht. 1&2 Transfer System",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 83,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        41
+      ],
+      "number_core": "22501",
+      "number_as_ocr": "vec /1 /A-22501 /oo",
+      "title_as_ocr": "Toggle Lever Support - General Arra gement",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 90,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        41
+      ],
+      "number_core": "22503",
+      "number_as_ocr": "MEC /o/A-22503/o0",
+      "title_as_ocr": "General Elevation Sht. 1&2",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 90,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        41
+      ],
+      "number_core": "22505",
+      "number_as_ocr": "MEC /1 /A~22505/00",
+      "title_as_ocr": "Main Pivot Shaft - General Arrangement",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 90,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        41
+      ],
+      "number_core": "22507",
+      "number_as_ocr": "mec /1 /A-22507/00",
+      "title_as_ocr": "Fixed Support - General Arrangement",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 90,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        41
+      ],
+      "number_core": "22508",
+      "number_as_ocr": "MEC /1 /A-22508/o0",
+      "title_as_ocr": "Fixed Support - General Arrangement",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 90,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        41
+      ],
+      "number_core": "23480",
+      "number_as_ocr": "Mec /1 /A-23480/00",
+      "title_as_ocr": "Fixed Rake Assembly",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 90,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        41
+      ],
+      "number_core": "24125",
+      "number_as_ocr": "MEC /1 /A=241 25/00",
+      "title_as_ocr": "Moving Rake Assembly",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 90,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        41
+      ],
+      "number_core": "25493",
+      "number_as_ocr": "MEC/1 /A-25493/00",
+      "title_as_ocr": "Limit Switch Arragement - 1 MEC A /A~25494/00 Limit Switch Arrangement = 2 _.",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 90,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        41
+      ],
+      "number_core": "25586",
+      "number_as_ocr": "Mec /1 /A-25586 /o0",
+      "title_as_ocr": "Foundation Guard Arrangement",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 90,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        41
+      ],
+      "number_core": "25587",
+      "number_as_ocr": "Mec /1 /A-25587/00",
+      "title_as_ocr": "Foundation Guard Arrangement",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 90,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        41
+      ],
+      "number_core": "25589",
+      "number_as_ocr": "Mec /1 /A=25589/o0",
+      "title_as_ocr": "Foundation Guard Arrangement",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 90,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        41
+      ],
+      "number_core": "25596",
+      "number_as_ocr": "MEC/1 /a-25596 /oo",
+      "title_as_ocr": "Foun dation Guard Arrangement",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 90,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        43
+      ],
+      "number_core": "22516",
+      "number_as_ocr": "mec /1 /A-22516/00",
+      "title_as_ocr": "Key Plen & Section",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 104,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        43
+      ],
+      "number_core": "23516",
+      "number_as_ocr": "MEC /o/A-23516 /00",
+      "title_as_ocr": "Gear Box - General Arrangement",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 104,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        43
+      ],
+      "number_core": "25495",
+      "number_as_ocr": "MEC /1 /A-25495 /00",
+      "title_as_ocr": "Limit Switch Arrangement - 1",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 104,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        43
+      ],
+      "number_core": "25503",
+      "number_as_ocr": "mec /1 /A-25503/00",
+      "title_as_ocr": "Limit Switch Arrangement - 2",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 104,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        43
+      ],
+      "number_core": "25792",
+      "number_as_ocr": "mec /1 /A-25792/00",
+      "title_as_ocr": "Limit Switch Arrangement - 3",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 104,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        44
+      ],
+      "number_core": "22565",
+      "number_as_ocr": "Mec /o/A-22565/00",
+      "title_as_ocr": "Pinch Roll at the back of Furnace Sht. 2 of 2",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 6,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        44
+      ],
+      "number_core": "23942",
+      "number_as_ocr": "Mec /1 /A-23942/00",
+      "title_as_ocr": "Section Through Upper Roller Bearing",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 6,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        45
+      ],
+      "number_core": "22517",
+      "number_as_ocr": "vEC/o/a~2251 7/00",
+      "title_as_ocr": "Pendulum Shear Sectional Elevation.",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 13,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        45
+      ],
+      "number_core": "22862",
+      "number_as_ocr": "mec /o/A-22862/00",
+      "title_as_ocr": "Pendulum Shear General Arrangement of Drive.",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 13,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        46
+      ],
+      "number_core": "22563",
+      "number_as_ocr": "Mec /1 /n-22563 /oo",
+      "title_as_ocr": "Scrap Chute General Arrangement",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 20,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        47,
+        48
+      ],
+      "number_core": "20520",
+      "number_as_ocr": "Mec /i /A-20520/00",
+      "title_as_ocr": "Arrangement of Roll Bearing ,",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 27,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        47,
+        48
+      ],
+      "number_core": "20845",
+      "number_as_ocr": "MEC /8 /A~20845/00",
+      "title_as_ocr": "General Arrangement Stand H1-3 8-401 3767",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 27,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        47,
+        48
+      ],
+      "number_core": "20846",
+      "number_as_ocr": "mec /8 /A~20846/00",
+      "title_as_ocr": "General Arrangement Stand H4 3-4013760",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 27,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        47,
+        48
+      ],
+      "number_core": "20847",
+      "number_as_ocr": "vec /3/A-20847 /o0",
+      "title_as_ocr": "Roll Housing & Parts 3-4013785",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 27,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        47,
+        48
+      ],
+      "number_core": "20848",
+      "number_as_ocr": "MEC/3/A-20848/o0",
+      "title_as_ocr": "Drive Spindle & Wobbler 1-4000700",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 27,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        49
+      ],
+      "number_core": "20521",
+      "number_as_ocr": "Mec /o/A-20521 /oo",
+      "title_as_ocr": "Roll Neck Bearings 3-401 3786",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 49,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        49
+      ],
+      "number_core": "20849",
+      "number_as_ocr": "Mec /8 /A-20849/o0",
+      "title_as_ocr": "Gen eral Arrangement 84013769",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 49,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        49
+      ],
+      "number_core": "20850",
+      "number_as_ocr": "mec /8 /A-20850/o0",
+      "title_as_ocr": "General Arrangement H6-H7 64013770",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 49,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        49
+      ],
+      "number_core": "20851",
+      "number_as_ocr": "Mec /8/A-20851 /oo",
+      "title_as_ocr": "General Arrangement HB 3-4013781",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 49,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        49
+      ],
+      "number_core": "20853",
+      "number_as_ocr": "nec /3/A-20853 /00",
+      "title_as_ocr": "Drive Spindles",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 49,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        50
+      ],
+      "number_core": "20860",
+      "number_as_ocr": "vec /1 /A-20860/00",
+      "title_as_ocr": "Shear in front of Stand 9 - Sht. 1-10 Sht. 1-10 Assembly Brawings 0-2137550",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 71,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        50
+      ],
+      "number_core": "20861",
+      "number_as_ocr": "Mec /o/A-20861 /oo",
+      "title_as_ocr": "Disposition to Stand 9 0-2137560",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 71,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        50
+      ],
+      "number_core": "20862",
+      "number_as_ocr": "mec /o/A-20862/00",
+      "title_as_ocr": "Disposition to Stand 14 1-2137600",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 71,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        50
+      ],
+      "number_core": "20863",
+      "number_as_ocr": "MEC/1 /A-20863/00",
+      "title_as_ocr": "Shear in front of Stand 14 - Sht. 1-10 Sht. trio Assembly Drawings",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 71,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        51
+      ],
+      "number_core": "22652",
+      "number_as_ocr": "mec /o/a~22652/00",
+      "title_as_ocr": "General Arrangement",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 78,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        51
+      ],
+      "number_core": "22654",
+      "number_as_ocr": "MEC /o/A-22654 /oo",
+      "title_as_ocr": "General Arrangement",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 78,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        52
+      ],
+      "number_core": "20569",
+      "number_as_ocr": "MEC /o/A-20569/o0",
+      "title_as_ocr": "Combined Drive & Pinion Stand Sht 2 of 2 Sht. 2o0f 3 General Arrangement WOVIATII 0-7738610",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 92,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        52
+      ],
+      "number_core": "20869",
+      "number_as_ocr": "MEC /o/a-2086 9/o0",
+      "title_as_ocr": "Combined Drive & Pinion Stend Sht 3 of 3 Sht. 3 of 3 s General Arrangement 21VI8 11",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 92,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        52
+      ],
+      "number_core": "22782",
+      "number_as_ocr": "Mec /0/A-22782/00",
+      "title_as_ocr": "° Dual Pinch Roll Unit Arrangement",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 85,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        53,
+        55
+      ],
+      "number_core": "20588",
+      "number_as_ocr": "Mec /o/a-20588/o0",
+      "title_as_ocr": "Roll Neck Bearings 34013787",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 104,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        53,
+        55
+      ],
+      "number_core": "20855",
+      "number_as_ocr": "mec /8 /A-20855/o0",
+      "title_as_ocr": "General Arrangement H10, H12, H14, H15. Gen eral Arrangement H13 8-4013773",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 104,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        53,
+        55
+      ],
+      "number_core": "20857",
+      "number_as_ocr": "mec /8/a-20857 /o0",
+      "title_as_ocr": "General Arrangement H17, H18 3-4013782 Mill Housing & Parts",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 104,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        53,
+        55
+      ],
+      "number_core": "20859",
+      "number_as_ocr": "mec /3/A-20859/00",
+      "title_as_ocr": "Drive Spindles",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 104,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        54,
+        56,
+        60,
+        62
+      ],
+      "number_core": "20568",
+      "number_as_ocr": "Mec /o/A-20568/o0",
+      "title_as_ocr": "Roll Neck Bearings 3-4013789",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 127,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        54,
+        56,
+        60,
+        62
+      ],
+      "number_core": "20867",
+      "number_as_ocr": "Mec /3/A-20867 /00",
+      "title_as_ocr": "Drive Spindles BEE",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 127,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        57
+      ],
+      "number_core": "22740",
+      "number_as_ocr": "vec /o/A-22740/00",
+      "title_as_ocr": "Arrangement Sht. 1 of 3",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 159,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        58
+      ],
+      "number_core": "22662",
+      "number_as_ocr": "MEC /8 /A-22662/00",
+      "title_as_ocr": "Vertical Down Loopers in front of Stand V 191+V 1911",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 166,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        58
+      ],
+      "number_core": "22684",
+      "number_as_ocr": "MEC/1 /A~22684/o0",
+      "title_as_ocr": "Vertical Down Loopers in front of Stand 19 I Section A-B",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 166,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        59
+      ],
+      "number_core": "22656",
+      "number_as_ocr": "MEC/4 /A-22656/00",
+      "title_as_ocr": "Snap Shear Arrangement - Section.",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 172,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        61,
+        63
+      ],
+      "number_core": "20589",
+      "number_as_ocr": "MEC /o/n~2058 9/00",
+      "title_as_ocr": "Roll Neck Bearings 3-4013788",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 179,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        61,
+        63
+      ],
+      "number_core": "20872",
+      "number_as_ocr": "Mec /8 /A-20872/00",
+      "title_as_ocr": "General Arrangement H 22 I 8-4013777 General Arrangement H 20 II +",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 179,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        61,
+        63
+      ],
+      "number_core": "20875",
+      "number_as_ocr": "mec /3 /a-20875/o0",
+      "title_as_ocr": "Drive Spindles",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 179,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        64
+      ],
+      "number_core": "22631",
+      "number_as_ocr": "MEC /o/A-22631 /O0",
+      "title_as_ocr": "Arrangement of Support with Hydraulic Cylinder. Sd",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 227,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        64
+      ],
+      "number_core": "24587",
+      "number_as_ocr": "Mec /1 /A-24587 /00",
+      "title_as_ocr": "Arrangement of Vertical Looper & Roller",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 227,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        64
+      ],
+      "number_core": "24622",
+      "number_as_ocr": "MEC /1 /A~24622 /00",
+      "title_as_ocr": "Arrangement of Lifting Device of Protecting Hood. 7",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 227,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        65
+      ],
+      "number_core": "22660",
+      "number_as_ocr": "vec /8/A~22660/00",
+      "title_as_ocr": "Guide Troughs Arrangement (Between Stand 16 and V19 I & V19 IT)",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 248,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        65
+      ],
+      "number_core": "22673",
+      "number_as_ocr": "Mec /1 /A-22673/00",
+      "title_as_ocr": "Guide Trough - Sections (Between Stand 9 and Scrap Reject at Rotary Shear)",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 248,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        65
+      ],
+      "number_core": "22674",
+      "number_as_ocr": "Mec /1 /A-22674/00",
+      "title_as_ocr": "Guide Trough - Arrangement of Bridge",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 248,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        65
+      ],
+      "number_core": "22675",
+      "number_as_ocr": "MEC/8/A-22675/00",
+      "title_as_ocr": "At the exit of Stand 13, bars from Stand 13 cam be fed to either Intexmediate Train II or to the Finishin",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 249,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        65
+      ],
+      "number_core": "22676",
+      "number_as_ocr": "Mec /8/A-22676 /o0",
+      "title_as_ocr": "Arrangement of Guide Troughs (Between Stand 8 ‘to Stand 14) ¥ ’",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 248,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        65
+      ],
+      "number_core": "22692",
+      "number_as_ocr": "Mec /8/A-22692/00",
+      "title_as_ocr": "Arrangement of Guide Trough (Between Dual Pinch Rell & Stand 14)",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 248,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        65
+      ],
+      "number_core": "22947",
+      "number_as_ocr": "Mec /o/A-22947 /oo",
+      "title_as_ocr": "Arrangement of Guide Trough (Between Pendulum Shear & Stand H 1)",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 248,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        65
+      ],
+      "number_core": "22976",
+      "number_as_ocr": "MEC/o/A-22976/00",
+      "title_as_ocr": "Guide Troughs for Missing Stands H5S-H8",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 248,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        65
+      ],
+      "number_core": "22977",
+      "number_as_ocr": "Mec /o/A-22977/00",
+      "title_as_ocr": "Guide Troughs for Missing Stands H9-H18",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 248,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        65
+      ],
+      "number_core": "22978",
+      "number_as_ocr": "Mec /o/A-22978/o0",
+      "title_as_ocr": "Guide Troughs for Missing Stands H22 1 & il",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 248,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        65
+      ],
+      "number_core": "23076",
+      "number_as_ocr": "MEC/8/A-23076/00",
+      "title_as_ocr": "Before the single pinch roll units (Item 57) the width and location of guides can be adjusted manually de",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 249,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        65
+      ],
+      "number_core": "24661",
+      "number_as_ocr": "Mec /1 /A-24661 /00",
+      "title_as_ocr": "Guide Trough - Arrangement of Bridge",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 248,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        65
+      ],
+      "number_core": "24923",
+      "number_as_ocr": "Mec /1 /A-24923/00",
+      "title_as_ocr": "Guide Troughs - From Stand 9 te Stand 13",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 248,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        65
+      ],
+      "number_core": "25697",
+      "number_as_ocr": "Mec /0/A-25697 /o0",
+      "title_as_ocr": "Guides Hetwean Cooling Stretch I, Pinch Sht. 1820 Roll and Shear Coo dou OE",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 248,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        65
+      ],
+      "number_core": "25701",
+      "number_as_ocr": "MEC/p/A-25701 /o0",
+      "title_as_ocr": "Guides Between Cooling Stretch II, Pinch Roll and Roller Table",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 248,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        65
+      ],
+      "number_core": "26328",
+      "number_as_ocr": "EC/1/ 4-26328/00",
+      "title_as_ocr": "Arrangement entry guide vertical std. for Rebar, Round & Square MBC/1 / b-26 336/00 Arran genent exit sid",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 254,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        65
+      ],
+      "number_core": "28088",
+      "number_as_ocr": "MEC /1/ 4-28088/00",
+      "title_as_ocr": "Arran cement of H-Stands, etripper for Tees",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 255,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        65
+      ],
+      "number_core": "28951",
+      "number_as_ocr": "EC /1/ 4-28951/00",
+      "title_as_ocr": "Arrangement entry side for equal an gles.",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 254,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        65
+      ],
+      "number_core": "28952",
+      "number_as_ocr": "MEC /1/a-28952/00",
+      "title_as_ocr": "Arrangement delivery side for equal angles Arrangenent of entry side for unedual angles WEC/1/ £-29094/00",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 254,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        65
+      ],
+      "number_core": "29024",
+      "number_as_ocr": "EC /1/ 4-29 024/00",
+      "title_as_ocr": "Assenbly chart, entry side for channels, enequal angles & tee. MBC /1/ i-29025/00 Assembly chart, exit si",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 254,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        65
+      ],
+      "number_core": "29087",
+      "number_as_ocr": "MEC/1/ 4-29 087/00",
+      "title_as_ocr": "Arran gement exit guides, Vestands for tees 430 /1/ bn 26 349/00 Arrangement exit guide for flat rolling ",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 255,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        65
+      ],
+      "number_core": "29424",
+      "number_as_ocr": "MEC/4/4-29424/00",
+      "title_as_ocr": "H20 & H22 MBC /1/4o29 425/00 Arrangement entry guide for fl a& for std. #20 & E22 MBC /1/ &=29426/00 Arra",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 255,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        66
+      ],
+      "number_core": "22523",
+      "number_as_ocr": "Mec /1 /A-22523/00",
+      "title_as_ocr": "Scrap Ballers Funnel & Pressure Roll Assembly - Funnel & Pressure",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 277,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        66
+      ],
+      "number_core": "22524",
+      "number_as_ocr": "MEC/1 /A-22524/o0",
+      "title_as_ocr": "Scrap Ballers Roll Assembly Scrap Ballers - £3 ector Assembly",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 277,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        66
+      ],
+      "number_core": "22526",
+      "number_as_ocr": "MEC/1 /A-22526/00",
+      "title_as_ocr": "Scrap Ballers Drive & Spindle Assembly",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 277,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        66
+      ],
+      "number_core": "22527",
+      "number_as_ocr": "Mec /1 /A-22527/00",
+      "title_as_ocr": "Scrap Baller - Support Assembly",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 277,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        66
+      ],
+      "number_core": "22561",
+      "number_as_ocr": "Mec /1 /A-22561 /oD",
+      "title_as_ocr": "Scrap Baller -, General Arrengement",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 277,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        66
+      ],
+      "number_core": "22598",
+      "number_as_ocr": "mec /i /A-22598/o0",
+      "title_as_ocr": "Arran'gement of Scrap Bucket with Suspension Gear -- -",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 277,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        69
+      ],
+      "number_core": "22755",
+      "number_as_ocr": "MEC /8 /A-22755/00",
+      "title_as_ocr": "Connecting Roller Table - General Sht. 1 of 2 Arrangement",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 284,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        70
+      ],
+      "number_core": "22979",
+      "number_as_ocr": "MEC /0/A-22 979/00",
+      "title_as_ocr": "Single Pinch Roll Units (L.H. Design ) behind Cooling Stretches",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 290,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        70
+      ],
+      "number_core": "22980",
+      "number_as_ocr": "Mec /1 /A~22 980/00",
+      "title_as_ocr": "Section Thru Pineh Roll",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 290,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        70
+      ],
+      "number_core": "22981",
+      "number_as_ocr": "MEC/1 /A-22981 /oo",
+      "title_as_ocr": "Section Thru Drive",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 290,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        70
+      ],
+      "number_core": "22982",
+      "number_as_ocr": "MEC /1 /A~22982/00",
+      "title_as_ocr": "Serewdowm Arrangement",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 290,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        71
+      ],
+      "number_core": "20592",
+      "number_as_ocr": "Mec /o /A-20592 /o0",
+      "title_as_ocr": "General Arrangement Sh. 1 +2 Sht. 1&2 02135750",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 298,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        71
+      ],
+      "number_core": "20595",
+      "number_as_ocr": "EC /o/A-205 95/00",
+      "title_as_ocr": "General Arrangement She 142 0-2135830",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 306,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        71
+      ],
+      "number_core": "20876",
+      "number_as_ocr": "MEC /o/A-20876/00",
+      "title_as_ocr": "Shear Assembly (Left Hand Sh. 1-4 Sht. 1-4) Desig } 0-2135780",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 298,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        71
+      ],
+      "number_core": "20877",
+      "number_as_ocr": "Mec /1 /A-20877/00",
+      "title_as_ocr": "Assembly Drawing to Shear Blade Sh. 14+ 2 Sht. 1&2 1-2157280",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 298,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        71
+      ],
+      "number_core": "20878",
+      "number_as_ocr": "MEC /o/A-20878/o0",
+      "title_as_ocr": "She 1+ 2 Assembly Drawing to Crop Sht. 1&2 Deflector 1-2136700",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 298,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        71
+      ],
+      "number_core": "20879",
+      "number_as_ocr": "MEC /1 /A-2087 9/00",
+      "title_as_ocr": "Shear Data 0-401 2715 Switch Positions of Shear",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 298,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        71
+      ],
+      "number_core": "20880",
+      "number_as_ocr": "MEC /0/A-20880/00",
+      "title_as_ocr": "Switch Positions of Shear 0-2135820 EC /o/A-205 95/00 General Arrangement She 142 0-2135830",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 306,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        71
+      ],
+      "number_core": "20881",
+      "number_as_ocr": "Mec /1 /A-20881 /oo",
+      "title_as_ocr": "Shear Guides.",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 298,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        71
+      ],
+      "number_core": "20882",
+      "number_as_ocr": "Mec /o/A-20882/00",
+      "title_as_ocr": "Shear Assembly (Right Hand She 1-4 Desig) 0-2135850",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 306,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        71
+      ],
+      "number_core": "20883",
+      "number_as_ocr": "MEC/1 /A-20883/00",
+      "title_as_ocr": "Assembly Drawing to Shear Blade Sho 4 +2 1-2157280",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 306,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        74
+      ],
+      "number_core": "22769",
+      "number_as_ocr": "MEC /o /A-22769/00",
+      "title_as_ocr": "Arrangement of Approach Roller Table I & II (Left & Right) - Section & Details",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 320,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        74
+      ],
+      "number_core": "22770",
+      "number_as_ocr": "MEC /8/A-22770/00",
+      "title_as_ocr": "Arrangement of Approach Roller Table I (Left Side) - Plan",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 320,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        74
+      ],
+      "number_core": "22771",
+      "number_as_ocr": "MEC /8 /A-22771 /o0",
+      "title_as_ocr": "Arrangetent of Appraach Roller Teble II (Right Side ) - Plan",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 320,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        74
+      ],
+      "number_core": "22836",
+      "number_as_ocr": "MEC /8 /A-22836/00",
+      "title_as_ocr": "General Arrangement Cooling Stretch I & II Approach Roller Table I & IT",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 320,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        74
+      ],
+      "number_core": "22904",
+      "number_as_ocr": "MEC/0 /A-22904 /00",
+      "title_as_ocr": "Arrangement of Approach Roller Table I - Sht. 1 of 2 Sections & Details",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 320,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        75,
+        708,
+        709
+      ],
+      "number_core": "22769",
+      "number_as_ocr": "MEC /0/A=22769/o0",
+      "title_as_ocr": "Arrangement of Approach Roller Table I & II ( Left & Right) Sections & Details",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 326,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        75,
+        708,
+        709
+      ],
+      "number_core": "22770",
+      "number_as_ocr": "Mec /8 /A-22770/00",
+      "title_as_ocr": "Arren (Left \"Side ) - Plan gement of Approach Roller Table I",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 326,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        75,
+        708,
+        709
+      ],
+      "number_core": "22771",
+      "number_as_ocr": "MEC /8 /A-22771 /o0",
+      "title_as_ocr": "Arrangement of Approach Roller Table II (Right Side) - Plan",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 326,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        75,
+        708,
+        709
+      ],
+      "number_core": "22824",
+      "number_as_ocr": "MEC /o/A-22824/o0",
+      "title_as_ocr": "Arrengement of Cooling Tenks without Cover",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 326,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        75,
+        708,
+        709
+      ],
+      "number_core": "22825",
+      "number_as_ocr": "MEC /o/A-22825/00",
+      "title_as_ocr": "Arrengement of Transfer Car (Right Hand Side )",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 326,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        75,
+        708,
+        709
+      ],
+      "number_core": "22831",
+      "number_as_ocr": "MEC /8/A-22831 /oo",
+      "title_as_ocr": "Cooling Stretch and Approach Roller Table Section",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 326,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        75,
+        708,
+        709
+      ],
+      "number_core": "22836",
+      "number_as_ocr": "MEC /8 /A-22836 /oo",
+      "title_as_ocr": "General Arrangement Cooling Stretch I & II and Approach Roller Table I & II",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 326,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        75,
+        708,
+        709
+      ],
+      "number_core": "22948",
+      "number_as_ocr": "MEC /8/A-22948/00",
+      "title_as_ocr": "General Layout Cooling Stretch I & II, Approach Roller Table I & II, Monorails with Hand Operated Blocks,",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 326,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        75,
+        708,
+        709
+      ],
+      "number_core": "24654",
+      "number_as_ocr": "MEC /1 /A-24654/o0",
+      "title_as_ocr": "Cooling Stretch I & II aid Approach Roller Table I & II - Key Plan",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 326,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        76
+      ],
+      "number_core": "22881",
+      "number_as_ocr": "MEC /0/A=22881 /oo",
+      "title_as_ocr": "Pivotable Approach Roller Table Sht. 1 of 2 General Arrangement",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 347,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        76
+      ],
+      "number_core": "22882",
+      "number_as_ocr": "MEC /0/A-22882/00",
+      "title_as_ocr": "Roller Table Intermediate Piece General Arrangement im)",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 347,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        77
+      ],
+      "number_core": "22540",
+      "number_as_ocr": "MEC/1/a- 22540/00",
+      "title_as_ocr": "Cross-Section Before beginning Of Cooling Bed. 3 Plan View Before beginningOf B.S. II.",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 353,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        77
+      ],
+      "number_core": "22544",
+      "number_as_ocr": "MEC/1/a~ 22544/00",
+      "title_as_ocr": "Design Structure Of Run-In-Trough In » Sheet 1 of 2. Front Of Cooling Bed. iS 22539 /00 Cross-Section Bef",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 353,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        77
+      ],
+      "number_core": "22552",
+      "number_as_ocr": "MEC/1/ A- 22552/00",
+      "title_as_ocr": "Arrangement Of Brake Slide I & II Compensation Cylinder.",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 353,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        77
+      ],
+      "number_core": "22556",
+      "number_as_ocr": "MEC/0/A- 22556/00",
+      "title_as_ocr": "Arrangement Of Brake Slide I At The beginning of Run-I n-Trough",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 353,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        77
+      ],
+      "number_core": "22557",
+      "number_as_ocr": "MEC/1/a~ 22557/00",
+      "title_as_ocr": "Sheet 2 of 4¢ Separating Switch Assembly — Arrange- ment & Sections.",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 354,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        77
+      ],
+      "number_core": "22699",
+      "number_as_ocr": "MEC/1/a- 22699/00",
+      "title_as_ocr": "Arrangement Of Pivot Point, Sheet 1 of 2. 2 Of Pivot Point.",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 353,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        77
+      ],
+      "number_core": "23078",
+      "number_as_ocr": "MEC/1/4- 23078/00",
+      "title_as_ocr": "Arrangement Of Intermediate Slide. Sheet 2 of 4.",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 354,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        77
+      ],
+      "number_core": "23545",
+      "number_as_ocr": "MEC/1/A- 23545/00",
+      "title_as_ocr": "Arrangement Of Pivot Point At Swinging Device. mM",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 353,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        77
+      ],
+      "number_core": "23776",
+      "number_as_ocr": "MEC/1/ A- 23776/00",
+      "title_as_ocr": "Arrangement Of Brake Slide I + Apron & Lever.",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 353,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        77
+      ],
+      "number_core": "23777",
+      "number_as_ocr": "MEC/1/4- 23777/00",
+      "title_as_ocr": "Arrangement Of Brake Slide I Assembly II Apron",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 353,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        77
+      ],
+      "number_core": "23778",
+      "number_as_ocr": "HEC /1/A- 23778/00",
+      "title_as_ocr": "Arrangement Of Brake Slide & Lever.",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 353,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        77
+      ],
+      "number_core": "23779",
+      "number_as_ocr": "MEC /1/A- 23779 /00",
+      "title_as_ocr": "Arrangement Of Brake Slide II Assembly",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 353,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        77
+      ],
+      "number_core": "23780",
+      "number_as_ocr": "MEC/1/A- 23780/00",
+      "title_as_ocr": "Arrangement of Separating Ledge Assen- bly. wo Arrangement",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 353,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        77
+      ],
+      "number_core": "25641",
+      "number_as_ocr": "MEC/O/A~ 25641/00",
+      "title_as_ocr": "Plan View Beforebeginning Of Cooling Bed 3 a Arrangement At beginning Of Run-In-",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 353,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        78
+      ],
+      "number_core": "23546",
+      "number_as_ocr": "MEC /1/ A- 23546/00",
+      "title_as_ocr": "Arrangement of Cylinder",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 364,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        78
+      ],
+      "number_core": "23820",
+      "number_as_ocr": "MEC/1/A~ 23820/00",
+      "title_as_ocr": "Swinging Device - Genenal Arrangement View B-B a ] Mi bv on 24141/00 General Arrangement - View P-P {1/b-",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 364,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        78
+      ],
+      "number_core": "24667",
+      "number_as_ocr": "NEC /1/A- 24667/00",
+      "title_as_ocr": "BM EO/O/ A- 25835/00 Arrangement End Stop & Limit Switch. ,",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 364,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        79
+      ],
+      "number_core": "22541",
+      "number_as_ocr": "HEC/1/A- 22541/00",
+      "title_as_ocr": "Crosp-Section Behind beginning ef Cooling Bed. 3.",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 7,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        79
+      ],
+      "number_core": "22542",
+      "number_as_ocr": "MEC/1/A- 22542/00",
+      "title_as_ocr": "Cross-Section at Cooling Bed. 4. 23776/00 Arrangement Of Brake Slide I - Apron",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 7,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        79
+      ],
+      "number_core": "22543",
+      "number_as_ocr": "MEC/1/A- 22543/00",
+      "title_as_ocr": "Plan View In Cooling Bed. 20,",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 7,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        79
+      ],
+      "number_core": "22544",
+      "number_as_ocr": "MEC/1/a- 22544/00",
+      "title_as_ocr": "Design Structure Of Run-In-Trough Sheet 2 of 2. At Cooling Bed. 2e",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 7,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        79
+      ],
+      "number_core": "22552",
+      "number_as_ocr": "MEC/1/A- 22552/00",
+      "title_as_ocr": "Arrangement Of Brake Slide I & II Compensation Cylinder. n 14.",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 7,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        79
+      ],
+      "number_core": "22553",
+      "number_as_ocr": "MEC/1/A- 22553/00",
+      "title_as_ocr": "Drive Arrangement For Separating Ledge B.S. I & BS. Ii. 15.",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 7,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        79
+      ],
+      "number_core": "22614",
+      "number_as_ocr": "MEC /1/a- 22614/00",
+      "title_as_ocr": "Cooling Bed - Cross-Sectional Arrangement. a",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 7,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        79
+      ],
+      "number_core": "23740",
+      "number_as_ocr": "MEC/1/ A= 23740/ 00",
+      "title_as_ocr": "Arrangement Of Turn~Buckle. 13.",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 7,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        79
+      ],
+      "number_core": "23778",
+      "number_as_ocr": "MEC/1/a- 23778/00",
+      "title_as_ocr": "Arrangement Of Brake Slide II = Apron & Lever. 66",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 7,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        79
+      ],
+      "number_core": "23779",
+      "number_as_ocr": "MEC /1/A- 23779/00",
+      "title_as_ocr": "Arrangement Of B.S. II - Assembly. 10,",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 7,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        79
+      ],
+      "number_core": "23780",
+      "number_as_ocr": "MEC/1/A- 23780/00",
+      "title_as_ocr": "Arrangement Of Separating Ledge Assemb= ly. 11.",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 7,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        79
+      ],
+      "number_core": "23781",
+      "number_as_ocr": "MEC/1/a- 23781/00",
+      "title_as_ocr": "Arrangement Of shortened B.S.I - Apron & Lever. 2 Te",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 7,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        79
+      ],
+      "number_core": "23782",
+      "number_as_ocr": "MEC/1/a- 23782/00",
+      "title_as_ocr": "Arrangement Shortened 8.S. II ~ Apron & Lever. 8.",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 7,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        79
+      ],
+      "number_core": "23783",
+      "number_as_ocr": "MEC/1/A- 23783/00",
+      "title_as_ocr": "Arrangement Of Drive Base For Separat~ ing Ledge. 17.",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 7,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        79
+      ],
+      "number_core": "23784",
+      "number_as_ocr": "MEC/1/A- 23784/00",
+      "title_as_ocr": "Brake Slide I Drive Assembly. 18.",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 7,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        79
+      ],
+      "number_core": "23785",
+      "number_as_ocr": "MEC/1/A~ 23785/00",
+      "title_as_ocr": "Section Thru Drive Lever & Crank Drive. 16,",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 7,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        79
+      ],
+      "number_core": "24145",
+      "number_as_ocr": "MEC/1/A- 24145/00",
+      "title_as_ocr": "Assembly of. Bearings & Sealing Rimgs. 12.",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 7,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        79
+      ],
+      "number_core": "25832",
+      "number_as_ocr": "MEC/1/A- 25832/00",
+      "title_as_ocr": "Brake Slide II Drive Assembly. 19,",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 7,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        80
+      ],
+      "number_core": "22601",
+      "number_as_ocr": "MEC/1/a- 22601/00",
+      "title_as_ocr": "General Arrangement Of Straightening Grid & Shifting Lever (Left Side 26",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 16,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        80
+      ],
+      "number_core": "22602",
+      "number_as_ocr": "MEC/1/a- 22602/00",
+      "title_as_ocr": "Arrangement Of Shifting Lever (Left- Side 5.",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 16,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        80
+      ],
+      "number_core": "22604",
+      "number_as_ocr": "MEC /1/A- 22604/00",
+      "title_as_ocr": "Arrangement ofr Shifting Lever Sections. —_",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 16,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        80
+      ],
+      "number_core": "23621",
+      "number_as_ocr": "HEC/1/A- 23621/00",
+      "title_as_ocr": "Arrangement Of Straightening Grid. 4.",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 16,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        80
+      ],
+      "number_core": "24250",
+      "number_as_ocr": "MEC/1/a- 24250/00",
+      "title_as_ocr": "General Arrangement Of Straightening Grid & Shifting Lever (Right Side 3.",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 16,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        80
+      ],
+      "number_core": "24251",
+      "number_as_ocr": "MEC/1/A~ 24251/00",
+      "title_as_ocr": "Arrangement Of Shifting Lever (Right- Side) 6.",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 16,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        81
+      ],
+      "number_core": "22744",
+      "number_as_ocr": "EC /0/ A- 22744/00",
+      "title_as_ocr": "Arrangem ent Of Moving Rake - Carriage Assembly.",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 22,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        81
+      ],
+      "number_core": "22775",
+      "number_as_ocr": "MEC /0/ A- 22775/00",
+      "title_as_ocr": "Drive Arrangement Of Trans@uc ers-Rake Drive 42.",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 22,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        81
+      ],
+      "number_core": "24256",
+      "number_as_ocr": "MEC/1/A- 24256/00",
+      "title_as_ocr": "Assembly Note For ‘Split Cylinder Rolle Bearing. Avrangement Of Counter Weight - ‘",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 22,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        81
+      ],
+      "number_core": "24257",
+      "number_as_ocr": "MEC/1/ A- 24257/00",
+      "title_as_ocr": "& Bases - Section. Sheet 4 of 4 'e UEC /0/ A- 22744/00 Arrangem ent Of Moving Rake - Carriage Assembly.",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 22,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        81
+      ],
+      "number_core": "24308",
+      "number_as_ocr": "MEC /1/ A- 24308/00",
+      "title_as_ocr": "Arrangement 13. Aligning Tolerances Fo r Straightening 14. KEC/1/ aA- 25627/00 Grids & Fixed Rakes.",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 22,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        83
+      ],
+      "number_core": "22658",
+      "number_as_ocr": "MEC /8/4-22658/00",
+      "title_as_ocr": "Aligning Device - Schematic Arrangement 2.",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 36,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        83
+      ],
+      "number_core": "22659",
+      "number_as_ocr": "MEC /8/4-2 2659/00",
+      "title_as_ocr": "Aligning Device - Section E-F 3e",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 36,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        84
+      ],
+      "number_core": "22610",
+      "number_as_ocr": "MEC/0/4-22610/00",
+      "title_as_ocr": "Section Thru Chain & Chain Beam 3.",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 42,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        84
+      ],
+      "number_core": "22694",
+      "number_as_ocr": "MEC/8/4-22694/00",
+      "title_as_ocr": "Disoharging Device - Layout Plan 2.",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 42,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        84
+      ],
+      "number_core": "22695",
+      "number_as_ocr": "MEC/1/4-22695/00",
+      "title_as_ocr": "Chain - I Arrangement Driving Shaft - Collecting",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 42,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        84
+      ],
+      "number_core": "22704",
+      "number_as_ocr": "MEC/1/4-22704/00",
+      "title_as_ocr": "Arrangement Drive for Collecting Chain-I 4.",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 42,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        85
+      ],
+      "number_core": "22612",
+      "number_as_ocr": "MEC /0/4-22612/00",
+      "title_as_ocr": "Chain Type Discharging Device-Section Through Chain & Chain Bean.” 2.",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 49,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        85
+      ],
+      "number_core": "22705",
+      "number_as_ocr": "MEC/0/4-22705/00",
+      "title_as_ocr": "Motor Reducer Arrangement Chain II Be",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 49,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        85
+      ],
+      "number_core": "22706",
+      "number_as_ocr": "MEC /1/4-22706/00",
+      "title_as_ocr": "Lifting Drive Arrangement Chain II 5s",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 49,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        85
+      ],
+      "number_core": "22745",
+      "number_as_ocr": "MEC/1/4-22745/00",
+      "title_as_ocr": "Lifting Drive Chain II - Motor Reducer Arrangement 4.",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 49,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        85
+      ],
+      "number_core": "24527",
+      "number_as_ocr": "MEC /1/ A-24527/00",
+      "title_as_ocr": "Lifting Shafts Arrangement _—-——.__",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 49,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        85
+      ],
+      "number_core": "24528",
+      "number_as_ocr": "MEC/1/4-24528/00",
+      "title_as_ocr": "Arrangement Drive Shaft 6.",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 49,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        86
+      ],
+      "number_core": "22518",
+      "number_as_ocr": "MEC/1 /A-22518/00",
+      "title_as_ocr": "Roller Table ~ Section Thru Roller ___—",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 56,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        86
+      ],
+      "number_core": "22758",
+      "number_as_ocr": "MEC/1/A-22758/00",
+      "title_as_ocr": "Run Out Roller Tatle - Sections (Sht. 2 of 2 3.",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 56,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        87
+      ],
+      "number_core": "20606",
+      "number_as_ocr": "MEC/0/a-20606/00",
+      "title_as_ocr": "Entry Pinch Roll Set In ners. Front Of The Strai ghte- ~——",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 63,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        88
+      ],
+      "number_core": "22745",
+      "number_as_ocr": "Mec /8 /A-22745 /o0",
+      "title_as_ocr": "Guiding device straightener - Sections",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 69,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        88
+      ],
+      "number_core": "22790",
+      "number_as_ocr": "mec /8/A-22790/00",
+      "title_as_ocr": "Guiding device in front of the Sht. 2 of 3 straightener - Plan & section",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 69,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        88
+      ],
+      "number_core": "22791",
+      "number_as_ocr": "mec /8/A-22791 /o0",
+      "title_as_ocr": "Guiding device in front of the straightener - Sections in front of the",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 69,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        89,
+        90,
+        91
+      ],
+      "number_core": "20885",
+      "number_as_ocr": "MEC/0/ a-20885 / 00",
+      "title_as_ocr": "General Arrangement Of SH.1 ef 5 SH. 1 of 5 Straightening Machine- Left Side. General Arrangement - Cros ",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 75,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        89,
+        90,
+        91
+      ],
+      "number_core": "20886",
+      "number_as_ocr": "MEC /0/a-20886/00",
+      "title_as_ocr": "General Arrangement —- Plan SH.3 of 5 SH. 3 of 5 View - Right Side. General Arrangement -Long- 9- O- 7727",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 75,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        89,
+        90,
+        91
+      ],
+      "number_core": "20887",
+      "number_as_ocr": "MEC /0/ a-20887/00",
+      "title_as_ocr": "General Arrangement - Gear SH.2 of 2 SH. 2 of 2 Unit. General Arrangement -Drive 13.6 1- 7918300",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 75,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        93
+      ],
+      "number_core": "22568",
+      "number_as_ocr": "NEC /1/A- 22568/00",
+      "title_as_ocr": "Section Through Roller. nN?",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 103,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        95,
+        100,
+        105,
+        113
+      ],
+      "number_core": "22606",
+      "number_as_ocr": "HEC/1/ A~ 22606/00",
+      "title_as_ocr": "End Stop Arrangement. de",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 117,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        95,
+        100,
+        105,
+        113
+      ],
+      "number_core": "24359",
+      "number_as_ocr": "HEC /1/A~ 24359/00",
+      "title_as_ocr": "Disappearing Stop - Arrangement, 10.",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 117,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        95,
+        100,
+        105,
+        113
+      ],
+      "number_core": "24361",
+      "number_as_ocr": "HEC/1/A- 24361/00",
+      "title_as_ocr": "Disappearing Stops At Run Out. Roller Table Behind Cold Shear iI - Key Plan.",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 117,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        96,
+        97,
+        98
+      ],
+      "number_core": "22530",
+      "number_as_ocr": "vec /o/A-22530/00",
+      "title_as_ocr": "Chain Type Discharging Device, Row of Stoppers, Chain Type Collecting & Transfer Device - General Arrange",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 124,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        96,
+        97,
+        98
+      ],
+      "number_core": "22531",
+      "number_as_ocr": "MEC /0/A-22531 /o0",
+      "title_as_ocr": "Chain Type Collecting & Transfer Device - Sht. 1 of 2 Section Thru Chain Beams.",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 124,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        96,
+        97,
+        98
+      ],
+      "number_core": "22533",
+      "number_as_ocr": "mec /1 /A-22533/00",
+      "title_as_ocr": "Arrangement of Guide Arragement of Drive",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 124,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        96,
+        97,
+        98
+      ],
+      "number_core": "22535",
+      "number_as_ocr": "mec /o/A-22535 /oo",
+      "title_as_ocr": "Lift Cylinder Arrangement",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 124,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        96,
+        97,
+        98
+      ],
+      "number_core": "22537",
+      "number_as_ocr": "mec /o/A-22537 /oo",
+      "title_as_ocr": "Chain Tyse Discharging Device - Sections Sht. 1 of 2 Sections",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 124,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        96,
+        97,
+        98
+      ],
+      "number_core": "22538",
+      "number_as_ocr": "mec /o/A~22538/00",
+      "title_as_ocr": "Row of Stoppers - Sections Sht. 1 of 2",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 124,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        99
+      ],
+      "number_core": "22518",
+      "number_as_ocr": "MEC/4/A- 22518/00",
+      "title_as_ocr": "Roller Table-Section Through Roller Oe",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 131,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        99
+      ],
+      "number_core": "22519",
+      "number_as_ocr": "MEC/1/a- 22519 /00",
+      "title_as_ocr": "Roller Table-Section Through Roller.",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 131,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        99
+      ],
+      "number_core": "22678",
+      "number_as_ocr": "MEC/O/ A- 226 78/00",
+      "title_as_ocr": "Trensport Roller General Arroagement. 2. LEC/1/A- 22679/00 Transport Roller Table Section 3e",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 131,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        99
+      ],
+      "number_core": "22679",
+      "number_as_ocr": "EC/1/A- 22679/00",
+      "title_as_ocr": "Transport Roller Table Section 3e",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 131,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        99
+      ],
+      "number_core": "22680",
+      "number_as_ocr": "HEC/1/A- 22680/00",
+      "title_as_ocr": "Transoort Roller Table Sections 4.",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 131,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        99
+      ],
+      "number_core": "22684",
+      "number_as_ocr": "MEC/1/A~ 22684/00",
+      "title_as_ocr": "Transport Roller Table - Section 56",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 131,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        101,
+        109
+      ],
+      "number_core": "20571",
+      "number_as_ocr": "MEC/1/A-205 71/00",
+      "title_as_ocr": "- Left Hand Design. Arrangement Of Holdingdown 8. 1/2791330",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 138,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        101,
+        109
+      ],
+      "number_core": "20572",
+      "number_as_ocr": "HEC /1/A-205 72/00",
+      "title_as_ocr": "Arrangement Of Lifting Roller - Left Hand Design. _—___-— — 6. 1/2791310",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 138,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        101,
+        109
+      ],
+      "number_core": "20890",
+      "number_as_ocr": "HEC /0/a-20890/00",
+      "title_as_ocr": "Arrangement Of Cold Shear- SH.1,2- SH. 1,2. Left Hand Design. 2. 0/2 791180",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 138,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        101,
+        109
+      ],
+      "number_core": "20891",
+      "number_as_ocr": "HEC /0/a-20891/00",
+      "title_as_ocr": "Arrangement Of Housing - Left Hand Design. 3. 0/2791210",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 138,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        101,
+        109
+      ],
+      "number_core": "20892",
+      "number_as_ocr": "NEC /0/a-20892/00",
+      "title_as_ocr": "Top Knife Sliding Carriage, Press Rod Guide Arrange- ment + Right Hand Design. 4. 0/2791220",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 138,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        101,
+        109
+      ],
+      "number_core": "20894",
+      "number_as_ocr": "MEC/1/a-2089 4/00",
+      "title_as_ocr": "Arrangement of Lifting Roller - Right Hand Design. Arrangement Of Holdingdown 7. 1/2791320",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 138,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        101,
+        109
+      ],
+      "number_core": "20895",
+      "number_as_ocr": "NEC /1/a-20895/00",
+      "title_as_ocr": "SH.1,2. SH. 1,52. - Right Hand Design. 9 1/2791390 Knife Fixing Arrangement -",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 138,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        101,
+        109
+      ],
+      "number_core": "20897",
+      "number_as_ocr": "MEC /1/A-20897/00",
+      "title_as_ocr": "Knife Fixing Arrangement - Right Hand Design. 11. 1/2791750 gC /1/a-20898/00 Guide’ Carriage Vith Roller ",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 138,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        101,
+        109
+      ],
+      "number_core": "20903",
+      "number_as_ocr": "NEC/0/ A-209 03/00",
+      "title_as_ocr": "Arrangement Of Gearing.",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 138,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        101,
+        109
+      ],
+      "number_core": "20905",
+      "number_as_ocr": "MEC/1/a-20905/00",
+      "title_as_ocr": "Arrangement Of Tail End 172192250 Pusher For “Cold Shear - Right Hand Design. 19. 1/2792240",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 139,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        101,
+        109
+      ],
+      "number_core": "20906",
+      "number_as_ocr": "HEC /1/ 4-209 06/00",
+      "title_as_ocr": "Arrangement Of Support, Guide Track - Right Hand Design. 20.",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 139,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        101,
+        109
+      ],
+      "number_core": "20907",
+      "number_as_ocr": "MEC/1/A-20907/00",
+      "title_as_ocr": "Guide Carriage With Roller 1/2792250 Guides - Right Hand Design. 21. 1/2792260",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 139,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        101,
+        109
+      ],
+      "number_core": "20908",
+      "number_as_ocr": "MEC/1/A-20908/00",
+      "title_as_ocr": "Arrangement Of Shifting Arm, Air Cylinder - Right Hand Design. 22. 4/2792670 Eo /1/A-209 09/00 Arrangemen",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 139,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        101,
+        109
+      ],
+      "number_core": "20910",
+      "number_as_ocr": "MEC /1/A-20910/00",
+      "title_as_ocr": "Arrangement Of Main Drive. 24. 1/2792930 UEC /1/4-20911/00 Arrangement Of Limit Swite Lifting Roller - Le",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 139,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        101,
+        109
+      ],
+      "number_core": "20911",
+      "number_as_ocr": "EC /1/4-20911/00",
+      "title_as_ocr": "Arrangement Of Limit Swite Lifting Roller - Left Hand Design. 256 1/2792940",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 139,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        101,
+        109
+      ],
+      "number_core": "20912",
+      "number_as_ocr": "HEC /1/A-20912/00",
+      "title_as_ocr": "Arrangement Of Linit Swite Lifting Roller Design. - Ri ght Han I 26. 0/2792960 LEC/O/ A-20913/ 00 Arrange",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 139,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        101,
+        109
+      ],
+      "number_core": "20913",
+      "number_as_ocr": "EC/O/ A-20913/ 00",
+      "title_as_ocr": "Arrangement Of Limit Swite Holding Down - Left Hand Design. 27. 0/2792970",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 139,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        101,
+        109
+      ],
+      "number_core": "20914",
+      "number_as_ocr": "HEC /0/ A~20914/00",
+      "title_as_ocr": "Arrangement Of Limit Swite Right Hand Holding Down - Desi gn. 1 28. 1/2796400 iBC/1/A-20915/00 Rating Pla",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 139,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        102,
+        110
+      ],
+      "number_core": "22899",
+      "number_as_ocr": "MEC/1/a- 22899/00",
+      "title_as_ocr": "Scrap Handling System At Cold Shear - General Arrangement 2.",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 170,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        103,
+        111
+      ],
+      "number_core": "22664",
+      "number_as_ocr": "MEC/1/A- 22664/00",
+      "title_as_ocr": "General Arrangement Of Girder Be",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 177,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        103,
+        111
+      ],
+      "number_core": "22665",
+      "number_as_ocr": "MEC/1/a- 22665/00",
+      "title_as_ocr": "Arrangement Of Gantry 4.",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 177,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        103,
+        111
+      ],
+      "number_core": "22666",
+      "number_as_ocr": "MEC/1/a- 22666/00",
+      "title_as_ocr": "General Arrangement Of Traversing SH. 1 of 3 Drive 5e",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 177,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        103,
+        111
+      ],
+      "number_core": "22667",
+      "number_as_ocr": "MEC/1/a- 22667/00",
+      "title_as_ocr": "General Arrangement Carriage 8. General Arrangement - Shock",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 177,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        103,
+        111
+      ],
+      "number_core": "25098",
+      "number_as_ocr": "MEC/1/a- 25098/00",
+      "title_as_ocr": "General arrangement Of Digital SH. 3 of 3 Indicating System (Sections),",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 177,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        104
+      ],
+      "number_core": "22625",
+      "number_as_ocr": "MEC/0/ A-22625/00",
+      "title_as_ocr": "Dipping Type Roller Tables - General Arrangement 4.",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 185,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        106,
+        107
+      ],
+      "number_core": "25160",
+      "number_as_ocr": "MEC/O/a- 25160/00",
+      "title_as_ocr": "Chain Type Discharging Devioe - General Arrangement, - 2.",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 192,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        106,
+        107
+      ],
+      "number_core": "25163",
+      "number_as_ocr": "HEC/0/a- 25163/00",
+      "title_as_ocr": "Chain Type Discharging Device ~ General Arrangement, 5. UEC /O/a- 25164/00 Drive Arrangement",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 192,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        106,
+        107
+      ],
+      "number_core": "25164",
+      "number_as_ocr": "EC /O/a- 25164/00",
+      "title_as_ocr": "Drive Arrangement",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 192,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        112
+      ],
+      "number_core": "22518",
+      "number_as_ocr": "EC /1/ A- 22518/00",
+      "title_as_ocr": "Section Thru Roller 5. uEBC/O/ A- 229 33/00 Roller Table Frame & Cover Plates - General Arrangement.",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 205,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        112
+      ],
+      "number_core": "22934",
+      "number_as_ocr": "EC/1/a- 22934/00",
+      "title_as_ocr": "Cover Plates For Roller Table 3. EC /1/A- 2516 7/00 Key Plan & Roller Arrangement. 4. EC /1/ A- 22518/00 ",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 205,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        112
+      ],
+      "number_core": "25167",
+      "number_as_ocr": "EC /1/A- 2516 7/00",
+      "title_as_ocr": "Key Plan & Roller Arrangement. 4. EC /1/ A- 22518/00 Section Thru Roller 5. uEBC/O/ A- 229 33/00 Roller T",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 205,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        114
+      ],
+      "number_core": "25165",
+      "number_as_ocr": "mec /o/A-25165/o0",
+      "title_as_ocr": "Chain Type Discharging Device - General Arrangement",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 212,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        114
+      ],
+      "number_core": "25166",
+      "number_as_ocr": "MEC /0/A-251 66/00",
+      "title_as_ocr": "Drive Arrangement",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 212,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        115
+      ],
+      "number_core": "25445",
+      "number_as_ocr": "MEC/O/a- 25445/00",
+      "title_as_ocr": "Drive Arrangenent. 3e",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 219,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        116
+      ],
+      "number_core": "20665",
+      "number_as_ocr": "MEC /o/A-20665/00",
+      "title_as_ocr": "Chain Type Discharging Device - View 'X",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 226,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        116
+      ],
+      "number_core": "20666",
+      "number_as_ocr": "NEC /o/A-20666/00",
+      "title_as_ocr": "Chain Type Discharging Device in front of Piling Machine 1 0/2146720 ec /o/A-20710/00 Chain Type Discharg",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 226,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        116
+      ],
+      "number_core": "20710",
+      "number_as_ocr": "ec /o/A-20710/00",
+      "title_as_ocr": "Chain Type Discharging Device - Sections 0/2146670",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 226,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        117
+      ],
+      "number_core": "20665",
+      "number_as_ocr": "HEC /o/A-20665/00",
+      "title_as_ocr": "ype Discharging Device - View 'X",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 233,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        117
+      ],
+      "number_core": "20666",
+      "number_as_ocr": "MEC /o/A-20666 /oD",
+      "title_as_ocr": "Chain Type Discharging Device in front of Piling Machine 1 0/2146720",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 233,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        117
+      ],
+      "number_core": "20710",
+      "number_as_ocr": "Mec /o/A-2071 0/00",
+      "title_as_ocr": "Chain Type Discharging Device - Sections Chair T: 0/2146670",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 233,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        119
+      ],
+      "number_core": "20607",
+      "number_as_ocr": "vec /0/A-20607 /00",
+      "title_as_ocr": "Chain Conveyor No. 1 1 /a770200 Chain Conveyor No. 2 24 m Plant",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 329,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        119
+      ],
+      "number_core": "20610",
+      "number_as_ocr": "mec /o/A-20610/00",
+      "title_as_ocr": "Bundle Former 0/8771100",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 329,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        120
+      ],
+      "number_core": "20612",
+      "number_as_ocr": "MEC /o/A-20612/o0",
+      "title_as_ocr": "Chain Conveyor No. 1 1 /8770250",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 333,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        120
+      ],
+      "number_core": "20613",
+      "number_as_ocr": "Mec /1 /A-20613/00",
+      "title_as_ocr": "Chain Conveyor No. 2 24 m Plant Bar Collecting Eqpt. 24 m Plat 0/8770350",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 333,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        120
+      ],
+      "number_core": "20615",
+      "number_as_ocr": "MEC/o/A-20615/00",
+      "title_as_ocr": "Binding Installation with Dis- Sh 1 of 2 Sh 1 of 2 charging Roller Tables for Bundles & Packs 0/8778100",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 333,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        121
+      ],
+      "number_core": "20618",
+      "number_as_ocr": "mec /o/A-20618/00",
+      "title_as_ocr": "Binding Machines 0/8770800",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 337,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        121
+      ],
+      "number_core": "20696",
+      "number_as_ocr": "Mec /o/A-20696/o0",
+      "title_as_ocr": "Discharging Roller Table",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 337,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        121
+      ],
+      "number_core": "22975",
+      "number_as_ocr": "Mec /o/A-22975/00",
+      "title_as_ocr": "Arrangement of Monorail with Electric Sht. 1 of 3 Hoist.",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 340,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        123
+      ],
+      "number_core": "22901",
+      "number_as_ocr": "Mec /o/A-22901 /oo",
+      "title_as_ocr": "Disappearing Sto at Loading Roller Table - General Arrangement.",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 351,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        123
+      ],
+      "number_core": "22935",
+      "number_as_ocr": "MEC /o/A-22935/00",
+      "title_as_ocr": "General Arrmgement.",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 351,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        123
+      ],
+      "number_core": "25338",
+      "number_as_ocr": "MEC /o/A-25338 /00",
+      "title_as_ocr": "Disappearing Stop at Loading Roller Table - General Arrangement. Roller",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 351,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        124
+      ],
+      "number_core": "25965",
+      "number_as_ocr": "mec /o/A-25965/00",
+      "title_as_ocr": "Support Structure for Weighing Scale",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 358,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        125
+      ],
+      "number_core": "22930",
+      "number_as_ocr": "Mec /o/A-22930/00",
+      "title_as_ocr": "Walking Beam Discharging Device - General Arrangement",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 362,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        125
+      ],
+      "number_core": "22931",
+      "number_as_ocr": "Mec /o/A-22931 /oo",
+      "title_as_ocr": "Walking Beam Discharging Device - Sections Grid Nos. 10 to 17",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 362,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        125
+      ],
+      "number_core": "22932",
+      "number_as_ocr": "mec /o/a-22932/o0",
+      "title_as_ocr": "Walking Beam Discharging Device - Sections Grid Nos. 1 to 9",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 362,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        127
+      ],
+      "number_core": "22569",
+      "number_as_ocr": "Mec /o/A-22569/o0",
+      "title_as_ocr": "Roll Chenging Rig for H1 to HB",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 370,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        127
+      ],
+      "number_core": "22617",
+      "number_as_ocr": "Mec /0/A-22617/00",
+      "title_as_ocr": "Roll Changing Devices Stand 9-22 Roll Changing Rig - Arrangement",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 370,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        127
+      ],
+      "number_core": "22618",
+      "number_as_ocr": "Mec /6/A-22618/00",
+      "title_as_ocr": "Assembly Bedplates, Vertical Stands i1, 16, 198 21",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 370,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        127
+      ],
+      "number_core": "22632",
+      "number_as_ocr": "MEC /8 /A-226 32/00",
+      "title_as_ocr": "Assembly Bedplates & Rails, Horizontal Stends 9, 10, 12-15, 17, 18, 20 8 22",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 370,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        127
+      ],
+      "number_core": "25044",
+      "number_as_ocr": "MEC /o/A-25044 /oo",
+      "title_as_ocr": "Stand Changing Car Stand 9-13 - General Arrangement",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 370,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        127
+      ],
+      "number_core": "25045",
+      "number_as_ocr": "MEC /0/A-25045 /00",
+      "title_as_ocr": "Stand Changing Cer Stand 14-18 - General Arrangement",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 370,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        127
+      ],
+      "number_core": "25046",
+      "number_as_ocr": "Mec /1 /A~25046/o0",
+      "title_as_ocr": "General Arrangement, Sections",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 370,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        127
+      ],
+      "number_core": "25047",
+      "number_as_ocr": "mec /o/A-25047 /oo",
+      "title_as_ocr": "Stand Changing Car Stand 19 (I&II) & 22 (1 & II) - Generel Arrangement",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 370,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        140
+      ],
+      "number_core": "22528",
+      "number_as_ocr": "MEE /8/A-22528/00",
+      "title_as_ocr": "Grid for Storing Defective Blooms - General Arrangement. ME /1 /A-22529/00 Grid for Storing Defective Blo",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 12,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        140
+      ],
+      "number_core": "22863",
+      "number_as_ocr": "Mec /8/A-22863 /00",
+      "title_as_ocr": "Roller Table in the Bloom Storage Sht. 1 & 2 General Arrangemet Roller 19-22 and 44-47 & Sections. i",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 12,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        141
+      ],
+      "number_core": "23656",
+      "number_as_ocr": "MEL /1 /A-23656/00",
+      "title_as_ocr": "Disappearing Stop - Arrangement. MEE /1 /A-24133/00 Disappearing Stop - L.S. Arrangemmt. LL",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 36,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        141
+      ],
+      "number_core": "24133",
+      "number_as_ocr": "MEE /1 /A-24133/00",
+      "title_as_ocr": "Disappearing Stop - L.S. Arrangemmt. LL",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 36,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        142
+      ],
+      "number_core": "22616",
+      "number_as_ocr": "Mec /o/A-22616 /00",
+      "title_as_ocr": "General Arrangement,- Plan & Sections Sht. 1,28 3",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 138,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        142
+      ],
+      "number_core": "22657",
+      "number_as_ocr": "MEC /o/A-22657/00",
+      "title_as_ocr": "General Arrangement of Bloom Pusher & Sht. 1,2,3 & 4 Sections.",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 138,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        143
+      ],
+      "number_core": "22521",
+      "number_as_ocr": "MET /0/A-22521/00",
+      "title_as_ocr": "General Arrangement",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 147,
+      "verification": "ocr_prefix_review"
+    },
+    {
+      "item_numbers": [
+        144
+      ],
+      "number_core": "20652",
+      "number_as_ocr": "Mec /o/A-20652/00",
+      "title_as_ocr": "General Arragement - Twisting Guide between Stands BV 5 and HH 6 —",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 42,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        703
+      ],
+      "number_core": "20700",
+      "number_as_ocr": "mec /2/A-20700/00",
+      "title_as_ocr": "Arrangement",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 368,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        705
+      ],
+      "number_core": "23013",
+      "number_as_ocr": "MEC /1 /A-23013/00",
+      "title_as_ocr": "Arrangement of Storage Racks ~ Bar Mill Sht. 3 of 3",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 376,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        705
+      ],
+      "number_core": "23083",
+      "number_as_ocr": "Mec /8/A-23083/o0",
+      "title_as_ocr": "Reack for Roll Guides ,",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 376,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        705
+      ],
+      "number_core": "23084",
+      "number_as_ocr": "MEC /8/A-23084/o0",
+      "title_as_ocr": "Trmsport Traverse for Racks for Roll Guide _ —",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 376,
+      "verification": "ocr_number_and_title_review"
+    },
+    {
+      "item_numbers": [
+        710
+      ],
+      "number_core": "25565",
+      "number_as_ocr": "MEC/1 /A-25565/00",
+      "title_as_ocr": "Row of Pockets = Arrangement",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 372,
+      "verification": "ocr_number_and_title_review"
+    }
+  ]
+}

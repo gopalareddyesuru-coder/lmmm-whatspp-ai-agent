@@ -1,0 +1,1101 @@
+{
+  "department_code": "35",
+  "area": "LMMM",
+  "status": "cross_verified_item_and_drawing_number",
+  "count": 97,
+  "scope": "Major drawings from charging through finishing manuals cross-matched to an independent drawing list under the same item number.",
+  "records": [
+    {
+      "item_numbers": [
+        1
+      ],
+      "drawing_number": "1/A-22593",
+      "title": "TENSIONING DEVICE ARRANGEMENT",
+      "manual_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "manual_page": 3,
+      "cross_reference_file": "DRG LIST MECON-BDM.xls",
+      "cross_reference_location": "sheet:BDM:row:58"
+    },
+    {
+      "item_numbers": [
+        1
+      ],
+      "drawing_number": "8/A-22595",
+      "title": "GENERAL ARRANGEMENT-SECTION",
+      "manual_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "manual_page": 3,
+      "cross_reference_file": "DRG LIST MECON-BDM.xls",
+      "cross_reference_location": "sheet:BDM:row:3"
+    },
+    {
+      "item_numbers": [
+        1
+      ],
+      "drawing_number": "1/A-22896",
+      "title": "GENERAL ARRANGEMENT-PLAN",
+      "manual_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "manual_page": 3,
+      "cross_reference_file": "DRG LIST MECON-BDM.xls",
+      "cross_reference_location": "sheet:BDM:row:5"
+    },
+    {
+      "item_numbers": [
+        1
+      ],
+      "drawing_number": "0/A-22913",
+      "title": "ROPE DRUM DRIVE ARRANGEMENT GRID-1",
+      "manual_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "manual_page": 3,
+      "cross_reference_file": "DRG LIST MECON-BDM.xls",
+      "cross_reference_location": "sheet:BDM:row:27"
+    },
+    {
+      "item_numbers": [
+        2
+      ],
+      "drawing_number": "8/A-22793",
+      "title": "General Arrangement.",
+      "manual_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "manual_page": 20,
+      "cross_reference_file": "TDIS-DRG LIST.xls",
+      "cross_reference_location": "sheet:MECH:row:283"
+    },
+    {
+      "item_numbers": [
+        3
+      ],
+      "drawing_number": "0/A-22521",
+      "title": "General Arrangement",
+      "manual_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "manual_page": 30,
+      "cross_reference_file": "TDIS-DRG LIST.xls",
+      "cross_reference_location": "sheet:MECH:row:292"
+    },
+    {
+      "item_numbers": [
+        5
+      ],
+      "drawing_number": "1/A-24364",
+      "title": "Drive Arrangement",
+      "manual_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "manual_page": 71,
+      "cross_reference_file": "TDIS-DRG LIST.xls",
+      "cross_reference_location": "sheet:MECH:row:310"
+    },
+    {
+      "item_numbers": [
+        6
+      ],
+      "drawing_number": "0/A-22575",
+      "title": "Arrangement - Tilter Frame",
+      "manual_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "manual_page": 80,
+      "cross_reference_file": "TDIS-DRG LIST.xls",
+      "cross_reference_location": "sheet:MECH:row:318"
+    },
+    {
+      "item_numbers": [
+        6
+      ],
+      "drawing_number": "0/A-22577",
+      "title": "Arrangement - Hook Type Bloom Tilter in the area of Furnace Approach Roller Table.",
+      "manual_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "manual_page": 80,
+      "cross_reference_file": "TDIS-DRG LIST.xls",
+      "cross_reference_location": "sheet:MECH:row:320"
+    },
+    {
+      "item_numbers": [
+        7
+      ],
+      "drawing_number": "0/A-22796",
+      "title": "ARRANGEMENT OF WEIGHING SCALE",
+      "manual_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "manual_page": 88,
+      "cross_reference_file": "DRG LIST MECON-BDM.xls",
+      "cross_reference_location": "sheet:BDM:row:273"
+    },
+    {
+      "item_numbers": [
+        8
+      ],
+      "drawing_number": "1/A-23656",
+      "title": "Disappearing Stop - Arrangement",
+      "manual_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "manual_page": 93,
+      "cross_reference_file": "TDIS-DRG LIST.xls",
+      "cross_reference_location": "sheet:MECH:row:322"
+    },
+    {
+      "item_numbers": [
+        10
+      ],
+      "drawing_number": "0/A-22608",
+      "title": "SH1 GENERAL ARRANGEMENT-PLAN",
+      "manual_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "manual_page": 107,
+      "cross_reference_file": "DRG LIST MECON-BDM.xls",
+      "cross_reference_location": "sheet:BDM:row:301"
+    },
+    {
+      "item_numbers": [
+        11
+      ],
+      "drawing_number": "0/A-22853",
+      "title": "General Arrangement - Plan & Sections Sht. 1,283",
+      "manual_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "manual_page": 116,
+      "cross_reference_file": "TDIS-DRG LIST.xls",
+      "cross_reference_location": "sheet:MECH:row:329"
+    },
+    {
+      "item_numbers": [
+        12,
+        13
+      ],
+      "drawing_number": "0/A-22522",
+      "title": "SECTION THRU ROLLER",
+      "manual_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "manual_page": 127,
+      "cross_reference_file": "DRG LIST MECON-BDM.xls",
+      "cross_reference_location": "sheet:BDM:row:360"
+    },
+    {
+      "item_numbers": [
+        12,
+        13
+      ],
+      "drawing_number": "0/A-22847",
+      "title": "ROLLER TABLE - GENERAL ARRANGEMENT",
+      "manual_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "manual_page": 127,
+      "cross_reference_file": "DRG LIST MECON-BDM.xls",
+      "cross_reference_location": "sheet:BDM:row:371"
+    },
+    {
+      "item_numbers": [
+        12,
+        13
+      ],
+      "drawing_number": "0/A-22848",
+      "title": "ARRANGEMENT OF GUIDE PLTES",
+      "manual_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "manual_page": 127,
+      "cross_reference_file": "DRG LIST MECON-BDM.xls",
+      "cross_reference_location": "sheet:BDM:row:388"
+    },
+    {
+      "item_numbers": [
+        12,
+        13
+      ],
+      "drawing_number": "0/A-22890",
+      "title": "ARRANGEMENT OF GUIDE PLTES",
+      "manual_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "manual_page": 127,
+      "cross_reference_file": "DRG LIST MECON-BDM.xls",
+      "cross_reference_location": "sheet:BDM:row:389"
+    },
+    {
+      "item_numbers": [
+        12,
+        13
+      ],
+      "drawing_number": "0/A-22891",
+      "title": "ARRANGEMENT OF GUIDE PLTES",
+      "manual_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "manual_page": 127,
+      "cross_reference_file": "DRG LIST MECON-BDM.xls",
+      "cross_reference_location": "sheet:BDM:row:390"
+    },
+    {
+      "item_numbers": [
+        12,
+        13
+      ],
+      "drawing_number": "8/A-22944",
+      "title": "ARRANGEMENT OF HEAT PROTECTION SHIELD",
+      "manual_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "manual_page": 127,
+      "cross_reference_file": "DRG LIST MECON-BDM.xls",
+      "cross_reference_location": "sheet:BDM:row:391"
+    },
+    {
+      "item_numbers": [
+        12,
+        13
+      ],
+      "drawing_number": "1/A-24365",
+      "title": "DRIVE ARRANGEMENT",
+      "manual_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "manual_page": 127,
+      "cross_reference_file": "DRG LIST MECON-BDM.xls",
+      "cross_reference_location": "sheet:BDM:row:361"
+    },
+    {
+      "item_numbers": [
+        12,
+        13
+      ],
+      "drawing_number": "8/A-24656",
+      "title": "Arrangement of Guide Plates",
+      "manual_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "manual_page": 127,
+      "cross_reference_file": "TDIS-DRG LIST.xls",
+      "cross_reference_location": "sheet:MECH:row:350"
+    },
+    {
+      "item_numbers": [
+        17
+      ],
+      "drawing_number": "1/A-20580",
+      "title": "Clamping Device",
+      "manual_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "manual_page": 4,
+      "cross_reference_file": "TDIS-DRG LIST.xls",
+      "cross_reference_location": "sheet:MECH:row:353"
+    },
+    {
+      "item_numbers": [
+        17
+      ],
+      "drawing_number": "1/A-22865",
+      "title": "Device Roll Changing Drive Station",
+      "manual_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "manual_page": 3,
+      "cross_reference_file": "TDIS-DRG LIST.xls",
+      "cross_reference_location": "sheet:MECH:row:355"
+    },
+    {
+      "item_numbers": [
+        27
+      ],
+      "drawing_number": "1/A-22867/00",
+      "title": "Roll Changing Device - Returm Bracket",
+      "manual_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "manual_page": 58,
+      "cross_reference_file": "DRG LIST MECON-BDM.xls",
+      "cross_reference_location": "sheet:TRACING:row:1471"
+    },
+    {
+      "item_numbers": [
+        43
+      ],
+      "drawing_number": "1/A-22516",
+      "title": "KEY PLAN & SECTION",
+      "manual_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "manual_page": 104,
+      "cross_reference_file": "DRG LIST MECON-BDM.xls",
+      "cross_reference_location": "sheet:BDM:row:1323"
+    },
+    {
+      "item_numbers": [
+        43
+      ],
+      "drawing_number": "1/A-25495",
+      "title": "LIMIT SWITCHES ARRGT-1",
+      "manual_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "manual_page": 104,
+      "cross_reference_file": "DRG LIST MECON-BDM.xls",
+      "cross_reference_location": "sheet:BDM:row:1350"
+    },
+    {
+      "item_numbers": [
+        43
+      ],
+      "drawing_number": "1/A-25503",
+      "title": "LIMIT SWITCHES ARRGT-2",
+      "manual_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "manual_page": 104,
+      "cross_reference_file": "DRG LIST MECON-BDM.xls",
+      "cross_reference_location": "sheet:BDM:row:1351"
+    },
+    {
+      "item_numbers": [
+        43
+      ],
+      "drawing_number": "1/A-25792",
+      "title": "LIMIT SWITCHES ARRGT-3",
+      "manual_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "manual_page": 104,
+      "cross_reference_file": "DRG LIST MECON-BDM.xls",
+      "cross_reference_location": "sheet:BDM:row:1352"
+    },
+    {
+      "item_numbers": [
+        44
+      ],
+      "drawing_number": "0/A-22565",
+      "title": "SH 1 OF 2 ARRGT.PINCH ROLL AT THE BACK OF FURNACE",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 6,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:4"
+    },
+    {
+      "item_numbers": [
+        44
+      ],
+      "drawing_number": "1/D-23942",
+      "title": "SECTION THRU UPPER ROLLER BEARING",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 6,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:19"
+    },
+    {
+      "item_numbers": [
+        45
+      ],
+      "drawing_number": "0/A-22517",
+      "title": "PENDULUM SHEAR SECTIONAL ELEVATION",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 13,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:67"
+    },
+    {
+      "item_numbers": [
+        45
+      ],
+      "drawing_number": "0/A-22862",
+      "title": "GENERAL ARRANGEMENT OF DRIVE AND PENDULUM SHEAR",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 13,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:61"
+    },
+    {
+      "item_numbers": [
+        46
+      ],
+      "drawing_number": "1/A-22563",
+      "title": "SCRAP CHUTE - GENERAL ARRANGEMENT",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 20,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:131"
+    },
+    {
+      "item_numbers": [
+        47,
+        48
+      ],
+      "drawing_number": "1/A-20520",
+      "title": "HORIZONTAL-TWO HIGH STAND H1-H4 ROLL BEARING ARRANGEMENT",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 27,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:196"
+    },
+    {
+      "item_numbers": [
+        51
+      ],
+      "drawing_number": "0/A-22652",
+      "title": "SCRAP DISPOSAL SYATEM AT ROTARY SHEAR IN FRONT OF STAND - GENERAL ARRGT.",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 78,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:317"
+    },
+    {
+      "item_numbers": [
+        51
+      ],
+      "drawing_number": "0/A-22654",
+      "title": "SCRAP DISPOSAL SYATEM AT ROTARY SHEAR IN FRONT OF STAND - GENERAL ARRGT.",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 78,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:269"
+    },
+    {
+      "item_numbers": [
+        52
+      ],
+      "drawing_number": "0/A-22782",
+      "title": "SH 1 OF 3 ARRANGEMENT DUAL PINCH ROLL UNIT",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 85,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:374"
+    },
+    {
+      "item_numbers": [
+        53,
+        55
+      ],
+      "drawing_number": "0/A-20588",
+      "title": "BAR MILL,HORIZONTAL TWO HIGH STAND H9,10,12,13,14,15,17,18 ROLL BEARING ARRGT.",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 104,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:516"
+    },
+    {
+      "item_numbers": [
+        54,
+        56,
+        60,
+        62
+      ],
+      "drawing_number": "0/A-20568",
+      "title": "BAR MILL,VERTICAL TWO HIGH STAND V11,16,19,21 ROLL BEARING ARRGT.",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 127,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:528"
+    },
+    {
+      "item_numbers": [
+        57
+      ],
+      "drawing_number": "0/A-22740",
+      "title": "SH 1 OF 3 PINCH ROLL IN FRONT OF FINISHING TRAIN-1 ARRANGEMENT",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 159,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:598"
+    },
+    {
+      "item_numbers": [
+        58
+      ],
+      "drawing_number": "8/A-22662",
+      "title": "VERTICAL DOWN LOPPERS IN FRONT OF STD.V 19 I+II",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 166,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:661"
+    },
+    {
+      "item_numbers": [
+        58
+      ],
+      "drawing_number": "1/A-22684",
+      "title": "VERTICAL DOWN LOPPERS SECTION FOR 120 BREADTH",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 166,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:662"
+    },
+    {
+      "item_numbers": [
+        59
+      ],
+      "drawing_number": "1/A-22656",
+      "title": "SNAP SHEAR ARRANGEMENT - SECTION",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 172,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:726"
+    },
+    {
+      "item_numbers": [
+        61,
+        63
+      ],
+      "drawing_number": "0/A-20589",
+      "title": "BAR MILL HORIZONTAL TWO HIGH STANDS H20 I,22I ROLL BEARING ARRANGEMENT H20 II,22 II",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 179,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:782"
+    },
+    {
+      "item_numbers": [
+        64
+      ],
+      "drawing_number": "0/A-22631",
+      "title": "ARRANGEMENT OF SUPPORT WITH HYD.CYLINDER",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 227,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:858"
+    },
+    {
+      "item_numbers": [
+        64
+      ],
+      "drawing_number": "1/A-24587",
+      "title": "ARRANGEMENT OF VERTICAL LOOPER ROLLER",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 227,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:923"
+    },
+    {
+      "item_numbers": [
+        64
+      ],
+      "drawing_number": "1/A-24622",
+      "title": "ARRANGEMENT OF LIFTING DEVICE OF PROTECTING HOOD",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 227,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:905"
+    },
+    {
+      "item_numbers": [
+        65
+      ],
+      "drawing_number": "8/A-22660",
+      "title": "GUIDE TROUGH ARRANGEMENT",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 248,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:1032"
+    },
+    {
+      "item_numbers": [
+        65
+      ],
+      "drawing_number": "1/A-22673",
+      "title": "GUIDE TROUGH SECTIONS BETWEEN STD 9 AND SCRAP REJECT AT ROTARY SHEAR",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 248,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:946"
+    },
+    {
+      "item_numbers": [
+        65
+      ],
+      "drawing_number": "1/A-22674",
+      "title": "GUIDE TROUGHS ARRANGEMENT OF BRIDGE",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 248,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:1064"
+    },
+    {
+      "item_numbers": [
+        65
+      ],
+      "drawing_number": "8/A-22675",
+      "title": "GENERAL ARRANGEMENT OF GUIDE TROUGH( FROM STD-13 TO STD-18 )",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 249,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:981"
+    },
+    {
+      "item_numbers": [
+        65
+      ],
+      "drawing_number": "8/A-22676",
+      "title": "ARRGT OF GUIDE TROUGHS BETWEEN STD 8 TO STD 14",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 248,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:947"
+    },
+    {
+      "item_numbers": [
+        65
+      ],
+      "drawing_number": "8/A-22692",
+      "title": "ARRANGEMENT OF GUIDE TROUGH BETWEEN DUAL PINCH ROLL AND STD. 14",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 248,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:1009"
+    },
+    {
+      "item_numbers": [
+        65
+      ],
+      "drawing_number": "0/A-22947",
+      "title": "ARRANGEMENT OF GUIDE TROUGH ( BETWEEN PENDULUM SHEAR AND STD H1 )",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 248,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:1028"
+    },
+    {
+      "item_numbers": [
+        65
+      ],
+      "drawing_number": "0/A-22976",
+      "title": "GUIDE TROUGHS FOR MISSING STANDS H5 TO H8",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 248,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:1065"
+    },
+    {
+      "item_numbers": [
+        65
+      ],
+      "drawing_number": "0/A-22977",
+      "title": "GUIDE TROUGHS FOR MISSING STANDS H9 TO H18",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 248,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:1066"
+    },
+    {
+      "item_numbers": [
+        65
+      ],
+      "drawing_number": "0/A-22978",
+      "title": "GUIDE TROUGHS FOR MISSING STANDS H22 I AND H22 II",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 248,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:1067"
+    },
+    {
+      "item_numbers": [
+        65
+      ],
+      "drawing_number": "8/A-23076",
+      "title": "SINGLE PINCH ROLL UNIT - STAND 13 TO 19 I",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 249,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:1033"
+    },
+    {
+      "item_numbers": [
+        65
+      ],
+      "drawing_number": "1/A-24661",
+      "title": "GUIDE TROUGHS ARRANGEMENT OF BRIDGE",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 248,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:1068"
+    },
+    {
+      "item_numbers": [
+        65
+      ],
+      "drawing_number": "1/A-24923",
+      "title": "GUIDE TROUGH FROM STD.9 TO STD.13",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 248,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:1147"
+    },
+    {
+      "item_numbers": [
+        65
+      ],
+      "drawing_number": "0/A-25697",
+      "title": "SH1OF2 GUIDE BETWEEN COOLING STRETCH-1,PINCH ROLL AND SHEAR-RIGHT ARRGT FOR ROUND BAR AND REBAR",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 248,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:1121"
+    },
+    {
+      "item_numbers": [
+        65
+      ],
+      "drawing_number": "0/A-25701",
+      "title": "GUIDES BETWEEN COOLING ROLL AND ROLLER TABLE GENERAL ARRGT.",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 248,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:1087"
+    },
+    {
+      "item_numbers": [
+        66
+      ],
+      "drawing_number": "1/A-22523",
+      "title": "SCRAP BALLERS FUNNEL & PRESSURE ROLL ASSEMBLY",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 277,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:1167"
+    },
+    {
+      "item_numbers": [
+        66
+      ],
+      "drawing_number": "1/A-22524",
+      "title": "SCRAP BALLERS FUNNEL & PRESSURE ROLL ASSEMBLY",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 277,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:1168"
+    },
+    {
+      "item_numbers": [
+        66
+      ],
+      "drawing_number": "1/A-22526",
+      "title": "SCRAP BALLERS DRIVE & SPINDLE ASSEMBLY",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 277,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:1170"
+    },
+    {
+      "item_numbers": [
+        66
+      ],
+      "drawing_number": "1/A-22527",
+      "title": "SCRAP BALLERS SUPPORT ASSEMBLY",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 277,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:1171"
+    },
+    {
+      "item_numbers": [
+        66
+      ],
+      "drawing_number": "1/A-22561",
+      "title": "SCRAP BALLERS GENERAL ARRANGEMENT",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 277,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:1172"
+    },
+    {
+      "item_numbers": [
+        66
+      ],
+      "drawing_number": "1/A-22598",
+      "title": "SCRAP BUCKET WITH SUSPENSION GEAR",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 277,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:1217"
+    },
+    {
+      "item_numbers": [
+        69
+      ],
+      "drawing_number": "0/A-22755",
+      "title": "GENERAL ARRANGEMENT",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 284,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:1222"
+    },
+    {
+      "item_numbers": [
+        70
+      ],
+      "drawing_number": "1/A-22980",
+      "title": "SINGLE PINCH ROLL UNIT BEHIND COOLING STRETCHES-SECTION THRU PINCH ROLL",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 290,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:1241"
+    },
+    {
+      "item_numbers": [
+        70
+      ],
+      "drawing_number": "1/A-22981",
+      "title": "SINGLE PINCH ROLL UNIT BEHIND COOLING STRETCHES-SECTION THRU DRIVE",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 290,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:1242"
+    },
+    {
+      "item_numbers": [
+        70
+      ],
+      "drawing_number": "1/A-22982",
+      "title": "SINGLE PINCH ROLL UNIT BEHIND COOLING STRETCHES-SCREW DOWN ARRANGEMENT",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 290,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:1243"
+    },
+    {
+      "item_numbers": [
+        74
+      ],
+      "drawing_number": "0/A-22769",
+      "title": "ARRGT.OF APPROACH ROLLER TABLE I AND II ( LEFT AND REGHT ) SECTIONS AND DETAILS",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 320,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:1327"
+    },
+    {
+      "item_numbers": [
+        74
+      ],
+      "drawing_number": "8/A-22770",
+      "title": "ARRGT.OF APPROACH ROLLER TABLE I AND II ( LEFT AND REGHT ) PLAN",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 320,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:1328"
+    },
+    {
+      "item_numbers": [
+        74
+      ],
+      "drawing_number": "8/A-22771",
+      "title": "ARRGT.OF APPROACH ROLLER TABLE II (LEFT AND RIGHT ) PLAN",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 320,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:1355"
+    },
+    {
+      "item_numbers": [
+        74
+      ],
+      "drawing_number": "0/A-22904",
+      "title": "ARRGT.OF APPROACH ROLLER TABLE I",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 320,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:1329"
+    },
+    {
+      "item_numbers": [
+        75,
+        708,
+        709
+      ],
+      "drawing_number": "0/A-22824",
+      "title": "ARRGT.OF COOLING TANKS WITHOUT COVER",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 326,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:1485"
+    },
+    {
+      "item_numbers": [
+        75,
+        708,
+        709
+      ],
+      "drawing_number": "0/A-22825",
+      "title": "ARRGT OF TRANSFER CAR (RIGHT HAND SIDE & LEFT SHEETS 1 OF 2  AND SHEET 2 OF 2",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 326,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:1469"
+    },
+    {
+      "item_numbers": [
+        75,
+        708,
+        709
+      ],
+      "drawing_number": "8/A-22831",
+      "title": "COOLING STRETCH & APPROACH ROLLER TABLE - SECTION",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 326,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:1439"
+    },
+    {
+      "item_numbers": [
+        75,
+        708,
+        709
+      ],
+      "drawing_number": "8/A-22836",
+      "title": "GEN.ARRGT COOLING STRETCH 1&2 & APPROACH ROLLER TABLE 1 & 2",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 326,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:1440"
+    },
+    {
+      "item_numbers": [
+        76
+      ],
+      "drawing_number": "0/A-22881",
+      "title": "PIVOTABLE APPROACH ROLLER TABLE - GENERAL ARRGT.",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 347,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:1565"
+    },
+    {
+      "item_numbers": [
+        76
+      ],
+      "drawing_number": "0/A-22882",
+      "title": "ROLLER TABLE INTERMEDIATE PIECE AT PIVOTABLE APPROACH ROLLER TABLE GENERAL ARRGT.",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 347,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:1567"
+    },
+    {
+      "item_numbers": [
+        77
+      ],
+      "drawing_number": "1/A-22540",
+      "title": "CROSS SECTION BEFORE BEGINNING OF COOLING BED",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 353,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:1636"
+    },
+    {
+      "item_numbers": [
+        77
+      ],
+      "drawing_number": "1/A-22544",
+      "title": "Design Structure Of Run-In-Trough In » Sheet 1 of 2. Front Of Cooling Bed. iS 22539 /00 Cross-Section Bef",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 353,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:2244"
+    },
+    {
+      "item_numbers": [
+        77
+      ],
+      "drawing_number": "1/A-22552",
+      "title": "ARRGT.OF BRACK SLIDE - I AND II COMPENSATION CYLINDER",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 353,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:1638"
+    },
+    {
+      "item_numbers": [
+        77
+      ],
+      "drawing_number": "0/A-22556",
+      "title": "ARRGT.OF BRACK SLIDE - I AT THE BEGINNING OF RUN IN TROUGH",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 353,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:1639"
+    },
+    {
+      "item_numbers": [
+        77
+      ],
+      "drawing_number": "1/A-22557",
+      "title": "SEPARATING SWITCH ASSEMBLY ARRANGEMENT - PLAN",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 354,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:2646"
+    },
+    {
+      "item_numbers": [
+        77
+      ],
+      "drawing_number": "1/A-23078",
+      "title": "SHEET 1 OF 4 ARRANGEMENT OF INTERMEDIATE SLIDE",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 354,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:2779"
+    },
+    {
+      "item_numbers": [
+        77
+      ],
+      "drawing_number": "1/A-23545",
+      "title": "ARRGT.OF PIVOT POINT AT SWINGING DEVICE",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 353,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:1643"
+    },
+    {
+      "item_numbers": [
+        77
+      ],
+      "drawing_number": "1/A-23776",
+      "title": "ARRGT. BRACK SLIDE-I APRON AND LEVER",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 353,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:1645"
+    },
+    {
+      "item_numbers": [
+        77
+      ],
+      "drawing_number": "1/A-23777",
+      "title": "ARRGT. BRACK SLIDE-I ASSY.",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 353,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:1646"
+    },
+    {
+      "item_numbers": [
+        77
+      ],
+      "drawing_number": "1/A-23778",
+      "title": "ARRGT. BRACK SLIDE-II APRON AND LEVER",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 353,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:1647"
+    },
+    {
+      "item_numbers": [
+        77
+      ],
+      "drawing_number": "1/A-23779",
+      "title": "ARRGT. BRACK SLIDE-II ASSY.",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 353,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:1648"
+    },
+    {
+      "item_numbers": [
+        77
+      ],
+      "drawing_number": "1/A-23780",
+      "title": "ARRGT.OF SEPARATING LEDGE ASSY.",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 353,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:1649"
+    },
+    {
+      "item_numbers": [
+        77
+      ],
+      "drawing_number": "0/A-25641",
+      "title": "PLAN VIEW IN FRONT OF COOLING BED",
+      "manual_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "manual_page": 353,
+      "cross_reference_file": "DRG LIST MECON BAR.xls",
+      "cross_reference_location": "sheet:Sheet2:row:1652"
+    },
+    {
+      "item_numbers": [
+        80
+      ],
+      "drawing_number": "1/A-22601",
+      "title": "General Arrangement Of Straightening Grid & Shifting Lever (Left Side 26",
+      "manual_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "manual_page": 16,
+      "cross_reference_file": "TDIS-DRG LIST.xls",
+      "cross_reference_location": "sheet:MECH:row:1338"
+    },
+    {
+      "item_numbers": [
+        95,
+        100,
+        105,
+        113
+      ],
+      "drawing_number": "1/A-24361",
+      "title": "Disappearing Stops At Run Out. Roller Table Behind Cold Shear iI - Key Plan.",
+      "manual_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "manual_page": 117,
+      "cross_reference_file": "TDIS-DRG LIST.xls",
+      "cross_reference_location": "sheet:MECH:row:1455"
+    }
+  ]
+}
