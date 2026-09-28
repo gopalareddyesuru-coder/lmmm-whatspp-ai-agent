@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.32 BP COMBINED MAINTENANCE HISTORY
+// LMMM AI Maintenance V8.15.34 TOD EQUIPMENT ALIASES
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -2733,6 +2733,34 @@ function normalizeMaintenanceQueryV81524(question){
   return String(question||'').replace(/\b(?:bloom|blom|boom|bum)[ -]+(?:pusher|puser|pusr|pushr)\b/gi,'bloom pusher')
     .replace(/\bBP[ -]?([12])\b/gi,(_,n)=>`bloom pusher ${n}`).replace(/\bBP\b/gi,'bloom pusher');
 }
+function chargingAssetV81533(question){
+  const q=String(question||'');
+  const families=[
+    {name:'Charging grids',short:'CH GRID',sheet:'CH GRIDS',alias:/\b(?:CH(?:ARGING)?[ -]?GRIDS?(?:[ -]?[123])?|BSY[ -]?(?:CH[ -]?)?GRIDS?|CHAR\.?[ -]?GRIDS?(?:[ -]?[123])?)\b/i,number:/\b(?:CH(?:ARGING)?[ -]?GRIDS?|CHAR\.?[ -]?GRIDS?)[ -]?([123])\b/i,unit:/\b(?:CH(?:ARGING)?[ -]?GRIDS?|CHAR\.?[ -]?GRIDS?)[ -]?([123])\b/i},
+    {name:'Bloom storage yard roller table',short:'BSY RT',sheet:'BSY RT',alias:/\b(?:BSY[ -]?RT|BLOOM STORAGE YARD ROLLER TABLE)\b/i},
+    {name:'Lever type pusher',short:'LTP',sheet:'LTP',alias:/\b(?:LTP|LEVER TYPE PUSHER|LIVER TYPE PUSHER)(?:[ -]?[12])?\b/i,number:/\b(?:LTP|LEVER TYPE PUSHER|LIVER TYPE PUSHER)[ -]?([12])\b/i,unit:/\b(?:LTP|LEVER TYPE PUSHER|LIVER TYPE PUSHER)[ -]?([12])\b/i},
+    {name:'Elevator',short:'EV',sheet:'ELEVATORS',alias:/\b(?:EV|ELEVATORS?)(?:[ -]?[12])?\b/i,number:/\b(?:EV|ELEVATOR)[ -]?([12])\b/i,unit:/\b(?:EV|ELEVATOR)[ -]?([12])\b/i},
+    {name:'Take over device',sheet:null,alias:/\b(?:TOD|TAKE[ -]?OVER DEVICE|BLOOM[ -]?TRANSFER DEVICE)(?:[ -]?[12])?\b/i,number:/\b(?:TOD|TAKE[ -]?OVER DEVICE|BLOOM[ -]?TRANSFER DEVICE)[ -]?([12])\b/i,unit:/\b(?:TOD|TAKE[ -]?OVER DEVICE|BLOOM[ -]?TRANSFER DEVICE)[ -]?([12])\b/i},
+    {name:'Furnace approach roller table',short:'FART',sheet:'FART',also:'FART AMR',alias:/\b(?:FART|FURNACE APPROACH ROLLER TABLE)\b/i}
+  ];
+  const family=families.find(x=>x.alias.test(q));
+  return family?{...family,unitNumber:family.number?.exec(q)?.[1]||''}:null;
+}
+async function answerChargingEquipmentCountV81533(from,question){
+  if(!/\b(?:how many|number of|count|total|enni|entha)\b/i.test(question))return false;
+  const asset=chargingAssetV81533(question);
+  if(!asset||asset.unitNumber)return false;
+  const facts={
+    'Charging grids':'Charging grids: 3 (CH grid-1, 2 and 3).',
+    'Bloom storage yard roller table':'BSY roller table: 71 rollers in 11 groups.',
+    'Lever type pusher':'Lever type pushers: LTP-1 and LTP-2.',
+    Elevator:'Elevators: EV-1 and EV-2.',
+    'Take over device':'Take over devices: TOD-1 and TOD-2.',
+    'Furnace approach roller table':'Furnace approach roller table: 10 groups.'
+  };
+  if(!facts[asset.name])return false;
+  await sendText(from,facts[asset.name]);return true;
+}
 function searchTextV81524(row){
   return String(row.content||'').replace(/^Source status:[^;]*; candidate area:[^;]*; mapping:[^;]*;\s*/i,'')
     .replace(/^Identifiers: \[[^\]]*\]; Source text:\s*/i,'').toLowerCase();
@@ -2746,7 +2774,8 @@ function rankSearchRowsV81524(rows,request,module){
   const subject=terms.filter(x=>!/^\d+$/.test(x));
   const ranked=rows.map(row=>{
     const body=searchTextV81524(row),source=String(row.source||'').toLowerCase();
-    const hitCount=subject.reduce((n,w)=>n+Number(searchTermMatchV81524(body,w)),0);
+    const charging=String(row.key||'').startsWith('charging:')&&!!chargingAssetV81533(request.question||'');
+    const hitCount=charging?Math.max(2,subject.length):subject.reduce((n,w)=>n+Number(searchTermMatchV81524(body,w)),0);
     const precise=request.exact?exactDrawingTokenV81512(body,request.exact):false;
     const kind=String(row.kind||'').toLowerCase();
     const confirmed=/^(job_action|defect|maintenance event|verified maintenance file|production shift|production delay)$/i.test(kind);
@@ -2771,7 +2800,7 @@ function rankSearchRowsV81524(rows,request,module){
     // Two-part equipment names need both words in the record, not a filename-only hit.
     if(subject.length>=2&&!request.exact&&!request.bloomPusher&&row.subjectHits<2&&
       !/^(?:ecs|bdm|wbf|bp)$/.test(subject[0]))return false;
-    if(!request.exact&&!request.bloomPusher&&subject.includes('bloom')&&subject.includes('pusher')&&
+    if(!charging&&!request.exact&&!request.bloomPusher&&subject.includes('bloom')&&subject.includes('pusher')&&
       !['bloom','pusher'].every(x=>searchTermMatchV81524(row.searchBody,x)))return false;
     if(subject.length===1&&!request.exact&&!row.subjectHits)return false;
     return row.searchScore>0;
@@ -3167,7 +3196,11 @@ async function handleSearchExportV81518(from,cmd,user){
   let bpRows=[];
   try{bpRows=await bpHistoryRowsV81526(from,user,result.request,state.module)}
   catch(e){console.error('[SEARCH_EXPORT_BP]',e);await sendText(from,'Cannot read BP history right now. Please try again.');return true;}
-  const rows=balanceBpMaintenanceRowsV81532(rankSearchRowsV81524(filterSearchRowsV81518([...result.rows,...catalog.rows,...bpRows],state.module),result.request,state.module),result.request,state.module);
+  let chargingRows=[];
+  try{chargingRows=await chargingHistoryRowsV81533(from,user,state.question,state.module)}
+  catch(e){console.error('[SEARCH_EXPORT_CHARGING]',e);await sendText(from,'Cannot read charging-side history right now. Please try again.');return true;}
+  result.request.question=state.question;
+  const rows=balanceBpMaintenanceRowsV81532(rankSearchRowsV81524(filterSearchRowsV81518([...result.rows,...catalog.rows,...bpRows,...chargingRows],state.module),result.request,state.module),result.request,state.module);
   const scopedBpArchive=isOwner(from)&&result.request.bloomPusher&&!result.request.furnaceQualifier&&
     ['ALL','JOBS','HISTORY','DEFECTS'].includes(state.module);
   if(result.failed||result.partialFailure||(!scopedBpArchive&&result.truncated)||catalog.truncated||!rows.length||rows.length>1000){
@@ -3241,6 +3274,13 @@ function parseEcsDrawingV81521(row){
 }
 function readableSearchItemV81522(row,request){
   let raw=String(row.content||'').replace(/^Source status:[^;]*; candidate area:[^;]*; mapping:[^;]*;\s*/i,'');
+  if(String(row.key||'').startsWith('charging:')){
+    const separator=raw.indexOf(';'),family=raw.slice(0,separator),detail=raw.slice(separator+1).trim();
+    const cells=detail.split('|').map(x=>x.trim()).filter(Boolean);
+    const date=String(row.date||''),description=cells.filter(x=>
+      !/^(?:\d+(?:\.0)?|\d{4}-\d{2}-\d{2}(?: 00:00:00)?|\d{1,2}\/\d{1,2}\/\d{4}|CR \d{4})$/i.test(x));
+    if(date&&description.length)return `${date} · ${family} — ${description.join('; ').slice(0,500)}`;
+  }
   if(String(row.key||'').startsWith('bp-mechanical:')){
     const liner=raw.match(/BLOOM PUSHER BP-([12]);\s*(CAR\s*[12]|car unspecified);\s*LINER PLATE;\s*mill-side liner plate replaced:/i);
     if(liner)return `${row.date} · BP-${liner[1]}${/CAR/i.test(liner[2])?` / ${liner[2]}`:''} — Mill-side liner plate replaced.`;
@@ -3475,6 +3515,45 @@ async function searchScopedSourceCatalogV81524(from,user,request,module){
   }
   return {rows,truncated:result.rows.length>800};
 }
+async function chargingHistoryRowsV81533(from,user,question,module){
+  const asset=chargingAssetV81533(question);
+  if(!asset?.sheet||!['JOBS','HISTORY','DEFECTS'].includes(module)||
+    !isOwner(from)||!(await hasAuthorityV874(user,'VIEW')))return [];
+  const result=await pool.query(`SELECT source_key,source_file,location,source_text FROM lmmm_source_review
+    WHERE source_file='CH SIDE HISTORY(2).numbers' AND content_type='JOB_HISTORY'
+      AND split_part(location,':',2)=ANY($1::text[])
+    ORDER BY split_part(location,':',2),(substring(location from 'row:([0-9]+)'))::int LIMIT 400`,
+    [[asset.sheet,...(asset.also?[asset.also]:[]),'CH SIDE EQPMT']]);
+  const rows=[];let mixedSection='';
+  for(const x of result.rows){
+    const content=String(x.source_text||'').trim(),location=String(x.location||'');
+    const mixed=location.startsWith('sheet:CH SIDE EQPMT:');
+    if(mixed){
+      const heading=content.split('|')[0]?.trim().toUpperCase();
+      const section=({'CHARGING GRIDS':'Charging grids','BSY ROLLER TABLE':'Bloom storage yard roller table',
+        ELEVATOR:'Elevator',FART:'Furnace approach roller table',
+        'BLOOM TAKE OFF DEVICE':'Unverified take off device'})[heading];
+      if(section){mixedSection=section;continue;}
+      if(mixedSection!==asset.name)continue;
+    }
+    if(!content||/^\s*(?:EQPMT|SL NO|FURNACE APPROACH ROLLER TABLE)\s*\|/i.test(content))continue;
+    if(asset.unitNumber){
+      const unit=asset.unit?.exec(content)?.[1];
+      // A blank unit cell cannot be assigned to a numbered machine without
+      // reading the inherited spreadsheet header, so leave it out here.
+      if(unit!==asset.unitNumber)continue;
+    }
+    const date=content.match(/\b(?:19|20)\d{2}-\d{2}-\d{2}\b/)?.[0]||
+      (content.match(/\b\d{1,2}\/\d{1,2}\/(?:19|20)\d{2}\b/)?.[0]&&bpHistoryDateV81526(content.match(/\b\d{1,2}\/\d{1,2}\/(?:19|20)\d{2}\b/)[0]))||'';
+    const action=/\b(?:changed|replaced|repaired|rectified|attended|fixed|installed|removed|renewed|overhauled|welded|replacement|renewal)\b/i.test(content);
+    const issue=/\b(?:defect|fail(?:ed|ure)?|leak|damag|punctur|broken|burst|jam(?:med)?)\b/i.test(content);
+    if(module==='JOBS'&&(!date||!action)||module==='DEFECTS'&&!issue||module==='HISTORY'&&!date)continue;
+    rows.push({kind:module==='DEFECTS'?'Source defect':'Source maintenance history',
+      content:`${asset.name} (${asset.short}${asset.unitNumber?`-${asset.unitNumber}`:''}); ${content}`,
+      source:x.source_file,page:location,date,key:`charging:${x.source_key}`});
+  }
+  return rows;
+}
 function bpHistoryDateV81526(value){
   const s=String(value||'').trim();
   const iso=s.match(/^(20\d{2}|19\d{2})-(\d{1,2})-(\d{1,2})(?:\s|$)/);
@@ -3573,6 +3652,7 @@ async function answerProductionV81524(from,user,question,language){
 async function handleUniversalSearchV81513(from,question,user,options={}){
   if(!(await hasAuthorityV874(user,'VIEW'))){await sendText(from,'Search access is not enabled for your account.');return true;}
   question=normalizeMaintenanceQueryV81524(question);
+  if(await answerChargingEquipmentCountV81533(from,question))return true;
   if((!options.module||options.module==='DRAWINGS')&&await searchEcsDrawingsV81521(from,question,user))return true;
   if((!options.module||options.module==='DRAWINGS')&&await searchDrawingCatalogV81522(from,question,user))return true;
   const language=options.language||await searchLanguageV81515(from,question),te=language==='TE';
@@ -3587,7 +3667,11 @@ async function handleUniversalSearchV81513(from,question,user,options={}){
   let bpRows=[];
   try{bpRows=await bpHistoryRowsV81526(from,user,request,module)}
   catch(e){catalogFailed=true;console.error('[BP_HISTORY]',e.message);}
-  const scopedRows=filterSearchRowsV81518([...allRows,...catalog.rows,...bpRows],module);
+  let chargingRows=[];
+  try{chargingRows=await chargingHistoryRowsV81533(from,user,question,module)}
+  catch(e){catalogFailed=true;console.error('[CHARGING_HISTORY]',e.message);}
+  request.question=question;
+  const scopedRows=filterSearchRowsV81518([...allRows,...catalog.rows,...bpRows,...chargingRows],module);
   const rows=balanceBpMaintenanceRowsV81532(rankSearchRowsV81524(scopedRows,request,module).filter(r=>{
     if(module==='JOBS'&&/^Source maintenance history/i.test(r.kind)&&
       !/\b(?:19|20)\d{2}(?:-\d{2}-\d{2})?\b/.test(r.content))return false;
@@ -3599,7 +3683,7 @@ async function handleUniversalSearchV81513(from,question,user,options={}){
   const scopedBpArchive=isOwner(from)&&request.bloomPusher&&!request.furnaceQualifier&&
     ['ALL','JOBS','HISTORY','DEFECTS'].includes(module)&&!catalogFailed;
   const limited=(scopedBpArchive?false:truncated)||catalog.truncated;
-  if((failed&&!catalog.rows.length)||(incomplete&&!rows.length)){await sendText(from,'Some data sources are temporarily unavailable. Please try again; I cannot confirm a complete search.');return true;}
+  if((failed&&!catalog.rows.length&&!chargingRows.length)||(incomplete&&!rows.length)){await sendText(from,'Some data sources are temporarily unavailable. Please try again; I cannot confirm a complete search.');return true;}
   if(!rows.length){if(module==='DRAWINGS'&&await showUnlinkedDrawingRefsV81516(from,request.exact||request.primary))return true;
     if(module==='ALL'&&await proposeSearchCorrectionV81515(from,question,user))return true;
     await sendText(from,te?`${request.primary}: అందుబాటులో ఉన్న, మీకు అనుమతి ఉన్న డేటాలో ఆధారం దొరకలేదు. నిర్ధారించలేను.`:
