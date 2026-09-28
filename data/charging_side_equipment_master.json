@@ -1,0 +1,15 @@
+{
+  "scope": "LMMM / charging side",
+  "status": "user_confirmed_2026-09-27",
+  "equipment": [
+    {"name": "Charging grids", "aliases": ["BSY charging grids", "CH grids", "CHAR. GRID"], "units": ["CH grid-1", "CH grid-2", "CH grid-3"], "area": "Bloom storage yard", "history_sheet": "CH GRIDS", "history_source_rows": 67},
+    {"name": "Bloom storage yard roller table", "aliases": ["BSY RT"], "roller_count": 71, "group_count": 11, "history_sheet": "BSY RT", "history_source_rows": 77},
+    {"name": "Lever type pusher", "aliases": ["LTP", "Liver type pusher"], "units": ["LTP-1", "LTP-2"], "history_sheet": "LTP", "history_source_rows": 49},
+    {"name": "Elevator", "aliases": ["EV"], "units": ["EV-1", "EV-2"], "history_sheet": "ELEVATORS", "history_source_rows": 77},
+    {"name": "Take over device", "aliases": ["TOD", "Bloom transfer device"], "units": ["TOD-1", "TOD-2"], "history_link_status": "not yet verified; Bloom Take Off Device in a source sheet remains a separate unconfirmed name"},
+    {"name": "Furnace approach roller table", "aliases": ["FART"], "group_count": 10, "history_sheets": ["FART", "FART AMR"], "history_source_rows": 106},
+    {"name": "Bloom pusher", "aliases": ["BP"], "units": ["BP-1", "BP-2"], "history_sheet": "BP", "history_source_rows": 70}
+  ],
+  "source_note": "Sheet row counts include headers and undated rows; they are not confirmed job counts. CH SIDE HISTORY(2).numbers contains 603 rows across nine sheets, including BTD (9 rows).",
+  "mapping_rule": "Only assign a source row to a numbered unit when that unit or an inherited header in the same source table supports it. Treat hydraulic and mechanical work as separate disciplines within combined equipment results."
+}
