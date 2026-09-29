@@ -14,4 +14,24 @@ const rank=extract('function rankSearchRowsV81524(','function universalEvidenceV
 const request={terms:['lever','pusher'],question:'LTP jobs',exact:null,bloomPusher:false,date:null};
 const rows=rank([{kind:'Source maintenance history',key:'charging:one',content:'Lever type pusher replaced on 2020-01-01',date:'2020-01-01'}],request,'JOBS');
 assert.equal(rows.length,1,'Charging history survives ranking without runtime error');
+const bpRequest={terms:['bloom','pusher'],question:'bloom pusher 1 jobs',exact:null,bloomPusher:true,bpNumber:'1',date:null};
+const bpRank=rank([
+  {kind:'Source maintenance history',key:'bp-mechanical:a',content:'BLOOM PUSHER BP-1; CAR 1; SS1; recorded guide wheel history date: 2019-07-31',date:'2019-07-31'},
+  {kind:'Source maintenance history',key:'review:h',source:'hyd cyl history(2).accdb',content:'AREA: BDM | CELLAR: 1 | EQPT: BLOOM PUSHER | SUB EQPT: CYLINDER | ASSEMBLY: CYL-4 | DATE OF FIX: 2026-01-29T00:00 | REASONS FOR FIX: ROD SEAL LEAK',date:'2026-01-29'},
+  {kind:'Source maintenance history',key:'bp-mechanical:b',content:'BLOOM PUSHER BP-2; CAR 1; SS1; recorded guide wheel history date: 2019-07-31',date:'2019-07-31'}
+],bpRequest,'JOBS');
+assert.equal(bpRank.length,2,'BP-1 keeps unit-unconfirmed hydraulic records while excluding explicit BP-2');
+const balance=extract('function balanceBpMaintenanceRowsV81532(','function dedupeMaintenanceResultsV81537(',{});
+assert.equal(balance(bpRank,bpRequest,'JOBS')[1].key,'review:h','Numbered BP jobs show both disciplines');
+const dedupe=extract('function dedupeMaintenanceResultsV81537(','function dateForSearchV81524(',{});
+assert.equal(dedupe([bpRank[1],{...bpRank[1],key:'review:reimport'}]).length,1,'Reimports collapse');
+const catalog=extract('async function searchScopedSourceCatalogV81524(','async function chargingHistoryRowsV81533(',{
+  isOwner:()=>true,hasAuthorityV874:async()=>true,
+  pool:{query:async(sql,params)=>{
+    assert.deepEqual(Array.from(params).slice(1),['%pusher%','%bloom%'],'Manual topic words must not displace equipment terms');
+    return {rows:[{source_key:'manual:114',source_file:'1702906388 Charging Equipement Full Discription.pdf',location:'page:114',content_type:'GENERAL_SOURCE',source_text:'BLOOM PUSHER 2.12.6 Lubrication and Maintenance. All wheels and friction bearings must be manually greased.'}]};
+  }}
+});
+const manual=await catalog('owner',{}, {terms:['bloom','pusher','procedure'],question:'Bloom pusher maintenance procedure',exact:null},'MANUALS');
+assert.equal(manual.rows.length,1,'Manual content imported as GENERAL_SOURCE is retrievable');
 console.log('Search routing and charging result regression passed.');

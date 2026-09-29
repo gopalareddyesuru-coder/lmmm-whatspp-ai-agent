@@ -2839,6 +2839,10 @@ function rankSearchRowsV81524(rows,request,module){
     if(module==='DRAWINGS')score+=/drawing/i.test(kind)?10:-12;
     if(module==='SPARES'||module==='PARTS')score+=/spare|part|drawing/i.test(kind)?8:-8;
     if(module==='MANUALS')score+=/manual|smp|sop|procedure/i.test(kind+' '+source)?10:-8;
+    if(module==='MANUALS'&&/\b(?:procedure|maintenance|lubrication)\b/i.test(request.question||'')&&
+      /\b(?:lubrication and maint|maintenance procedure|maintenance instructions)\b/i.test(body))score+=22;
+    if(module==='MANUALS'&&/\b(?:working|operation|function)\b/i.test(request.question||'')&&
+      /\b(?:design and operation|functional description)\b/i.test(body))score+=18;
     return {...row,searchScore:score,subjectHits:hitCount,searchBody:body};
   }).filter(row=>{
     const charging=String(row.key||'').startsWith('charging:')&&!!chargingAssetV81533(request.question||'');
@@ -2846,7 +2850,8 @@ function rankSearchRowsV81524(rows,request,module){
       const body=row.searchBody;
       if(!/\bBLOOM\s+PUSHER\b/i.test(body)&&!/(?:^|[^a-z0-9])BP[ -]?[12](?:[^a-z0-9]|$)/i.test(body))return false;
       const numbered=body.match(/\b(?:BLOOM\s+PUSHER|BP)[ -]?([12])\b/i)?.[1];
-      if(request.bpNumber&&numbered!==request.bpNumber)return false;
+      if(request.bpNumber&&numbered!==request.bpNumber&&
+        !(numbered==null&&/hyd cyl history/i.test(String(row.source||''))))return false;
       if(request.furnaceQualifier&&!/\bBLOOM\s+PUSHER\s+IN\s+FRONT\s+OF\s+FURNACE\s*[- ]?[12]\b/i.test(body))return false;
     }
     if(request.date&&row.date&&row.date!==request.date&&!row.searchBody.includes(request.date))return false;
@@ -3328,6 +3333,8 @@ function parseEcsDrawingV81521(row){
 }
 function readableSearchItemV81522(row,request){
   let raw=String(row.content||'').replace(/^Source status:[^;]*; candidate area:[^;]*; mapping:[^;]*;\s*/i,'');
+  const unitNote=request.bpNumber&&/hyd cyl history/i.test(String(row.source||''))&&
+    !/\b(?:BLOOM\s+PUSHER|BP)[ -]?[12]\b/i.test(raw)?' (BP unit unconfirmed)':'';
   if(String(row.key||'').startsWith('charging:')){
     const separator=raw.indexOf(';'),family=raw.slice(0,separator),detail=raw.slice(separator+1).trim();
     const cells=detail.split('|').map(x=>x.trim()).filter(Boolean);
@@ -3354,7 +3361,7 @@ function readableSearchItemV81522(row,request){
       const fault=/\b(?:leak\w*|damag\w*|punctur\w*|burst|fail\w*|break\w*|worn)\b/i.test(reason)?clean(reason).replace(/^DUE TO\s+/i,''):'';
       const action=clean(remarks)||(/\bREPLACED\b/i.test(reason)?'CYLINDER REPLACED':'');
       const situation=!fault&&/PREVENTIVE/i.test(reason)?'PREVENTIVE CYLINDER REPLACEMENT':fault||clean(reason);
-      return `${date} · ${asset} — ${situation}${action&&!situation.includes(action)&&!(/PREVENTIVE CYLINDER REPLACEMENT/.test(situation)&&/CYLINDER REPLACED/i.test(action))?`; ${action}`:''}`.replace(/\s+/g,' ').slice(0,210);
+      return `${date} · ${asset}${unitNote} — ${situation}${action&&!situation.includes(action)&&!(/PREVENTIVE CYLINDER REPLACEMENT/.test(situation)&&/CYLINDER REPLACED/i.test(action))?`; ${action}`:''}`.replace(/\s+/g,' ').slice(0,210);
     }
   }
   if(/^Source job reference/i.test(row.kind))raw=raw.replace(/^Equipment:[^;]*;\s*/i,'').replace(/;\s*source record:.*$/i,'');
@@ -3528,7 +3535,9 @@ async function searchScopedSourceCatalogV81524(from,user,request,module){
     DEFECTS:['JOB_HISTORY','GENERAL_SOURCE'],MANUALS:['MANUAL','SMP','SPARES_PARTS','GENERAL_SOURCE'],
     SPARES:['SPARES_PARTS'],PARTS:['SPARES_PARTS','DRAWING'],
     TROUBLESHOOTING:['JOB_HISTORY','GENERAL_SOURCE','MANUAL','SMP']}[module];
-  const terms=request.exact?[request.exact]:request.terms.filter(x=>x.length>=3&&!/^\d{4}$/.test(x));
+  const intentWords=new Set(['procedure','procedures','instruction','instructions','method','steps','maintenance','lubrication','operation','working','function','troubleshooting']);
+  const terms=request.exact?[request.exact]:request.terms.filter(x=>x.length>=3&&!/^\d{4}$/.test(x)&&
+    !(module==='MANUALS'&&intentWords.has(x)));
   if(!terms.length)return {rows:[],truncated:false};
   const [first,second]=terms.sort((a,b)=>b.length-a.length);
   const isEvent=['JOBS','HISTORY','DEFECTS','TROUBLESHOOTING'].includes(module);
@@ -3659,7 +3668,7 @@ async function explainBpMechanicalAlongsideDefectsV81530(from,user,request,modul
   await sendText(from,`The cylinder and seal defects above are hydraulic. Mechanical work recorded for the Bloom Pusher:\n${recent.join('\n')}\nThe guide-wheel dates do not state defect causes.`.slice(0,750));
 }
 function balanceBpMaintenanceRowsV81532(rows,request,module){
-  if(!request.bloomPusher||request.bpNumber||request.date||request.exact||
+  if(!request.bloomPusher||request.date||request.exact||
     !['JOBS','HISTORY'].includes(module))return rows;
   const mechanical=rows.filter(r=>String(r.key||'').startsWith('bp-mechanical:'));
   const hydraulic=rows.filter(r=>/hyd cyl history/i.test(String(r.source||'')));
@@ -3671,6 +3680,18 @@ function balanceBpMaintenanceRowsV81532(rows,request,module){
     }
   }
   return balanced.concat(rows.filter(r=>!used.has(r)));
+}
+function dedupeMaintenanceResultsV81537(rows){
+  const seen=new Set(),unique=[];
+  for(const row of rows){
+    const body=String(row.content||'').replace(/^Source status:[^;]*; candidate area:[^;]*; mapping:[^;]*;\s*/i,'')
+      .replace(/\s+/g,' ').trim().toUpperCase();
+    const signature=/^Source (?:maintenance history|job reference|defect|manual reference)/i.test(row.kind)?
+      String(row.kind).toLowerCase()+':'+body:String(row.key||body);
+    if(seen.has(signature))continue;
+    seen.add(signature);unique.push(row);
+  }
+  return unique;
 }
 function dateForSearchV81524(question,now=new Date()){
   const q=String(question||'');
@@ -3727,11 +3748,11 @@ async function handleUniversalSearchV81513(from,question,user,options={}){
   catch(e){catalogFailed=true;console.error('[CHARGING_HISTORY]',e.message);}
   request.question=question;
   const scopedRows=filterSearchRowsV81518([...allRows,...catalog.rows,...bpRows,...chargingRows],module);
-  const rows=balanceBpMaintenanceRowsV81532(rankSearchRowsV81524(scopedRows,request,module).filter(r=>{
+  const rows=balanceBpMaintenanceRowsV81532(dedupeMaintenanceResultsV81537(rankSearchRowsV81524(scopedRows,request,module).filter(r=>{
     if(module==='JOBS'&&/^Source maintenance history/i.test(r.kind)&&
       !/\b(?:19|20)\d{2}(?:-\d{2}-\d{2})?\b/.test(r.content))return false;
     return true;
-  }),request,module);
+  })),request,module);
   const incomplete=partialFailure||catalogFailed;
   // The generic archive lookup is capped at 25 rows. For Bloom Pusher jobs
   // the dedicated dated source catalogue and BP sheet cover the raw records.
