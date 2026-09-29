@@ -28,7 +28,8 @@ assert.equal(dedupe([bpRank[1],{...bpRank[1],key:'review:reimport'}]).length,1,'
 const catalog=extract('async function searchScopedSourceCatalogV81524(','async function chargingHistoryRowsV81533(',{
   isOwner:()=>true,hasAuthorityV874:async()=>true,
   pool:{query:async(sql,params)=>{
-    assert.deepEqual(Array.from(params).slice(1),['%pusher%','%bloom%'],'Manual topic words must not displace equipment terms');
+    assert.deepEqual(Array.from(params).slice(1),['%pusher%','%bloom%','pusher'],'Manual topic words must not displace equipment terms');
+    assert(sql.includes("to_tsvector('simple'"),'Search must use the existing full-text index');
     return {rows:[{source_key:'manual:114',source_file:'1702906388 Charging Equipement Full Discription.pdf',location:'page:114',content_type:'GENERAL_SOURCE',source_text:'BLOOM PUSHER 2.12.6 Lubrication and Maintenance. All wheels and friction bearings must be manually greased.'}]};
   }}
 });

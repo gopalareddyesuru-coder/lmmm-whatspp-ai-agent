@@ -3545,15 +3545,18 @@ async function searchScopedSourceCatalogV81524(from,user,request,module){
   const eventFilter=isEvent?`AND (content_type<>'GENERAL_SOURCE' OR location ~* 'history|defects|jobs' OR source_file ~* 'history|defects|jobs' OR source_text ~* 'DATE OF FIX.*REASONS FOR FIX'${module==='TROUBLESHOOTING'?` OR (${manualSource})`:''})`:
     module==='MANUALS'?`AND (content_type<>'SPARES_PARTS' OR source_file ~* 'smp|manual|procedure') AND (content_type<>'GENERAL_SOURCE' OR (${manualSource}))`:'';
   const makeSql=withSecond=>`SELECT source_key,source_file,location,content_type,source_text FROM lmmm_source_review
-    WHERE content_type=ANY($1::text[]) ${eventFilter} AND
+    WHERE content_type=ANY($1::text[]) ${eventFilter}
+      AND to_tsvector('simple',source_file||' '||archive_member||' '||source_text)
+        @@ plainto_tsquery('simple',$${withSecond?4:3}) AND
       (source_text ILIKE $2 OR (content_type=ANY(ARRAY['MANUAL','SMP','GENERAL_SOURCE']::text[]) AND source_file ILIKE $2))
       ${withSecond?"AND (source_text ILIKE $3 OR (content_type=ANY(ARRAY['MANUAL','SMP','GENERAL_SOURCE']::text[]) AND source_file ILIKE $3))":''}
     ORDER BY source_key LIMIT 801`;
   const params=[types,`%${first.replace(/[%_\\]/g,'').slice(0,80)}%`];
   if(second)params.push(`%${second.replace(/[%_\\]/g,'').slice(0,80)}%`);
+  params.push(first);
   let result=await pool.query(makeSql(!!second),params);
   if(!result.rows.length&&second){
-    result=await pool.query(makeSql(false),params.slice(0,2));
+    result=await pool.query(makeSql(false),[params[0],params[1],first]);
   }
   const rows=[],seen=new Set();
   for(const x of result.rows){
