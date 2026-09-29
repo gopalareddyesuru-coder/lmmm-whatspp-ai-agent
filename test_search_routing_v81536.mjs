@@ -4,7 +4,21 @@ import vm from 'node:vm';
 const app=readFileSync(new URL('./app.js',import.meta.url),'utf8');
 function extract(start,end,env){const a=app.indexOf(start),b=app.indexOf(end,a);assert(a>=0&&b>a);return vm.runInNewContext(`(${app.slice(a,b).trim()})`,env);}
 const intent=extract('function documentQuestionIntentV81511(','function documentSessionValueV81511(',{});
-for(const q of ['BH4 item number','equipment item 20','Ltp','FART drawings','BP1 jobs'])assert(intent(q),q);
+for(const q of ['BH4 item number','equipment item 20','Item 19','Ltp','FART drawings','BP1 jobs'])assert(intent(q),q);
+const manualIndex={items:Array.from({length:125},(_,i)=>({item_number:i+1,equipment:null}))};
+manualIndex.items[18]={item_number:19,equipment:'Guide tables between BH1 and BH4',source_file:'BDM O&M.pdf',source_page:27};
+manualIndex.items[24]={item_number:25,equipment:'Horizontal 2-hi mill stand BH4',source_file:'BDM O&M.pdf',source_page:29};
+const sent=[];
+const itemAnswer=extract('async function answerManualItemNumberV81535(','async function answerManualItemNameV81535(',{
+  hasAuthorityV874:async()=>true,isOwner:()=>true,readManualItemSearchIndexV81535:()=>manualIndex,
+  pool:{query:async(_sql,params)=>{
+    assert.deepEqual(Array.from(params[1]),['page:27','page:28'],'Stop before the next equipment item');
+    return {rows:[{location:'page:27',source_text:'ITEM 19 - GUIDE TABLES. List of Drawings: 1/7816760.'},
+      {location:'page:28',source_text:'Technical Data & Functional Description: guides adjustable by screws; table turns 90 degrees for roll change.'}]};
+  }},sendText:async(_from,msg)=>sent.push(msg),console
+});
+assert(await itemAnswer('owner',{},'Item 19'));
+assert(sent[0].includes('Technical Data')&&sent[0].includes('1/7816760'));
 const rank=extract('function rankSearchRowsV81524(','function universalEvidenceV81513(',{
   searchTextV81524:r=>String(r.content||'').toLowerCase(),
   chargingAssetV81533:q=>q.includes('LTP')?{}:null,

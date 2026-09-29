@@ -451,6 +451,8 @@ async function initDB(){
   )`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_source_review_search ON lmmm_source_review
     USING GIN (to_tsvector('simple',source_file||' '||archive_member||' '||source_text))`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_source_review_file_location
+    ON lmmm_source_review(source_file,location)`);
   await pool.query(`DELETE FROM whatsapp_message_dedupe WHERE received_at < now()-interval '7 days'`).catch(()=>{});
 
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_pending_ingest_retry ON pending_file_ingests(status,next_retry_at,created_at)`);
@@ -2541,7 +2543,7 @@ function documentQuestionIntentV81511(text){
   const s=String(text||'').trim();
   return !!s && (/[?？]/.test(s) || /[\u0c00-\u0c7f]/.test(s) || /^\d{8,}$/.test(s) || /^(?:bp|ecs)[- ]?[12]?$/i.test(s) ||
     /\b(?:equipment|manual|lmmm)\s+item(?:\s+(?:number|no\.?))?\s*#?\s*\d{1,3}\b/i.test(s) ||
-    /\bitem\s*(?:number|no\.?|code)\b/i.test(s) ||
+    /\bitem\s*(?:number|no\.?|code|#?\s*\d{1,3}\b)/i.test(s) ||
     /\b(?:ltp|fart|tod|bsy\s*rt|ch\s*grid|ev[ -]?[12]|bh[1-7]|bv[1-7])\b/i.test(s) ||
     /\b(bloom pusher|ecs|bdm|downcomer|nitrogen|leak|burst|puncture|replacement|replaced|incident|shear pin|trunnion|coupling|furnace|hydraulic|pump|motor|shaft|gearbox|bearing)\b/i.test(s) ||
     /^(ask|explain|describe|tell me|what|which|where|why|how|does|is there|show me|find|check|verify|lookup|drawing|manual|document|file|part|dimension|tolerance|material|standard|specification|meaning|doubt|query|history|jobs|job|spares|spare|equipment|sap|defects|defect|smp|sop|maintenance|production|vibration)\b/i.test(s) ||
@@ -2764,13 +2766,41 @@ function normalizeManualAliasesV81535(question){
   return question;
 }
 async function answerManualItemNumberV81535(from,user,question){
-  const match=String(question||'').match(/\b(?:equipment|manual|lmmm)\s+item(?:\s+(?:number|no\.?))?\s*#?\s*(\d{1,3})\b/i);
+  const match=String(question||'').match(/\b(?:(?:equipment|manual|lmmm)\s+)?item(?:\s+(?:number|no\.?))?\s*#?\s*(\d{1,3})\b/i);
   if(!match||!await hasAuthorityV874(user,'VIEW'))return false;
   const number=Number(match[1]);
   if(number<1||number>125)return false;
   const item=readManualItemSearchIndexV81535().items[number-1];
   if(!item.equipment){await sendText(from,`Item ${number}: No equipment name is confirmed in the available manual headings.`);return true;}
-  await sendText(from,`Item ${number}: ${item.equipment}.`);
+  if(!isOwner(from)||!item.source_page||!item.source_file){
+    await sendText(from,`Item ${number}: ${item.equipment}. Detailed source pages are not available under this access scope.`);return true;
+  }
+  const following=readManualItemSearchIndexV81535().items.find(x=>x.item_number>number&&
+    x.source_file===item.source_file&&x.source_page>item.source_page);
+  const last=Math.min(item.source_page+39,(following?.source_page||item.source_page+40)-1);
+  const locations=Array.from({length:last-item.source_page+1},(_,i)=>`page:${item.source_page+i}`);
+  let pages;
+  try{pages=(await pool.query(`SELECT location,source_text FROM lmmm_source_review
+    WHERE source_file=$1 AND location=ANY($2::text[])
+    ORDER BY (substring(location from 'page:([0-9]+)'))::int`,[item.source_file,locations])).rows;}
+  catch(e){console.error('[MANUAL_ITEM_DETAIL]',e.message);await sendText(from,`Item ${number}: ${item.equipment}. Manual details are temporarily unavailable.`);return true;}
+  if(!pages.length){await sendText(from,`Item ${number}: ${item.equipment}. O&M page text is not available.`);return true;}
+  const clean=s=>String(s||'').replace(/VISAKHAPATNAM STEEL PROJECT[^\n]*|300 MM LIGHT AND MEDIUM MERCHANT MI?LL[^\n]*/gi,'')
+    .replace(/\n\s*\n+/g,'\n').replace(/[ \t]+/g,' ').trim();
+  const section=pages.map(p=>({page:Number(String(p.location).split(':')[1]),text:clean(p.source_text)}))
+    .filter(p=>p.text.length>25);
+  const important=section.filter(p=>/technical data|functional description|design and operation|lubrication and maint|operating precaution|mounting and dismounting|list of drawings/i.test(p.text));
+  const chosen=[...new Map([section[0],...important].filter(Boolean).map(p=>[p.page,p])).values()].slice(0,5);
+  let reply=`Item ${number}: ${item.equipment}\nO&M details:`;
+  for(const p of chosen){const line=`\nPage ${p.page}: ${p.text.replace(/\n/g,' ').slice(0,700)}`;
+    if(reply.length+line.length>3000)break;reply+=line;}
+  if(last===item.source_page+39)reply+='\nAdditional pages may exist; search a specific component or section.';
+  await sendText(from,reply.slice(0,3100));
+  if(section.length>5&&await hasAuthorityV874(user,'PDF')){
+    const items=section.map(p=>({item_no:p.page,description:p.text.slice(0,3000),remarks:''}));
+    await sendGeneratedDocumentV878(from,tablePdfV880({document_type:'MANUAL_ITEM',extracted_items:items},
+      `Item ${number}: ${item.equipment} O&M pages`),`lmmm_item_${number}_om.pdf`,'application/pdf');
+  }
   return true;
 }
 async function answerManualItemNameV81535(from,user,question){
