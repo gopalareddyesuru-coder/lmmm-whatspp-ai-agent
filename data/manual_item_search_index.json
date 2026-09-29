@@ -1,0 +1,1754 @@
+{
+  "scope": "LMMM Department 35 manual equipment items 1–125",
+  "source": "manual_equipment_item_index.json",
+  "rule": "A shared name or code returns all candidate item numbers. An absent manual heading is not assigned an equipment name. Unit aliases do not prove a numbered unit in the manual.",
+  "item_count": 125,
+  "mapped_count": 117,
+  "unmapped": [
+    20,
+    21,
+    22,
+    23,
+    24,
+    67,
+    68,
+    72
+  ],
+  "ambiguous_aliases": {
+    "fixed stop": [
+      3,
+      9
+    ],
+    "hook type bloom tilter": [
+      6,
+      15
+    ],
+    "disappearing stop": [
+      8,
+      16
+    ],
+    "bloom pusher": [
+      10,
+      10
+    ],
+    "roller table in front of breakdown mill": [
+      13,
+      13
+    ],
+    "bh1": [
+      17,
+      19
+    ],
+    "bh4": [
+      19,
+      25,
+      28
+    ],
+    "bv7": [
+      27,
+      28
+    ],
+    "h1": [
+      47,
+      48
+    ],
+    "h2": [
+      47,
+      48
+    ],
+    "h3": [
+      47,
+      48
+    ],
+    "h4": [
+      47,
+      48
+    ],
+    "chain type discharging device": [
+      85,
+      96,
+      114,
+      116,
+      117
+    ]
+  },
+  "items": [
+    {
+      "item_number": 1,
+      "equipment": "Charging grids",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 3,
+      "aliases": [
+        "equipment item 1",
+        "manual item 1",
+        "LMMM item 1",
+        "Charging grids",
+        "CH grids",
+        "CH grid",
+        "charging grid",
+        "BSY charging grids"
+      ]
+    },
+    {
+      "item_number": 2,
+      "equipment": "Bloom storage roller table",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 20,
+      "aliases": [
+        "equipment item 2",
+        "manual item 2",
+        "LMMM item 2",
+        "Bloom storage roller table",
+        "BSY RT",
+        "bloom storage yard roller table",
+        "BSY roller table"
+      ]
+    },
+    {
+      "item_number": 3,
+      "equipment": "Fixed stop",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 30,
+      "aliases": [
+        "equipment item 3",
+        "manual item 3",
+        "LMMM item 3",
+        "Fixed stop"
+      ]
+    },
+    {
+      "item_number": 4,
+      "equipment": "Elevators between roller tables (4.01 lever type pushers; 4.02 inclined elevators; 4.03 bloom transfer device)",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 44,
+      "aliases": [
+        "equipment item 4",
+        "manual item 4",
+        "LMMM item 4",
+        "Elevators between roller tables (4.01 lever type pushers; 4.02 inclined elevators; 4.03 bloom transfer device)",
+        "LTP",
+        "lever type pusher",
+        "liver type pusher",
+        "EV",
+        "elevator",
+        "TOD",
+        "take over device",
+        "bloom transfer device",
+        "LTP-1",
+        "LTP-2",
+        "EV-1",
+        "EV-2",
+        "TOD-1",
+        "TOD-2"
+      ]
+    },
+    {
+      "item_number": 5,
+      "equipment": "Furnace approach roller table",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 71,
+      "aliases": [
+        "equipment item 5",
+        "manual item 5",
+        "LMMM item 5",
+        "Furnace approach roller table",
+        "FART",
+        "furnace approach RT"
+      ]
+    },
+    {
+      "item_number": 6,
+      "equipment": "Hook type bloom tilter",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 80,
+      "aliases": [
+        "equipment item 6",
+        "manual item 6",
+        "LMMM item 6",
+        "Hook type bloom tilter"
+      ]
+    },
+    {
+      "item_number": 7,
+      "equipment": "Weighing scale in front of furnace",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 88,
+      "aliases": [
+        "equipment item 7",
+        "manual item 7",
+        "LMMM item 7",
+        "Weighing scale in front of furnace"
+      ]
+    },
+    {
+      "item_number": 8,
+      "equipment": "Disappearing stop",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 93,
+      "aliases": [
+        "equipment item 8",
+        "manual item 8",
+        "LMMM item 8",
+        "Disappearing stop"
+      ]
+    },
+    {
+      "item_number": 9,
+      "equipment": "Fixed stop",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 101,
+      "aliases": [
+        "equipment item 9",
+        "manual item 9",
+        "LMMM item 9",
+        "Fixed stop"
+      ]
+    },
+    {
+      "item_number": 10,
+      "equipment": "Bloom pusher",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 107,
+      "aliases": [
+        "equipment item 10",
+        "manual item 10",
+        "LMMM item 10",
+        "Bloom pusher",
+        "BP",
+        "bloom pusher",
+        "BP-1",
+        "BP-2",
+        "BP1",
+        "BP2"
+      ]
+    },
+    {
+      "item_number": 11,
+      "equipment": "Furnace discharging machine",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 116,
+      "aliases": [
+        "equipment item 11",
+        "manual item 11",
+        "LMMM item 11",
+        "Furnace discharging machine"
+      ]
+    },
+    {
+      "item_number": 12,
+      "equipment": "Delivery roller table",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 127,
+      "aliases": [
+        "equipment item 12",
+        "manual item 12",
+        "LMMM item 12",
+        "Delivery roller table"
+      ]
+    },
+    {
+      "item_number": 13,
+      "equipment": "Roller table in front of breakdown mill",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 127,
+      "aliases": [
+        "equipment item 13",
+        "manual item 13",
+        "LMMM item 13",
+        "Roller table in front of breakdown mill",
+        "roller table in front of breakdown mill"
+      ]
+    },
+    {
+      "item_number": 14,
+      "equipment": "High pressure descaler",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 153,
+      "aliases": [
+        "equipment item 14",
+        "manual item 14",
+        "LMMM item 14",
+        "High pressure descaler",
+        "HP descaler",
+        "high pressure descaling"
+      ]
+    },
+    {
+      "item_number": 15,
+      "equipment": "Hook type bloom tilter",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 170,
+      "aliases": [
+        "equipment item 15",
+        "manual item 15",
+        "LMMM item 15",
+        "Hook type bloom tilter"
+      ]
+    },
+    {
+      "item_number": 16,
+      "equipment": "Disappearing stop",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf",
+      "source_page": 179,
+      "aliases": [
+        "equipment item 16",
+        "manual item 16",
+        "LMMM item 16",
+        "Disappearing stop"
+      ]
+    },
+    {
+      "item_number": 17,
+      "equipment": "2-hi horizontal mill stands BH1 and BH2",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 3,
+      "aliases": [
+        "equipment item 17",
+        "manual item 17",
+        "LMMM item 17",
+        "2-hi horizontal mill stands BH1 and BH2",
+        "BH1",
+        "BH2"
+      ]
+    },
+    {
+      "item_number": 18,
+      "equipment": "2-hi vertical mill stands BV3 and BV5",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 15,
+      "aliases": [
+        "equipment item 18",
+        "manual item 18",
+        "LMMM item 18",
+        "2-hi vertical mill stands BV3 and BV5",
+        "BV3",
+        "BV5"
+      ]
+    },
+    {
+      "item_number": 19,
+      "equipment": "Guide tables between BH1 and BH4",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 27,
+      "aliases": [
+        "equipment item 19",
+        "manual item 19",
+        "LMMM item 19",
+        "Guide tables between BH1 and BH4",
+        "BH1",
+        "BH4"
+      ]
+    },
+    {
+      "item_number": 20,
+      "equipment": null,
+      "status": "not_confirmed_in_checked_manual",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": null,
+      "aliases": [
+        "equipment item 20",
+        "manual item 20",
+        "LMMM item 20"
+      ]
+    },
+    {
+      "item_number": 21,
+      "equipment": null,
+      "status": "not_confirmed_in_checked_manual",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": null,
+      "aliases": [
+        "equipment item 21",
+        "manual item 21",
+        "LMMM item 21"
+      ]
+    },
+    {
+      "item_number": 22,
+      "equipment": null,
+      "status": "not_confirmed_in_checked_manual",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": null,
+      "aliases": [
+        "equipment item 22",
+        "manual item 22",
+        "LMMM item 22"
+      ]
+    },
+    {
+      "item_number": 23,
+      "equipment": null,
+      "status": "not_confirmed_in_checked_manual",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": null,
+      "aliases": [
+        "equipment item 23",
+        "manual item 23",
+        "LMMM item 23"
+      ]
+    },
+    {
+      "item_number": 24,
+      "equipment": null,
+      "status": "not_confirmed_in_checked_manual",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": null,
+      "aliases": [
+        "equipment item 24",
+        "manual item 24",
+        "LMMM item 24"
+      ]
+    },
+    {
+      "item_number": 25,
+      "equipment": "Horizontal 2-hi mill stand BH4",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 29,
+      "aliases": [
+        "equipment item 25",
+        "manual item 25",
+        "LMMM item 25",
+        "Horizontal 2-hi mill stand BH4",
+        "BH4"
+      ]
+    },
+    {
+      "item_number": 26,
+      "equipment": "Horizontal 2-hi mill stand BH6",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 45,
+      "aliases": [
+        "equipment item 26",
+        "manual item 26",
+        "LMMM item 26",
+        "Horizontal 2-hi mill stand BH6",
+        "BH6"
+      ]
+    },
+    {
+      "item_number": 27,
+      "equipment": "Vertical 2-hi mill stand BV7",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 58,
+      "aliases": [
+        "equipment item 27",
+        "manual item 27",
+        "LMMM item 27",
+        "Vertical 2-hi mill stand BV7",
+        "BV7"
+      ]
+    },
+    {
+      "item_number": 28,
+      "equipment": "Guide tables between BH4 and BV7",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906389 1-141 BDM Mill Stands and Guides Full Discription (Item 17-27)(2).pdf",
+      "source_page": 72,
+      "aliases": [
+        "equipment item 28",
+        "manual item 28",
+        "LMMM item 28",
+        "Guide tables between BH4 and BV7",
+        "BH4",
+        "BV7"
+      ]
+    },
+    {
+      "item_number": 29,
+      "equipment": "4-crank shear",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 3,
+      "aliases": [
+        "equipment item 29",
+        "manual item 29",
+        "LMMM item 29",
+        "4-crank shear",
+        "four crank shear",
+        "4 crank shear"
+      ]
+    },
+    {
+      "item_number": 30,
+      "equipment": "Measuring roller with guide trough",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 11,
+      "aliases": [
+        "equipment item 30",
+        "manual item 30",
+        "LMMM item 30",
+        "Measuring roller with guide trough"
+      ]
+    },
+    {
+      "item_number": 31,
+      "equipment": "Pinch roll unit",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 16,
+      "aliases": [
+        "equipment item 31",
+        "manual item 31",
+        "LMMM item 31",
+        "Pinch roll unit"
+      ]
+    },
+    {
+      "item_number": 32,
+      "equipment": "Recoil roller table",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 29,
+      "aliases": [
+        "equipment item 32",
+        "manual item 32",
+        "LMMM item 32",
+        "Recoil roller table"
+      ]
+    },
+    {
+      "item_number": 33,
+      "equipment": "Scrap disposal at flying shear",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 37,
+      "aliases": [
+        "equipment item 33",
+        "manual item 33",
+        "LMMM item 33",
+        "Scrap disposal at flying shear"
+      ]
+    },
+    {
+      "item_number": 34,
+      "equipment": "Scrap buckets",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 37,
+      "aliases": [
+        "equipment item 34",
+        "manual item 34",
+        "LMMM item 34",
+        "Scrap buckets"
+      ]
+    },
+    {
+      "item_number": 35,
+      "equipment": "Run-out roller table",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 44,
+      "aliases": [
+        "equipment item 35",
+        "manual item 35",
+        "LMMM item 35",
+        "Run-out roller table"
+      ]
+    },
+    {
+      "item_number": 36,
+      "equipment": "Rest end kick-off guide",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 51,
+      "aliases": [
+        "equipment item 36",
+        "manual item 36",
+        "LMMM item 36",
+        "Rest end kick-off guide"
+      ]
+    },
+    {
+      "item_number": 37,
+      "equipment": "Rest end pocket",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 51,
+      "aliases": [
+        "equipment item 37",
+        "manual item 37",
+        "LMMM item 37",
+        "Rest end pocket"
+      ]
+    },
+    {
+      "item_number": 38,
+      "equipment": "Stamping machine",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 58,
+      "aliases": [
+        "equipment item 38",
+        "manual item 38",
+        "LMMM item 38",
+        "Stamping machine"
+      ]
+    },
+    {
+      "item_number": 39,
+      "equipment": "Approach roller table",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 65,
+      "aliases": [
+        "equipment item 39",
+        "manual item 39",
+        "LMMM item 39",
+        "Approach roller table"
+      ]
+    },
+    {
+      "item_number": 40,
+      "equipment": "40.01 disappearing stop; 40.02 fixed stop",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 71,
+      "aliases": [
+        "equipment item 40",
+        "manual item 40",
+        "LMMM item 40",
+        "40.01 disappearing stop; 40.02 fixed stop"
+      ]
+    },
+    {
+      "item_number": 41,
+      "equipment": "Shifting drum type cross transfer",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 83,
+      "aliases": [
+        "equipment item 41",
+        "manual item 41",
+        "LMMM item 41",
+        "Shifting drum type cross transfer"
+      ]
+    },
+    {
+      "item_number": 42,
+      "equipment": "Turnover type cooling bed",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 92,
+      "aliases": [
+        "equipment item 42",
+        "manual item 42",
+        "LMMM item 42",
+        "Turnover type cooling bed"
+      ]
+    },
+    {
+      "item_number": 43,
+      "equipment": "Pawl type transfer",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906390 1-113 BDM After MILL Equipement Full Discription Shear (Item 29-43)(1).pdf",
+      "source_page": 104,
+      "aliases": [
+        "equipment item 43",
+        "manual item 43",
+        "LMMM item 43",
+        "Pawl type transfer"
+      ]
+    },
+    {
+      "item_number": 44,
+      "equipment": "Pinch roll unit at back of furnace",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 6,
+      "aliases": [
+        "equipment item 44",
+        "manual item 44",
+        "LMMM item 44",
+        "Pinch roll unit at back of furnace"
+      ]
+    },
+    {
+      "item_number": 45,
+      "equipment": "Pendulum shear",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 13,
+      "aliases": [
+        "equipment item 45",
+        "manual item 45",
+        "LMMM item 45",
+        "Pendulum shear"
+      ]
+    },
+    {
+      "item_number": 46,
+      "equipment": "Scrap disposal system including bucket",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 20,
+      "aliases": [
+        "equipment item 46",
+        "manual item 46",
+        "LMMM item 46",
+        "Scrap disposal system including bucket"
+      ]
+    },
+    {
+      "item_number": 47,
+      "equipment": "Horizontal roughing mill stands H1–H4 (shared with item 48)",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 27,
+      "aliases": [
+        "equipment item 47",
+        "manual item 47",
+        "LMMM item 47",
+        "Horizontal roughing mill stands H1–H4 (shared with item 48)",
+        "H1",
+        "H2",
+        "H3",
+        "H4"
+      ]
+    },
+    {
+      "item_number": 48,
+      "equipment": "Horizontal roughing mill stands H1–H4 (shared with item 47)",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 27,
+      "aliases": [
+        "equipment item 48",
+        "manual item 48",
+        "LMMM item 48",
+        "Horizontal roughing mill stands H1–H4 (shared with item 47)",
+        "H1",
+        "H2",
+        "H3",
+        "H4"
+      ]
+    },
+    {
+      "item_number": 49,
+      "equipment": "Horizontal roughing mill stands H5–H8",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 49,
+      "aliases": [
+        "equipment item 49",
+        "manual item 49",
+        "LMMM item 49",
+        "Horizontal roughing mill stands H5–H8",
+        "H5",
+        "H6",
+        "H7",
+        "H8"
+      ]
+    },
+    {
+      "item_number": 50,
+      "equipment": "Dual rotary shears before intermediate stands",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 71,
+      "aliases": [
+        "equipment item 50",
+        "manual item 50",
+        "LMMM item 50",
+        "Dual rotary shears before intermediate stands"
+      ]
+    },
+    {
+      "item_number": 51,
+      "equipment": "Scrap disposal systems",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 78,
+      "aliases": [
+        "equipment item 51",
+        "manual item 51",
+        "LMMM item 51",
+        "Scrap disposal systems"
+      ]
+    },
+    {
+      "item_number": 52,
+      "equipment": "Dual pinch roll unit before stand 14",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 85,
+      "aliases": [
+        "equipment item 52",
+        "manual item 52",
+        "LMMM item 52",
+        "Dual pinch roll unit before stand 14"
+      ]
+    },
+    {
+      "item_number": 53,
+      "equipment": "Horizontal intermediate mill stands (shared with item 55)",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 104,
+      "aliases": [
+        "equipment item 53",
+        "manual item 53",
+        "LMMM item 53",
+        "Horizontal intermediate mill stands (shared with item 55)"
+      ]
+    },
+    {
+      "item_number": 54,
+      "equipment": "Vertical mill stands and drive/pinion stand (shared with 56,60,62)",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 127,
+      "aliases": [
+        "equipment item 54",
+        "manual item 54",
+        "LMMM item 54",
+        "Vertical mill stands and drive/pinion stand (shared with 56,60,62)"
+      ]
+    },
+    {
+      "item_number": 55,
+      "equipment": "Horizontal intermediate mill stands (shared with item 53)",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 104,
+      "aliases": [
+        "equipment item 55",
+        "manual item 55",
+        "LMMM item 55",
+        "Horizontal intermediate mill stands (shared with item 53)"
+      ]
+    },
+    {
+      "item_number": 56,
+      "equipment": "Vertical mill stands and drive/pinion stand (shared with 54,60,62)",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 127,
+      "aliases": [
+        "equipment item 56",
+        "manual item 56",
+        "LMMM item 56",
+        "Vertical mill stands and drive/pinion stand (shared with 54,60,62)"
+      ]
+    },
+    {
+      "item_number": 57,
+      "equipment": "Single pinch roll units before finishing train I",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 159,
+      "aliases": [
+        "equipment item 57",
+        "manual item 57",
+        "LMMM item 57",
+        "Single pinch roll units before finishing train I"
+      ]
+    },
+    {
+      "item_number": 58,
+      "equipment": "Vertical down loopers before finishing trains",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 166,
+      "aliases": [
+        "equipment item 58",
+        "manual item 58",
+        "LMMM item 58",
+        "Vertical down loopers before finishing trains"
+      ]
+    },
+    {
+      "item_number": 59,
+      "equipment": "Snap shears before finishing trains",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 172,
+      "aliases": [
+        "equipment item 59",
+        "manual item 59",
+        "LMMM item 59",
+        "Snap shears before finishing trains"
+      ]
+    },
+    {
+      "item_number": 60,
+      "equipment": "Vertical mill stands and drive/pinion stand (shared with 54,56,62)",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 127,
+      "aliases": [
+        "equipment item 60",
+        "manual item 60",
+        "LMMM item 60",
+        "Vertical mill stands and drive/pinion stand (shared with 54,56,62)"
+      ]
+    },
+    {
+      "item_number": 61,
+      "equipment": "Horizontal finishing mill stands (shared with item 63)",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 179,
+      "aliases": [
+        "equipment item 61",
+        "manual item 61",
+        "LMMM item 61",
+        "Horizontal finishing mill stands (shared with item 63)"
+      ]
+    },
+    {
+      "item_number": 62,
+      "equipment": "Vertical mill stands and drive/pinion stand (shared with 54,56,60)",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 127,
+      "aliases": [
+        "equipment item 62",
+        "manual item 62",
+        "LMMM item 62",
+        "Vertical mill stands and drive/pinion stand (shared with 54,56,60)"
+      ]
+    },
+    {
+      "item_number": 63,
+      "equipment": "Horizontal finishing mill stands (shared with item 61)",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 179,
+      "aliases": [
+        "equipment item 63",
+        "manual item 63",
+        "LMMM item 63",
+        "Horizontal finishing mill stands (shared with item 61)"
+      ]
+    },
+    {
+      "item_number": 64,
+      "equipment": "Combined horizontal and vertical up loopers",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 227,
+      "aliases": [
+        "equipment item 64",
+        "manual item 64",
+        "LMMM item 64",
+        "Combined horizontal and vertical up loopers"
+      ]
+    },
+    {
+      "item_number": 65,
+      "equipment": "Guide troughs and scrap deflector",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 248,
+      "aliases": [
+        "equipment item 65",
+        "manual item 65",
+        "LMMM item 65",
+        "Guide troughs and scrap deflector"
+      ]
+    },
+    {
+      "item_number": 66,
+      "equipment": "Scrap ballers and buckets",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 277,
+      "aliases": [
+        "equipment item 66",
+        "manual item 66",
+        "LMMM item 66",
+        "Scrap ballers and buckets"
+      ]
+    },
+    {
+      "item_number": 67,
+      "equipment": null,
+      "status": "not_confirmed_in_checked_manual",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": null,
+      "aliases": [
+        "equipment item 67",
+        "manual item 67",
+        "LMMM item 67"
+      ]
+    },
+    {
+      "item_number": 68,
+      "equipment": null,
+      "status": "not_confirmed_in_checked_manual",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": null,
+      "aliases": [
+        "equipment item 68",
+        "manual item 68",
+        "LMMM item 68"
+      ]
+    },
+    {
+      "item_number": 69,
+      "equipment": "Connecting roller table between finishing train II and rotary shear",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 284,
+      "aliases": [
+        "equipment item 69",
+        "manual item 69",
+        "LMMM item 69",
+        "Connecting roller table between finishing train II and rotary shear"
+      ]
+    },
+    {
+      "item_number": 70,
+      "equipment": "Single strand pinch roll units",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 290,
+      "aliases": [
+        "equipment item 70",
+        "manual item 70",
+        "LMMM item 70",
+        "Single strand pinch roll units"
+      ]
+    },
+    {
+      "item_number": 71,
+      "equipment": "Rotary shears",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 298,
+      "aliases": [
+        "equipment item 71",
+        "manual item 71",
+        "LMMM item 71",
+        "Rotary shears"
+      ]
+    },
+    {
+      "item_number": 72,
+      "equipment": null,
+      "status": "not_confirmed_in_checked_manual",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": null,
+      "aliases": [
+        "equipment item 72",
+        "manual item 72",
+        "LMMM item 72"
+      ]
+    },
+    {
+      "item_number": 73,
+      "equipment": "Scrap and sample removal after cooling bed shear",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 314,
+      "aliases": [
+        "equipment item 73",
+        "manual item 73",
+        "LMMM item 73",
+        "Scrap and sample removal after cooling bed shear"
+      ]
+    },
+    {
+      "item_number": 74,
+      "equipment": "Approach roller tables",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 320,
+      "aliases": [
+        "equipment item 74",
+        "manual item 74",
+        "LMMM item 74",
+        "Approach roller tables"
+      ]
+    },
+    {
+      "item_number": 75,
+      "equipment": "Tempcore cooling stretches, approach table and transfer car (shared with items 708,709)",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 326,
+      "aliases": [
+        "equipment item 75",
+        "manual item 75",
+        "LMMM item 75",
+        "Tempcore cooling stretches, approach table and transfer car (shared with items 708,709)",
+        "Tempcore"
+      ]
+    },
+    {
+      "item_number": 76,
+      "equipment": "Pivotable approach roller tables",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 347,
+      "aliases": [
+        "equipment item 76",
+        "manual item 76",
+        "LMMM item 76",
+        "Pivotable approach roller tables"
+      ]
+    },
+    {
+      "item_number": 77,
+      "equipment": "Run-in troughs before cooling beds",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 353,
+      "aliases": [
+        "equipment item 77",
+        "manual item 77",
+        "LMMM item 77",
+        "Run-in troughs before cooling beds"
+      ]
+    },
+    {
+      "item_number": 78,
+      "equipment": "Swinging devices",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702906678  OMM for Bar Mill (Item 44-55).pdf",
+      "source_page": 364,
+      "aliases": [
+        "equipment item 78",
+        "manual item 78",
+        "LMMM item 78",
+        "Swinging devices"
+      ]
+    },
+    {
+      "item_number": 79,
+      "equipment": "Run-in troughs at cooling bed",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 6,
+      "aliases": [
+        "equipment item 79",
+        "manual item 79",
+        "LMMM item 79",
+        "Run-in troughs at cooling bed"
+      ]
+    },
+    {
+      "item_number": 80,
+      "equipment": "Straightening grid cooling areas",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 15,
+      "aliases": [
+        "equipment item 80",
+        "manual item 80",
+        "LMMM item 80",
+        "Straightening grid cooling areas",
+        "straightening grid"
+      ]
+    },
+    {
+      "item_number": 81,
+      "equipment": "Rake type cooling areas",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 21,
+      "aliases": [
+        "equipment item 81",
+        "manual item 81",
+        "LMMM item 81",
+        "Rake type cooling areas",
+        "rake cooling bed"
+      ]
+    },
+    {
+      "item_number": 82,
+      "equipment": "Rows of axial fans",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 29,
+      "aliases": [
+        "equipment item 82",
+        "manual item 82",
+        "LMMM item 82",
+        "Rows of axial fans"
+      ]
+    },
+    {
+      "item_number": 83,
+      "equipment": "Aligning devices",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 35,
+      "aliases": [
+        "equipment item 83",
+        "manual item 83",
+        "LMMM item 83",
+        "Aligning devices"
+      ]
+    },
+    {
+      "item_number": 84,
+      "equipment": "Chain type collecting devices",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 41,
+      "aliases": [
+        "equipment item 84",
+        "manual item 84",
+        "LMMM item 84",
+        "Chain type collecting devices"
+      ]
+    },
+    {
+      "item_number": 85,
+      "equipment": "Chain type discharging device",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 48,
+      "aliases": [
+        "equipment item 85",
+        "manual item 85",
+        "LMMM item 85",
+        "Chain type discharging device"
+      ]
+    },
+    {
+      "item_number": 86,
+      "equipment": "Run-out roller tables",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 55,
+      "aliases": [
+        "equipment item 86",
+        "manual item 86",
+        "LMMM item 86",
+        "Run-out roller tables"
+      ]
+    },
+    {
+      "item_number": 87,
+      "equipment": "Entry pinch roll units",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 62,
+      "aliases": [
+        "equipment item 87",
+        "manual item 87",
+        "LMMM item 87",
+        "Entry pinch roll units"
+      ]
+    },
+    {
+      "item_number": 88,
+      "equipment": "Entry guide assemblies",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 68,
+      "aliases": [
+        "equipment item 88",
+        "manual item 88",
+        "LMMM item 88",
+        "Entry guide assemblies"
+      ]
+    },
+    {
+      "item_number": 89,
+      "equipment": "Multistrand section straighteners and scale removal (shared with 90,91)",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 74,
+      "aliases": [
+        "equipment item 89",
+        "manual item 89",
+        "LMMM item 89",
+        "Multistrand section straighteners and scale removal (shared with 90,91)"
+      ]
+    },
+    {
+      "item_number": 90,
+      "equipment": "Multistrand section straighteners and scale removal (shared with 89,91)",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 74,
+      "aliases": [
+        "equipment item 90",
+        "manual item 90",
+        "LMMM item 90",
+        "Multistrand section straighteners and scale removal (shared with 89,91)"
+      ]
+    },
+    {
+      "item_number": 91,
+      "equipment": "Multistrand section straighteners and scale removal (shared with 89,90)",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 74,
+      "aliases": [
+        "equipment item 91",
+        "manual item 91",
+        "LMMM item 91",
+        "Multistrand section straighteners and scale removal (shared with 89,90)"
+      ]
+    },
+    {
+      "item_number": 92,
+      "equipment": "Jib cranes",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 98,
+      "aliases": [
+        "equipment item 92",
+        "manual item 92",
+        "LMMM item 92",
+        "Jib cranes"
+      ]
+    },
+    {
+      "item_number": 93,
+      "equipment": "Gap bridging roller tables",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 102,
+      "aliases": [
+        "equipment item 93",
+        "manual item 93",
+        "LMMM item 93",
+        "Gap bridging roller tables"
+      ]
+    },
+    {
+      "item_number": 94,
+      "equipment": "Run-out roller tables behind straightener",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 111,
+      "aliases": [
+        "equipment item 94",
+        "manual item 94",
+        "LMMM item 94",
+        "Run-out roller tables behind straightener"
+      ]
+    },
+    {
+      "item_number": 95,
+      "equipment": "Disappearing and end stops (shared with 100,105,113)",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 116,
+      "aliases": [
+        "equipment item 95",
+        "manual item 95",
+        "LMMM item 95",
+        "Disappearing and end stops (shared with 100,105,113)"
+      ]
+    },
+    {
+      "item_number": 96,
+      "equipment": "Chain type discharging device",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 123,
+      "aliases": [
+        "equipment item 96",
+        "manual item 96",
+        "LMMM item 96",
+        "Chain type discharging device"
+      ]
+    },
+    {
+      "item_number": 97,
+      "equipment": "Row of stoppers",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 123,
+      "aliases": [
+        "equipment item 97",
+        "manual item 97",
+        "LMMM item 97",
+        "Row of stoppers"
+      ]
+    },
+    {
+      "item_number": 98,
+      "equipment": "Chain type collecting and transfer device",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 123,
+      "aliases": [
+        "equipment item 98",
+        "manual item 98",
+        "LMMM item 98",
+        "Chain type collecting and transfer device"
+      ]
+    },
+    {
+      "item_number": 99,
+      "equipment": "Transport roller tables",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 130,
+      "aliases": [
+        "equipment item 99",
+        "manual item 99",
+        "LMMM item 99",
+        "Transport roller tables"
+      ]
+    },
+    {
+      "item_number": 100,
+      "equipment": "Disappearing and end stops (shared with 95,105,113)",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 116,
+      "aliases": [
+        "equipment item 100",
+        "manual item 100",
+        "LMMM item 100",
+        "Disappearing and end stops (shared with 95,105,113)"
+      ]
+    },
+    {
+      "item_number": 101,
+      "equipment": "Cold shears, knife changers and tail end pusher (shared with 109)",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 137,
+      "aliases": [
+        "equipment item 101",
+        "manual item 101",
+        "LMMM item 101",
+        "Cold shears, knife changers and tail end pusher (shared with 109)"
+      ]
+    },
+    {
+      "item_number": 102,
+      "equipment": "Scrap disposal system and buckets (shared with 110)",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 169,
+      "aliases": [
+        "equipment item 102",
+        "manual item 102",
+        "LMMM item 102",
+        "Scrap disposal system and buckets (shared with 110)"
+      ]
+    },
+    {
+      "item_number": 103,
+      "equipment": "Girder type gauge (shared with 111)",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 176,
+      "aliases": [
+        "equipment item 103",
+        "manual item 103",
+        "LMMM item 103",
+        "Girder type gauge (shared with 111)"
+      ]
+    },
+    {
+      "item_number": 104,
+      "equipment": "Roller table after cold shear I",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 184,
+      "aliases": [
+        "equipment item 104",
+        "manual item 104",
+        "LMMM item 104",
+        "Roller table after cold shear I"
+      ]
+    },
+    {
+      "item_number": 105,
+      "equipment": "Disappearing and end stops (shared with 95,100,113)",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 116,
+      "aliases": [
+        "equipment item 105",
+        "manual item 105",
+        "LMMM item 105",
+        "Disappearing and end stops (shared with 95,100,113)"
+      ]
+    },
+    {
+      "item_number": 106,
+      "equipment": "Chain type discharging device (shared with 107)",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 191,
+      "aliases": [
+        "equipment item 106",
+        "manual item 106",
+        "LMMM item 106",
+        "Chain type discharging device (shared with 107)"
+      ]
+    },
+    {
+      "item_number": 107,
+      "equipment": "Chain type discharging device (shared with 106)",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 191,
+      "aliases": [
+        "equipment item 107",
+        "manual item 107",
+        "LMMM item 107",
+        "Chain type discharging device (shared with 106)"
+      ]
+    },
+    {
+      "item_number": 108,
+      "equipment": "Emergency pockets",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 198,
+      "aliases": [
+        "equipment item 108",
+        "manual item 108",
+        "LMMM item 108",
+        "Emergency pockets"
+      ]
+    },
+    {
+      "item_number": 109,
+      "equipment": "Cold shears, knife changers and tail end pusher (shared with 101)",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 137,
+      "aliases": [
+        "equipment item 109",
+        "manual item 109",
+        "LMMM item 109",
+        "Cold shears, knife changers and tail end pusher (shared with 101)"
+      ]
+    },
+    {
+      "item_number": 110,
+      "equipment": "Scrap disposal system and buckets (shared with 102)",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 169,
+      "aliases": [
+        "equipment item 110",
+        "manual item 110",
+        "LMMM item 110",
+        "Scrap disposal system and buckets (shared with 102)"
+      ]
+    },
+    {
+      "item_number": 111,
+      "equipment": "Girder type gauge (shared with 103)",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 176,
+      "aliases": [
+        "equipment item 111",
+        "manual item 111",
+        "LMMM item 111",
+        "Girder type gauge (shared with 103)"
+      ]
+    },
+    {
+      "item_number": 112,
+      "equipment": "Roller table after cold shear II",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 204,
+      "aliases": [
+        "equipment item 112",
+        "manual item 112",
+        "LMMM item 112",
+        "Roller table after cold shear II"
+      ]
+    },
+    {
+      "item_number": 113,
+      "equipment": "Disappearing and end stops (shared with 95,100,105)",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 116,
+      "aliases": [
+        "equipment item 113",
+        "manual item 113",
+        "LMMM item 113",
+        "Disappearing and end stops (shared with 95,100,105)"
+      ]
+    },
+    {
+      "item_number": 114,
+      "equipment": "Chain type discharging device",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 211,
+      "aliases": [
+        "equipment item 114",
+        "manual item 114",
+        "LMMM item 114",
+        "Chain type discharging device"
+      ]
+    },
+    {
+      "item_number": 115,
+      "equipment": "Chain type transfer device",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 218,
+      "aliases": [
+        "equipment item 115",
+        "manual item 115",
+        "LMMM item 115",
+        "Chain type transfer device"
+      ]
+    },
+    {
+      "item_number": 116,
+      "equipment": "Chain type discharging device",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 225,
+      "aliases": [
+        "equipment item 116",
+        "manual item 116",
+        "LMMM item 116",
+        "Chain type discharging device"
+      ]
+    },
+    {
+      "item_number": 117,
+      "equipment": "Chain type discharging device",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 232,
+      "aliases": [
+        "equipment item 117",
+        "manual item 117",
+        "LMMM item 117",
+        "Chain type discharging device"
+      ]
+    },
+    {
+      "item_number": 118,
+      "equipment": "Piling equipment",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 239,
+      "aliases": [
+        "equipment item 118",
+        "manual item 118",
+        "LMMM item 118",
+        "Piling equipment"
+      ]
+    },
+    {
+      "item_number": 119,
+      "equipment": "Bundling installation 1; 119a short bar ejection equipment",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 328,
+      "aliases": [
+        "equipment item 119",
+        "manual item 119",
+        "LMMM item 119",
+        "Bundling installation 1; 119a short bar ejection equipment"
+      ]
+    },
+    {
+      "item_number": 120,
+      "equipment": "Bundling installation 2; 120a short bar ejection equipment",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 332,
+      "aliases": [
+        "equipment item 120",
+        "manual item 120",
+        "LMMM item 120",
+        "Bundling installation 2; 120a short bar ejection equipment"
+      ]
+    },
+    {
+      "item_number": 121,
+      "equipment": "Binding installation and discharging roller table; 121a monorail with electric hoists",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 336,
+      "aliases": [
+        "equipment item 121",
+        "manual item 121",
+        "LMMM item 121",
+        "Binding installation and discharging roller table; 121a monorail with electric hoists"
+      ]
+    },
+    {
+      "item_number": 122,
+      "equipment": "Loading roller tables",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 344,
+      "aliases": [
+        "equipment item 122",
+        "manual item 122",
+        "LMMM item 122",
+        "Loading roller tables"
+      ]
+    },
+    {
+      "item_number": 123,
+      "equipment": "Disappearing and end stops",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 351,
+      "aliases": [
+        "equipment item 123",
+        "manual item 123",
+        "LMMM item 123",
+        "Disappearing and end stops"
+      ]
+    },
+    {
+      "item_number": 124,
+      "equipment": "Electromechanical compound weighing systems",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 358,
+      "aliases": [
+        "equipment item 124",
+        "manual item 124",
+        "LMMM item 124",
+        "Electromechanical compound weighing systems"
+      ]
+    },
+    {
+      "item_number": 125,
+      "equipment": "Walking beam discharging devices",
+      "status": "mapped_from_manual_heading",
+      "source_file": "1702907704  OMM for Cooling Beds and Finishing Area (item 79 -93).pdf",
+      "source_page": 362,
+      "aliases": [
+        "equipment item 125",
+        "manual item 125",
+        "LMMM item 125",
+        "Walking beam discharging devices"
+      ]
+    }
+  ]
+}
