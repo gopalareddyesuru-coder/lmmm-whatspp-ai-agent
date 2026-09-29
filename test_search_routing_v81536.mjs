@@ -11,14 +11,19 @@ manualIndex.items[24]={item_number:25,equipment:'Horizontal 2-hi mill stand BH4'
 const sent=[];
 const itemAnswer=extract('async function answerManualItemNumberV81535(','async function answerManualItemNameV81535(',{
   hasAuthorityV874:async()=>true,isOwner:()=>true,readManualItemSearchIndexV81535:()=>manualIndex,
+  geminiGenerateWithFallbackV892:async body=>{
+    const prompt=body.contents[0].parts[0].text;
+    assert(prompt.includes('table can be turned 90 degrees'));
+    return {response:{json:async()=>({candidates:[{content:{parts:[{text:'Function: Guides are adjustable to the passline.\nOperation: The table can be turned 90 degrees for roll change.\nDrawings: 1/7816760.'}]}}]})}};
+  },
   pool:{query:async(_sql,params)=>{
     assert.deepEqual(Array.from(params[1]),['page:27','page:28'],'Stop before the next equipment item');
     return {rows:[{location:'page:27',source_text:'ITEM 19 - GUIDE TABLES. List of Drawings: 1/7816760.'},
-      {location:'page:28',source_text:'Technical Data & Functional Description: guides adjustable by screws; table turns 90 degrees for roll change.'}]};
+      {location:'page:28',source_text:'Technical Data & Functional Description: guides adjustable by screws; table cm be turned 90 degrees for roll change.'}]};
   }},sendText:async(_from,msg)=>sent.push(msg),console
 });
 assert(await itemAnswer('owner',{},'Item 19'));
-assert(sent[0].includes('Technical Data')&&sent[0].includes('1/7816760'));
+assert(sent[0].includes('Function:')&&sent[0].includes('1/7816760')&&!sent[0].includes('Page 27:'));
 const rank=extract('function rankSearchRowsV81524(','function universalEvidenceV81513(',{
   searchTextV81524:r=>String(r.content||'').toLowerCase(),
   chargingAssetV81533:q=>q.includes('LTP')?{}:null,
