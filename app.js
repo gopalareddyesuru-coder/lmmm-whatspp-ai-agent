@@ -2730,8 +2730,58 @@ function searchIntentV81524(question,module){
 }
 function normalizeMaintenanceQueryV81524(question){
   // Correct a small set of widely used names; retain numbered identities as printed.
-  return String(question||'').replace(/\b(?:bloom|blom|boom|bum)[ -]+(?:pusher|puser|pusr|pushr)\b/gi,'bloom pusher')
-    .replace(/\bBP[ -]?([12])\b/gi,(_,n)=>`bloom pusher ${n}`).replace(/\bBP\b/gi,'bloom pusher');
+  return normalizeManualAliasesV81535(String(question||'').replace(/\b(?:bloom|blom|boom|bum)[ -]+(?:pusher|puser|pusr|pushr)\b/gi,'bloom pusher')
+    .replace(/\bBP[ -]?([12])\b/gi,(_,n)=>`bloom pusher ${n}`).replace(/\bBP\b/gi,'bloom pusher'));
+}
+let manualItemSearchIndexV81535;
+function readManualItemSearchIndexV81535(){
+  if(!manualItemSearchIndexV81535){
+    const parsed=JSON.parse(readFileSync('data/manual_item_search_index.json','utf8'));
+    if(parsed.item_count!==125||parsed.items?.length!==125||parsed.items.some((x,i)=>x.item_number!==i+1))
+      throw Error('Incomplete manual equipment item search index');
+    manualItemSearchIndexV81535=parsed;
+  }
+  return manualItemSearchIndexV81535;
+}
+function normalizeManualAliasesV81535(question){
+  const index=readManualItemSearchIndexV81535();
+  const known=new Map();
+  for(const item of index.items){
+    if(!item.equipment||item.item_number===4||item.item_number===10)continue;
+    for(const alias of item.aliases){
+      if(/\bitem\s+\d+\b/i.test(alias)||alias.toLowerCase()===item.equipment.toLowerCase()||alias.length<3)continue;
+      const key=alias.toLowerCase();known.set(key,known.has(key)?null:item.equipment.replace(/\s*\(shared with[^)]*\)/i,''));
+    }
+  }
+  for(const [alias,title] of [...known].sort((a,b)=>b[0].length-a[0].length)){
+    if(!title)continue;
+    const pattern=new RegExp(`(^|[^a-z0-9])(${alias.replace(/[.*+?^${}()|[\]\\]/g,'\\$&').replace(/\\ /g,'[ -]*')})(?=$|[^a-z0-9])`,'i');
+    if(pattern.test(question))return question.replace(pattern,(_,prefix)=>`${prefix}${title}`);
+  }
+  return question;
+}
+async function answerManualItemNumberV81535(from,user,question){
+  const match=String(question||'').match(/\b(?:equipment|manual|lmmm)\s+item(?:\s+(?:number|no\.?))?\s*#?\s*(\d{1,3})\b/i);
+  if(!match||!await hasAuthorityV874(user,'VIEW'))return false;
+  const number=Number(match[1]);
+  if(number<1||number>125)return false;
+  const item=readManualItemSearchIndexV81535().items[number-1];
+  if(!item.equipment){await sendText(from,`Item ${number}: No equipment name is confirmed in the available manual headings.`);return true;}
+  await sendText(from,`Item ${number}: ${item.equipment}.`);
+  return true;
+}
+async function answerManualItemNameV81535(from,user,question){
+  const q=String(question||'').trim();
+  if(!/\b(?:item\s*(?:number|no\.?|code)|which\s+item)\b/i.test(q)||!await hasAuthorityV874(user,'VIEW'))return false;
+  const subject=q.replace(/\b(?:which|what|is|the|for|of|equipment|manual|lmmm|item|number|no|code|tell|me|please|name|give)\b/gi,' ').replace(/[^a-z0-9]+/gi,' ').trim().toLowerCase();
+  if(subject.length<3)return false;
+  const index=readManualItemSearchIndexV81535();
+  const found=index.items.filter(x=>x.equipment&&x.aliases.some(a=>
+    a.toLowerCase().replace(/[^a-z0-9]+/g,' ').trim()===subject));
+  if(!found.length)return false;
+  await sendText(from,found.length===1?`${found[0].equipment}: item ${found[0].item_number}.`:
+    `${subject.toUpperCase()} appears under items ${found.map(x=>x.item_number).join(', ')}. Please specify the equipment location or unit.`);
+  return true;
 }
 function chargingAssetV81533(question){
   const q=String(question||'');
@@ -3814,6 +3864,7 @@ async function handleDocumentQuestionV81511(from,text,cmd,user){
     question=s.question;
   }
   if(!question){await sendText(from,'Please send your question about the file.');return;}
+  if(!selection&&(await answerManualItemNumberV81535(from,user,question)||await answerManualItemNameV81535(from,user,question)))return;
   if(!selection&&drawingLookupRequestV81512(question)?.kind==='name'&&await handleDrawingLookupV81512(from,question,user))return;
   if(!selection&&await handleUniversalSearchV81513(from,question,user))return;
   const docs=await accessibleDocumentsV81511(from,user);

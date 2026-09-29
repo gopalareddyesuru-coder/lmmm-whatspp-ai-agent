@@ -1,0 +1,1 @@
+Replace app.js in repository root; upload manual_item_search_index.json into data/. Commit both together. 125 ordered items: 117 source-heading mappings; 20-24,67-68,72 have no confirmed headings in supplied manuals and remain explicitly unassigned. Generic names and codes shared by multiple items return candidates rather than a guessed item. No database migration is required.
