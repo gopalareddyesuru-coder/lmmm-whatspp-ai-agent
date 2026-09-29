@@ -2540,6 +2540,9 @@ async function processMediaMessageV874(from,m){
 function documentQuestionIntentV81511(text){
   const s=String(text||'').trim();
   return !!s && (/[?？]/.test(s) || /[\u0c00-\u0c7f]/.test(s) || /^\d{8,}$/.test(s) || /^(?:bp|ecs)[- ]?[12]?$/i.test(s) ||
+    /\b(?:equipment|manual|lmmm)\s+item(?:\s+(?:number|no\.?))?\s*#?\s*\d{1,3}\b/i.test(s) ||
+    /\bitem\s*(?:number|no\.?|code)\b/i.test(s) ||
+    /\b(?:ltp|fart|tod|bsy\s*rt|ch\s*grid|ev[ -]?[12]|bh[1-7]|bv[1-7])\b/i.test(s) ||
     /\b(bloom pusher|ecs|bdm|downcomer|nitrogen|leak|burst|puncture|replacement|replaced|incident|shear pin|trunnion|coupling|furnace|hydraulic|pump|motor|shaft|gearbox|bearing)\b/i.test(s) ||
     /^(ask|explain|describe|tell me|what|which|where|why|how|does|is there|show me|find|check|verify|lookup|drawing|manual|document|file|part|dimension|tolerance|material|standard|specification|meaning|doubt|query|history|jobs|job|spares|spare|equipment|sap|defects|defect|smp|sop|maintenance|production|vibration)\b/i.test(s) ||
     /\b(explain|drawing|manual|document|tolerance|dimension|specification|meaning|gurinchi|enti|entha|cheppandi|deniki|sambandhanchindi|samjhao|batao|history|jobs|job|spares|spare|equipment|sap|defects|defect|smp|sop)\b/i.test(s));
@@ -2838,6 +2841,7 @@ function rankSearchRowsV81524(rows,request,module){
     if(module==='MANUALS')score+=/manual|smp|sop|procedure/i.test(kind+' '+source)?10:-8;
     return {...row,searchScore:score,subjectHits:hitCount,searchBody:body};
   }).filter(row=>{
+    const charging=String(row.key||'').startsWith('charging:')&&!!chargingAssetV81533(request.question||'');
     if(request.bloomPusher){
       const body=row.searchBody;
       if(!/\bBLOOM\s+PUSHER\b/i.test(body)&&!/(?:^|[^a-z0-9])BP[ -]?[12](?:[^a-z0-9]|$)/i.test(body))return false;
