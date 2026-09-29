@@ -6,8 +6,8 @@ function extract(start,end,env){const a=app.indexOf(start),b=app.indexOf(end,a);
 const intent=extract('function documentQuestionIntentV81511(','function documentSessionValueV81511(',{});
 for(const q of ['BH4 item number','equipment item 20','Item 19','Ltp','FART drawings','BP1 jobs'])assert(intent(q),q);
 const manualIndex={items:Array.from({length:125},(_,i)=>({item_number:i+1,equipment:null}))};
-manualIndex.items[18]={item_number:19,equipment:'Guide tables between BH1 and BH4',source_file:'BDM O&M.pdf',source_page:27};
-manualIndex.items[24]={item_number:25,equipment:'Horizontal 2-hi mill stand BH4',source_file:'BDM O&M.pdf',source_page:29};
+manualIndex.items[18]={item_number:19,equipment:'Guide tables between BH1 and BH4',aliases:['Guide tables between BH1 and BH4','BH4'],source_file:'BDM O&M.pdf',source_page:27};
+manualIndex.items[24]={item_number:25,equipment:'Horizontal 2-hi mill stand BH4',aliases:['Horizontal 2-hi mill stand BH4','BH4'],source_file:'BDM O&M.pdf',source_page:29};
 const sent=[];
 const itemAnswer=extract('async function answerManualItemNumberV81535(','async function answerManualItemNameV81535(',{
   hasAuthorityV874:async()=>true,isOwner:()=>true,readManualItemSearchIndexV81535:()=>manualIndex,
@@ -24,6 +24,36 @@ const itemAnswer=extract('async function answerManualItemNumberV81535(','async f
 });
 assert(await itemAnswer('owner',{},'Item 19'));
 assert(sent[0].includes('Function:')&&sent[0].includes('1/7816760')&&!sent[0].includes('Page 27:'));
+const nameReplies=[];
+const itemName=extract('async function answerManualItemNameV81535(','function chargingAssetV81533(',{
+  hasAuthorityV874:async()=>true,readManualItemSearchIndexV81535:()=>manualIndex,
+  sendText:async(_from,msg)=>nameReplies.push(msg)
+});
+manualIndex.items[41]={item_number:42,equipment:'Turnover type cooling bed',aliases:['Turnover type cooling bed']};
+manualIndex.items[78]={item_number:79,equipment:'Run-in troughs at cooling bed',aliases:['Run-in troughs at cooling bed']};
+assert(await itemName('owner',{},'Cooling bed item number'));
+assert(nameReplies.at(-1).includes('42. Turnover type cooling bed')&&nameReplies.at(-1).includes('79. Run-in troughs at cooling bed'));
+assert(!nameReplies.at(-1).includes('Mapping:'));
+assert(await itemName('owner',{},'BH4 item number'));
+assert(nameReplies.at(-1).includes('19. Guide tables between BH1 and BH4'));
+assert(await itemName('owner',{},'turnover type cooling bed item number'));
+assert.equal(nameReplies.at(-1),'Item 42: Turnover type cooling bed.');
+assert(await itemName('owner',{},'unknown widget item number'));
+assert(nameReplies.at(-1).startsWith('No confirmed O&M item number'));
+assert(intent('Cooling bed item number'));
+const fullIndex=JSON.parse(readFileSync(new URL('./data/manual_item_search_index.json',import.meta.url),'utf8'));
+const allReplies=[];
+const allNames=extract('async function answerManualItemNameV81535(','function chargingAssetV81533(',{
+  hasAuthorityV874:async()=>true,readManualItemSearchIndexV81535:()=>fullIndex,
+  sendText:async(_from,msg)=>allReplies.push(msg)
+});
+for(const entry of fullIndex.items.filter(x=>x.equipment)){
+  const q=`${entry.equipment} item number`;
+  assert(intent(q),`Route ${q}`);
+  assert(await allNames('owner',{},q),`Resolve ${q}`);
+  assert(allReplies.at(-1).includes(`Item ${entry.item_number}:`) ||
+    allReplies.at(-1).includes(`${entry.item_number}. ${entry.equipment}`),`Correct item for ${q}`);
+}
 const rank=extract('function rankSearchRowsV81524(','function universalEvidenceV81513(',{
   searchTextV81524:r=>String(r.content||'').toLowerCase(),
   chargingAssetV81533:q=>q.includes('LTP')?{}:null,

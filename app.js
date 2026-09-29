@@ -2822,14 +2822,22 @@ async function answerManualItemNumberV81535(from,user,question){
 async function answerManualItemNameV81535(from,user,question){
   const q=String(question||'').trim();
   if(!/\b(?:item\s*(?:number|no\.?|code)|which\s+item)\b/i.test(q)||!await hasAuthorityV874(user,'VIEW'))return false;
-  const subject=q.replace(/\b(?:which|what|is|the|for|of|equipment|manual|lmmm|item|number|no|code|tell|me|please|name|give)\b/gi,' ').replace(/[^a-z0-9]+/gi,' ').trim().toLowerCase();
+  const subject=q.replace(/\b(?:item\s*(?:number|no\.?|code)|which\s+item)\b/gi,' ')
+    .replace(/^(?:(?:which|what|is|the|for|of|equipment|manual|lmmm|tell|me|please|name|give|show|find|check|list)\s+)+/i,'')
+    .replace(/\b(?:please|tell|me)\s*$/i,'').replace(/[^a-z0-9]+/gi,' ').trim().toLowerCase();
   if(subject.length<3)return false;
   const index=readManualItemSearchIndexV81535();
-  const found=index.items.filter(x=>x.equipment&&x.aliases.some(a=>
-    a.toLowerCase().replace(/[^a-z0-9]+/g,' ').trim()===subject));
-  if(!found.length)return false;
-  await sendText(from,found.length===1?`${found[0].equipment}: item ${found[0].item_number}.`:
-    `${subject.toUpperCase()} appears under items ${found.map(x=>x.item_number).join(', ')}. Please specify the equipment location or unit.`);
+  const norm=s=>String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+  const exact=index.items.filter(x=>x.equipment&&x.aliases.some(a=>norm(a)===subject));
+  // Broad names such as "cooling bed" occur in several distinct O&M items.
+  // Return the mapped names, not drawing-list rows or a guessed single item.
+  const found=exact.length?exact:index.items.filter(x=>x.equipment&&
+    [x.equipment,...x.aliases.filter(a=>!/^\s*(?:equipment|manual|lmmm) item \d+/i.test(a))]
+      .some(a=>` ${norm(a)} `.includes(` ${subject} `)));
+  if(!found.length){await sendText(from,`No confirmed O&M item number for ${subject}.`);return true;}
+  const unique=[...new Map(found.map(x=>[x.item_number,x])).values()].sort((a,b)=>a.item_number-b.item_number);
+  await sendText(from,unique.length===1?`Item ${unique[0].item_number}: ${unique[0].equipment}.`:
+    `${subject.toUpperCase()} — O&M items:\n${unique.slice(0,12).map(x=>`${x.item_number}. ${x.equipment}`).join('\n')}${unique.length>12?`\n${unique.length-12} more; specify the sub-equipment.`:''}`);
   return true;
 }
 function chargingAssetV81533(question){
