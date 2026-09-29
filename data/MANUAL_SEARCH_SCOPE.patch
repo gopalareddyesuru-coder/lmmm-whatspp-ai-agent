@@ -1,0 +1,22 @@
+--- comprehensive/app_before_manual_scope.js	2026-09-29 12:43:51.745809921 +0800
++++ comprehensive/app.js	2026-09-29 12:43:23.886623604 +0800
+@@ -3471,15 +3471,16 @@
+   if(!isOwner(from)||!(await hasAuthorityV874(user,'VIEW'))||!['JOBS','HISTORY','DEFECTS','MANUALS','SPARES','PARTS','TROUBLESHOOTING'].includes(module))
+     return {rows:[],truncated:false};
+   const types={JOBS:['JOB_HISTORY','GENERAL_SOURCE'],HISTORY:['JOB_HISTORY','GENERAL_SOURCE'],
+-    DEFECTS:['JOB_HISTORY','GENERAL_SOURCE'],MANUALS:['MANUAL','SMP','SPARES_PARTS'],
++    DEFECTS:['JOB_HISTORY','GENERAL_SOURCE'],MANUALS:['MANUAL','SMP','SPARES_PARTS','GENERAL_SOURCE'],
+     SPARES:['SPARES_PARTS'],PARTS:['SPARES_PARTS','DRAWING'],
+     TROUBLESHOOTING:['JOB_HISTORY','GENERAL_SOURCE','MANUAL','SMP']}[module];
+   const terms=request.exact?[request.exact]:request.terms.filter(x=>x.length>=3&&!/^\d{4}$/.test(x));
+   if(!terms.length)return {rows:[],truncated:false};
+   const [first,second]=terms.sort((a,b)=>b.length-a.length);
+   const isEvent=['JOBS','HISTORY','DEFECTS','TROUBLESHOOTING'].includes(module);
+-  const eventFilter=isEvent?`AND (content_type<>'GENERAL_SOURCE' OR location ~* 'history|defects|jobs' OR source_file ~* 'history|defects|jobs' OR source_text ~* 'DATE OF FIX.*REASONS FOR FIX')`:
+-    module==='MANUALS'?`AND (content_type<>'SPARES_PARTS' OR source_file ~* 'smp|manual|procedure')`:'';
++  const manualSource=`source_file ~* 'manual|OMM|discription|description|1702906388|1702906389|1702906390|1702906678|1702907704|1702906387|1702908474'`;
++  const eventFilter=isEvent?`AND (content_type<>'GENERAL_SOURCE' OR location ~* 'history|defects|jobs' OR source_file ~* 'history|defects|jobs' OR source_text ~* 'DATE OF FIX.*REASONS FOR FIX'${module==='TROUBLESHOOTING'?` OR (${manualSource})`:''})`:
++    module==='MANUALS'?`AND (content_type<>'SPARES_PARTS' OR source_file ~* 'smp|manual|procedure') AND (content_type<>'GENERAL_SOURCE' OR (${manualSource}))`:'';
+   const makeSql=withSecond=>`SELECT source_key,source_file,location,content_type,source_text FROM lmmm_source_review
+     WHERE content_type=ANY($1::text[]) ${eventFilter} AND
+       (source_text ILIKE $2 OR (content_type=ANY(ARRAY['MANUAL','SMP']::text[]) AND source_file ILIKE $2))
