@@ -1,0 +1,51 @@
+From 1b897c6a84a93eb4c6f702056d4c2d0866265d27 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Tue, 29 Sep 2026 12:49:43 +0800
+Subject: [PATCH] Search indexed equipment manuals in owner archive
+
+---
+ app.js | 13 +++++++------
+ 1 file changed, 7 insertions(+), 6 deletions(-)
+
+diff --git a/app.js b/app.js
+index ede105d..eb3affb 100644
+--- a/app.js
++++ b/app.js
+@@ -3471,19 +3471,20 @@ async function searchScopedSourceCatalogV81524(from,user,request,module){
+   if(!isOwner(from)||!(await hasAuthorityV874(user,'VIEW'))||!['JOBS','HISTORY','DEFECTS','MANUALS','SPARES','PARTS','TROUBLESHOOTING'].includes(module))
+     return {rows:[],truncated:false};
+   const types={JOBS:['JOB_HISTORY','GENERAL_SOURCE'],HISTORY:['JOB_HISTORY','GENERAL_SOURCE'],
+-    DEFECTS:['JOB_HISTORY','GENERAL_SOURCE'],MANUALS:['MANUAL','SMP','SPARES_PARTS'],
++    DEFECTS:['JOB_HISTORY','GENERAL_SOURCE'],MANUALS:['MANUAL','SMP','SPARES_PARTS','GENERAL_SOURCE'],
+     SPARES:['SPARES_PARTS'],PARTS:['SPARES_PARTS','DRAWING'],
+     TROUBLESHOOTING:['JOB_HISTORY','GENERAL_SOURCE','MANUAL','SMP']}[module];
+   const terms=request.exact?[request.exact]:request.terms.filter(x=>x.length>=3&&!/^\d{4}$/.test(x));
+   if(!terms.length)return {rows:[],truncated:false};
+   const [first,second]=terms.sort((a,b)=>b.length-a.length);
+   const isEvent=['JOBS','HISTORY','DEFECTS','TROUBLESHOOTING'].includes(module);
+-  const eventFilter=isEvent?`AND (content_type<>'GENERAL_SOURCE' OR location ~* 'history|defects|jobs' OR source_file ~* 'history|defects|jobs' OR source_text ~* 'DATE OF FIX.*REASONS FOR FIX')`:
+-    module==='MANUALS'?`AND (content_type<>'SPARES_PARTS' OR source_file ~* 'smp|manual|procedure')`:'';
++  const manualSource=`source_file ~* 'manual|OMM|discription|description|1702906388|1702906389|1702906390|1702906678|1702907704|1702906387|1702908474'`;
++  const eventFilter=isEvent?`AND (content_type<>'GENERAL_SOURCE' OR location ~* 'history|defects|jobs' OR source_file ~* 'history|defects|jobs' OR source_text ~* 'DATE OF FIX.*REASONS FOR FIX'${module==='TROUBLESHOOTING'?` OR (${manualSource})`:''})`:
++    module==='MANUALS'?`AND (content_type<>'SPARES_PARTS' OR source_file ~* 'smp|manual|procedure') AND (content_type<>'GENERAL_SOURCE' OR (${manualSource}))`:'';
+   const makeSql=withSecond=>`SELECT source_key,source_file,location,content_type,source_text FROM lmmm_source_review
+     WHERE content_type=ANY($1::text[]) ${eventFilter} AND
+-      (source_text ILIKE $2 OR (content_type=ANY(ARRAY['MANUAL','SMP']::text[]) AND source_file ILIKE $2))
+-      ${withSecond?"AND (source_text ILIKE $3 OR (content_type=ANY(ARRAY['MANUAL','SMP']::text[]) AND source_file ILIKE $3))":''}
++      (source_text ILIKE $2 OR (content_type=ANY(ARRAY['MANUAL','SMP','GENERAL_SOURCE']::text[]) AND source_file ILIKE $2))
++      ${withSecond?"AND (source_text ILIKE $3 OR (content_type=ANY(ARRAY['MANUAL','SMP','GENERAL_SOURCE']::text[]) AND source_file ILIKE $3))":''}
+     ORDER BY source_key LIMIT 801`;
+   const params=[types,`%${first.replace(/[%_\\]/g,'').slice(0,80)}%`];
+   if(second)params.push(`%${second.replace(/[%_\\]/g,'').slice(0,80)}%`);
+@@ -3508,7 +3509,7 @@ async function searchScopedSourceCatalogV81524(from,user,request,module){
+     const signature=`${x.content_type}:${x.location}:${date}:${text.slice(-90).replace(/[^A-Z0-9]/gi,'').toUpperCase()}`;
+     const reimport=`${x.content_type}:${x.location}:${date}`;
+     if(seen.has(signature)||seen.has(reimport))continue;seen.add(signature);seen.add(reimport);
+-    const kind=x.content_type==='MANUAL'?'Source manual reference':x.content_type==='SMP'||module==='MANUALS'?'Source SMP reference':
++    const kind=x.content_type==='MANUAL'||(x.content_type==='GENERAL_SOURCE'&&module==='MANUALS')?'Source manual reference':x.content_type==='SMP'?'Source SMP reference':
+       x.content_type==='DRAWING'?'Source drawing list':x.content_type==='SPARES_PARTS'?'Source spare reference':
+       /defects/i.test(location)||module==='DEFECTS'?'Source defect':/history/i.test(`${location} ${sourceFile}`)||structuredFix?'Source maintenance history':'Source job reference';
+     rows.push({kind,content:text,source:sourceFile,page:location,date,key:`review:${x.source_key}`});
+-- 
+2.51.1
+
