@@ -2708,15 +2708,16 @@ async function handleDrawingLookupV81512(from,question,user,selectedDoc=null){
 }
 function universalTermsV81513(question){
   const q=String(question||'').trim();
+  const brakeSlide=/\bbrake[ -]+slides?\b/i.test(q);
   const bp=q.match(/\b(?:bloom\s*pusher|bp)[\s-]*([12])\b/i);
   const refs=q.match(/[A-Za-z0-9]+(?:[./-][A-Za-z0-9]+)+|\b\d{7,}\b/g)||[];
   const date=q.match(/\b(?:19|20)\d{2}-\d{2}-\d{2}(?!\d)/)?.[0]||null;
   const exact=refs.filter(x=>/\d/.test(x)&&x!==date&&!/^\d{1,4}[./-]\d{1,2}[./-]\d{2,4}$/.test(x)&&
       !(/^FURNACE[-./]?[12]$/i.test(x)&&/\bBLOOM\s+PUSHER\b/i.test(q)))
     .sort((a,b)=>b.length-a.length)[0]||null;
-  const stop=new Set(['what','which','where','when','why','how','are','the','and','for','this','that','with','from','about','there','any','all','show','give','tell','please','check','find','search','number','name','data','record','records','lo','ki','di','enti','entha','deniki','gurinchi','cheppandi','sambandhanchindi','drawing','drawings','manual','manuals','file','sources','related','sambandham','details','history','jobs','job','spares','spare','equipment','maintenance','part','parts','sap','defect','defects','smp','sop','production','troubleshooting','problems','problem','issue','issues','failure','failed','fail','last','previous','before','during','today','yesterday','chudu','ivvu','kavali','ayyindi','chesaru','chesam','eppudu','year','date','dates','nunchi','entha','details','list','total']);
-  const terms=[...new Set((q.toLowerCase().match(/[a-z0-9]{3,}|[\u0c00-\u0c7f]{2,}|[\u0900-\u097f]{2,}/g)||[]).filter(x=>!stop.has(x)&&x!==date))];
-  return {exact,date,terms,primary:bp?'bloom pusher':/\b(?:bloom\s+pusher|bp)\b/i.test(q)?'bloom pusher':exact||terms.sort((a,b)=>b.length-a.length)[0]||null,bpNumber:bp?.[1]||null,bloomPusher:/\b(?:bloom\s+pusher|bp)(?:[\s-]*[12])?\b/i.test(q),furnaceQualifier:/\b(?:in\s+front\s+of\s+)?furnace\s*[- ]?[12]\b/i.test(q)&&/\bBLOOM\s+PUSHER\b/i.test(q)};
+  const stop=new Set(['what','which','where','when','why','how','are','the','and','for','this','that','with','from','about','there','any','all','show','give','tell','please','check','find','search','number','name','data','record','records','lo','ki','di','enti','entha','deniki','gurinchi','cheppandi','cheppu','cheppara','sambandhanchindi','drawing','drawings','manual','manuals','file','sources','related','sambandham','details','history','jobs','job','spares','spare','equipment','maintenance','part','parts','sap','defect','defects','smp','sop','production','troubleshooting','problems','problem','issue','issues','failure','failed','fail','last','previous','before','during','today','yesterday','chudu','ivvu','kavali','ayyindi','chesaru','chesam','eppudu','year','date','dates','nunchi','entha','details','list','total']);
+  const terms=[...new Set((q.toLowerCase().match(/[a-z0-9]{3,}|[\u0c00-\u0c7f]{2,}|[\u0900-\u097f]{2,}/g)||[]).filter(x=>!stop.has(x)&&x!=='gurunchi'&&x!==date))];
+  return {exact,date,terms,primary:bp?'bloom pusher':/\b(?:bloom\s+pusher|bp)\b/i.test(q)?'bloom pusher':brakeSlide?'brake slide':exact||terms.sort((a,b)=>b.length-a.length)[0]||null,bpNumber:bp?.[1]||null,bloomPusher:/\b(?:bloom\s+pusher|bp)(?:[\s-]*[12])?\b/i.test(q),furnaceQualifier:/\b(?:in\s+front\s+of\s+)?furnace\s*[- ]?[12]\b/i.test(q)&&/\bBLOOM\s+PUSHER\b/i.test(q)};
 }
 function searchIntentV81524(question,module){
   if(module&&module!=='ALL')return module;
@@ -3154,9 +3155,9 @@ async function searchLanguageV81515(from,question){
   const old=documentSessionValueV81511(await safeSessionV855(from,'SEARCH_LANGUAGE'));
   const explicit=/\b(telugu|తెలుగు)\b|[\u0c00-\u0c7f]/i.test(question)?'TE':
     /\b(hindi|हिंदी)\b|[\u0900-\u097f]/i.test(question)?'HI':null;
-  const firstRoman=!old&&/\b(deniki|sambandhanchindi|gurinchi|cheppandi|enti|entha)\b/i.test(question)?'TE':null;
-  const language=explicit||old?.language||firstRoman||'EN';
-  if(!old||explicit&&explicit!==old.language)await saveDocumentSessionV81511(from,'SEARCH_LANGUAGE',{language});
+  const roman=/\b(deniki|sambandhanchindi|gurinchi|gurunchi|cheppandi|cheppu|enti|entha|eppudu|ivvu|kavali|chudu|raavali|ayyindi|chesaru|chesam)\b/i.test(question)?'TE':null;
+  const language=explicit||roman||old?.language||'EN';
+  if(!old||language!==old.language)await saveDocumentSessionV81511(from,'SEARCH_LANGUAGE',{language});
   return language;
 }
 function bareAssetQuestionV81515(question,request){
@@ -3600,6 +3601,35 @@ async function searchDrawingCatalogV81522(from,question,user){
   await saveDocumentSessionV81511(from,'MAINT_DRAW_PAGE',{items,offset:0,label:term,expiresAt:Date.now()+30*60000});
   return showDrawingPageV81521(from,user);
 }
+async function datedJobReferencesV81538(from,user,request,language){
+  if(!isOwner(from)||!await hasAuthorityV874(user,'VIEW')||!request.primary||request.exact)return false;
+  const phrase=request.primary.replace(/[%_\\]/g,'').slice(0,80);
+  if(phrase.length<5)return false;
+  const matches=await pool.query(`SELECT source_file,location,source_text FROM lmmm_source_review
+    WHERE content_type='JOB_HISTORY' AND source_text ILIKE $1
+      AND source_text ~ '(19|20)[0-9]{2}-[0-9]{2}-[0-9]{2}'
+      AND source_file !~* 'unassorted|spares|material|inventory|t codes'
+    ORDER BY source_file,location LIMIT 101`,[`%${phrase}%`]);
+  const seen=new Set(),items=[];
+  for(const row of matches.rows){
+    const body=String(row.source_text||''),date=body.match(/\b(?:19|20)\d{2}-\d{2}-\d{2}\b/)?.[0];
+    if(!date||!/\b(?:replac\w*|chang\w*|repair\w*|renew\w*|clean\w*|weld\w*|overhaul\w*)\b/i.test(body))continue;
+    const detail=body.split('|').map(x=>x.trim()).filter(x=>x.length>12&&/\b(?:brake|replac\w*|chang\w*|repair\w*|renew\w*|clean\w*|weld\w*)\b/i.test(x)).join('; ').slice(0,230);
+    const signature=`${date}:${detail.toLowerCase().replace(/[^a-z0-9]/g,'')}`;
+    if(!detail||seen.has(signature))continue;seen.add(signature);
+    items.push(`${date} — ${detail}`);
+  }
+  if(!items.length)return false;
+  const heading=language==='TE'?'తేదీ ఉన్న job references (పని పూర్తయిందని నిర్ధారణ కాదు):':'Dated job references (completion unconfirmed):';
+  let reply=`${heading}\n${items.slice(0,8).map((x,i)=>`${i+1}. ${x}`).join('\n')}`.slice(0,2800);
+  if(language==='TE'){
+    try{const gx=await geminiGenerateWithFallbackV892({contents:[{parts:[{text:`Translate the following maintenance result to natural Telugu. Keep dates, equipment names, numbers and technical terms unchanged. Do not add facts or say work was completed; these are only dated job references. Return only the translation.\n${reply}`}]}],generationConfig:{maxOutputTokens:900}},45000);
+      const data=await gx.response.json();reply=(data.candidates?.[0]?.content?.parts||[]).map(x=>x.text||'').join('').trim()||reply;
+    }catch(e){console.error('[JOB_REFERENCE_TRANSLATION]',e.message);}
+  }
+  await sendText(from,reply);
+  return true;
+}
 async function searchScopedSourceCatalogV81524(from,user,request,module){
   if(!isOwner(from)||!(await hasAuthorityV874(user,'VIEW'))||!['JOBS','HISTORY','DEFECTS','MANUALS','SPARES','PARTS','TROUBLESHOOTING'].includes(module))
     return {rows:[],truncated:false};
@@ -3835,7 +3865,8 @@ async function handleUniversalSearchV81513(from,question,user,options={}){
     ['ALL','JOBS','HISTORY','DEFECTS'].includes(module)&&!catalogFailed;
   const limited=(scopedBpArchive?false:truncated)||catalog.truncated;
   if((failed&&!catalog.rows.length&&!chargingRows.length)||(incomplete&&!rows.length)){await sendText(from,'Some data sources are temporarily unavailable. Please try again; I cannot confirm a complete search.');return true;}
-  if(!rows.length){if(module==='DRAWINGS'&&await showUnlinkedDrawingRefsV81516(from,request.exact||request.primary))return true;
+  if(!rows.length){if(module==='JOBS'&&await datedJobReferencesV81538(from,user,request,language))return true;
+    if(module==='DRAWINGS'&&await showUnlinkedDrawingRefsV81516(from,request.exact||request.primary))return true;
     if(module==='ALL'&&await proposeSearchCorrectionV81515(from,question,user))return true;
     await sendText(from,te?`${request.primary}: అందుబాటులో ఉన్న, మీకు అనుమతి ఉన్న డేటాలో ఆధారం దొరకలేదు. నిర్ధారించలేను.`:
     `${request.primary}: No matching ${module==='JOBS'?'dated job record':module==='ALL'?'record':module.toLowerCase()+' record'} in data you can access.`);return true;}
