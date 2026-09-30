@@ -131,6 +131,11 @@ const ACCESS_AUTH_V858={
   FULL_ACCESS:['ENTRY','VIEW','EDIT','DELETE_UNDO','APPROVAL','PDF','PRINT_EXPORT','EXCEL','ANALYSIS','REPORTS','ADVANCED_REPORTS','RCM']
 };
 const ALL_USER_AUTHORITIES_V858=['ENTRY','VIEW','EDIT','DELETE_UNDO','APPROVAL','PDF','PRINT_EXPORT','EXCEL','ANALYSIS','REPORTS','ADVANCED_REPORTS','RCM'];
+// Temporary department testing access. Set LMMM_TEST_ALL_ACCESS=false before
+// production. Registration, role assignment and access changes remain owner-only.
+const TEST_ALL_ACCESS_V81540=process.env.LMMM_TEST_ALL_ACCESS!=='false';
+function testDataUserV81540(u){return TEST_ALL_ACCESS_V81540&&u?.approval_status==='approved'&&u?.is_active===true&&!!u.employee_number;}
+function canReadDepartmentArchiveV81540(from,u){return isOwner(from)||testDataUserV81540(u);}
 function sameAuthV860(a,b){
  const A=[...new Set(a||[])].sort(),B=[...new Set(b||[])].sort();
  return A.length===B.length&&A.every((x,i)=>x===B[i]);
@@ -405,6 +410,16 @@ async function initDB(){
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
     CREATE INDEX IF NOT EXISTS idx_pending_ingest_user ON pending_file_ingests(submitted_by_whatsapp,status,created_at);
+    CREATE TABLE IF NOT EXISTS safety_reports(
+      id BIGSERIAL PRIMARY KEY, department_code TEXT NOT NULL DEFAULT '35',
+      report_type TEXT NOT NULL CHECK(report_type IN ('NEAR_MISS','SUGGESTION')),
+      area TEXT NOT NULL, section TEXT, location TEXT NOT NULL,
+      event_date DATE, description TEXT NOT NULL, immediate_action TEXT,
+      proposed_action TEXT, status TEXT NOT NULL DEFAULT 'SUBMITTED',
+      submitted_by_employee_number TEXT NOT NULL, submitted_by_whatsapp TEXT NOT NULL,
+      submitted_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS idx_safety_reports_scope ON safety_reports(department_code,area,report_type,event_date DESC);
   `);
   await pool.query(`ALTER TABLE pending_file_ingests ADD COLUMN IF NOT EXISTS source_bytes BYTEA`);
   await pool.query(`ALTER TABLE pending_file_ingests ADD COLUMN IF NOT EXISTS retry_count INTEGER NOT NULL DEFAULT 0`);
@@ -953,6 +968,7 @@ if((a=text.match(/^AUTH_ADV:(\d+)$/))){await sendList(from,'Advanced Authorities
 }
 async function hasAuthorityV874(u, authority){
   if(isOwner(u?.whatsapp_number)) return true;
+  if(testDataUserV81540(u)&&ALL_USER_AUTHORITIES_V858.includes(authority))return true;
   if(!u?.employee_number) return false;
   await ensureProfile(u,normWA(u.whatsapp_number));
   const r=await pool.query('SELECT authorities FROM user_access_profile WHERE employee_number=$1',[u.employee_number]);
@@ -2587,7 +2603,7 @@ function documentEvidenceV81511(doc,question){
 async function accessibleDocumentsV81511(from,u,searchTerm=''){
   const canView=await hasAuthorityV874(u,'VIEW');
   const override=canView&&!isOwner(from)?await adminOverrideV850(u.employee_number):null;
-  const allScope=isOwner(from)||!!(canView&&override?.scope==='LMMM_ALL');
+  const allScope=canReadDepartmentArchiveV81540(from,u)||!!(canView&&override?.scope==='LMMM_ALL');
   const area=canonicalArea(u.area_of_working),section=canonicalSection(u.section_department);
   const search=String(searchTerm||'').replace(/[%_\\]/g,'').slice(0,100);
   const pattern=search?`%${search}%`:'';
@@ -2773,7 +2789,7 @@ async function answerManualItemNumberV81535(from,user,question){
   if(number<1||number>125)return false;
   const item=readManualItemSearchIndexV81535().items[number-1];
   if(!item.equipment){await sendText(from,`Item ${number}: No equipment name is confirmed in the available manual headings.`);return true;}
-  if(!isOwner(from)||!item.source_page||!item.source_file){
+  if(!canReadDepartmentArchiveV81540(from,user)||!item.source_page||!item.source_file){
     await sendText(from,`Item ${number}: ${item.equipment}. Detailed source pages are not available under this access scope.`);return true;
   }
   const following=readManualItemSearchIndexV81535().items.find(x=>x.item_number>number&&
@@ -3036,7 +3052,7 @@ async function universalSearchV81513(from,user,question,archiveMode='ALL'){
   if(!request.primary)return {request,rows:[],failed:false};
   const canView=await hasAuthorityV874(user,'VIEW');
   const override=canView&&!isOwner(from)?await adminOverrideV850(user.employee_number):null;
-  const allScope=isOwner(from)||!!(canView&&override?.scope==='LMMM_ALL');
+  const allScope=canReadDepartmentArchiveV81540(from,user)||!!(canView&&override?.scope==='LMMM_ALL');
   const area=canonicalArea(user.area_of_working),section=canonicalSection(user.section_department);
   const pattern=`%${request.primary.replace(/[%_\\]/g,'').slice(0,100)}%`, wa=normWA(from),emp=String(user.employee_number||'');
   const shortToken=/^[a-z]{2,3}$/i.test(request.primary), tokenRegex=shortToken?`(^|[^[:alnum:]])${request.primary}([^[:alnum:]]|$)`:'';
@@ -3099,8 +3115,8 @@ async function universalSearchV81513(from,user,question,archiveMode='ALL'){
       .then(r=>r.rows.map(k=>({kind:k.record_type||'Master record',source:k.source_name,title:k.equipment,date:k.event_date,
         content:`Area: ${k.area||'unconfirmed'}; ${k.record_text||''}`,key:`master:${k.uid}`}))));
   }
-  if(isOwner(from)){
-    // Archive rows have no approved per-user or per-equipment authorization.
+  if(canReadDepartmentArchiveV81540(from,user)){
+    // Testing access is confined to approved LMMM users; source rows remain unverified.
     // They must never be treated as stored/confirmed maintenance records.
     jobs.push(pool.query(`SELECT source_key,source_file,archive_member,location,
         extraction_status,candidate_area,mapping_state,content_type,
@@ -3143,7 +3159,7 @@ async function universalSearchV81513(from,user,question,archiveMode='ALL'){
     (shortToken?new RegExp(`(^|[^a-z0-9])${request.primary}([^a-z0-9]|$)`,'i').test(r.content):
       r.content.toLowerCase().includes(request.primary.toLowerCase()))):filtered;
   let archived=[],archiveFailure=false;
-  if(isOwner(from)){
+  if(canReadDepartmentArchiveV81540(from,user)){
     try{archived=sourceArchiveRowsV81517(question,request,archiveMode);}catch(e){archiveFailure=true;console.error('[EQUIPMENT_SOURCE_ARCHIVE]',e.message);}
   }
   // Each source has a bounded query. A bound reached means the search may have more rows.
@@ -3218,6 +3234,39 @@ async function showAssetChoicesV81515(from,question,rows,language,warning=''){
     await showAssetModulesV81515(from,state.selected||question,language,warning);
   }
 }
+// Equipment names in the department master are shared reference data. A VIEW
+// user must be able to disambiguate an asset even when owner-only raw source
+// review rows are unavailable to that user.
+async function showMasterEquipmentChoicesV81539(from,user,question,language){
+  if(!await hasAuthorityV874(user,'VIEW'))return false;
+  const request=universalTermsV81513(question);
+  if(!bareAssetQuestionV81515(question,request)||!request.primary||request.exact)return false;
+  const needle=archiveTextV81517(request.primary);
+  if(needle.length<4)return false;
+  const matched=readEquipmentArchiveV81517().equipment.filter(x=>
+    archiveMatchesV81517(x['Equipment Name'],needle));
+  if(!matched.length){
+    if(/^MAIN HOIST$/.test(needle)){
+      await sendText(from,language==='TE'?'ఏ crane లేదా area లోని main hoist కావాలి? Crane number లేదా location చెప్పండి.':'Which crane or area is the main hoist in? Send the crane number or location.');
+      return true;
+    }
+    return false;
+  }
+  const names=[...new Set(matched.map(x=>String(x['Equipment Name']||'').trim()).filter(Boolean))];
+  if(names.length===1){
+    await saveDocumentSessionV81511(from,'MAINT_SEARCH_FLOW',
+      {query:question,names,selected:names[0],expiresAt:Date.now()+30*60000});
+    await showAssetModulesV81515(from,names[0],language);return true;
+  }
+  const choices=matched.slice(0,8).map(x=>({
+    id:`MAINT_ASSET:${matched.indexOf(x)}`,title:String(x['Equipment Name']||'').slice(0,24),
+    description:`${x['Source Area']||'Area not listed'} · ${x['Source Location']||'Location not listed'}`.slice(0,72)}));
+  await saveDocumentSessionV81511(from,'MAINT_SEARCH_FLOW',
+    {query:question,names:matched.slice(0,8).map(x=>String(x['Equipment Name']||'').trim()),
+      selected:'',expiresAt:Date.now()+30*60000});
+  await sendList(from,`${language==='TE'?'ఈ పేరుతో పలు పరికరాలు ఉన్నాయి. ఏది కావాలి?':'Several equipment records match. Which one do you mean?'}\n${question}${matched.length>8?` (${matched.length} matches; add area to narrow)` :''}`,
+    'Choose',choices,'Equipment');return true;
+}
 async function handleSearchChoiceV81515(from,cmd,user){
   if(cmd==='MAINT_DRAW_MORE'){await showDrawingPageV81521(from,user,true);return true;}
   if(cmd==='MAINT_RESULT_MORE'){await showSearchPageV81522(from,user,true);return true;}
@@ -3271,8 +3320,8 @@ function unlinkedDrawingReferencesV81516(subject){
   }
   return found.map(x=>({...x,linkUnconfirmed:exactAsset||x.equipment.toUpperCase()!==raw}));
 }
-async function showUnlinkedDrawingRefsV81516(from,subject){
-  if(!isOwner(from))return false; // Archive lacks per-user and per-section access provenance.
+async function showUnlinkedDrawingRefsV81516(from,subject,user){
+  if(!canReadDepartmentArchiveV81540(from,user))return false;
   const references=unlinkedDrawingReferencesV81516(subject);
   if(!references.length)return false;
   const lines=references.map(x=>`• ${x.drawing}\n  Source equipment: ${x.equipment}\n  Source: ${x.source}`).join('\n');
@@ -3322,7 +3371,7 @@ async function handleSearchExportV81518(from,cmd,user){
   catch(e){console.error('[SEARCH_EXPORT_CHARGING]',e);await sendText(from,'Cannot read charging-side history right now. Please try again.');return true;}
   result.request.question=state.question;
   const rows=balanceBpMaintenanceRowsV81532(rankSearchRowsV81524(filterSearchRowsV81518([...result.rows,...catalog.rows,...bpRows,...chargingRows],state.module),result.request,state.module),result.request,state.module);
-  const scopedBpArchive=isOwner(from)&&result.request.bloomPusher&&!result.request.furnaceQualifier&&
+  const scopedBpArchive=canReadDepartmentArchiveV81540(from,user)&&result.request.bloomPusher&&!result.request.furnaceQualifier&&
     ['ALL','JOBS','HISTORY','DEFECTS'].includes(state.module);
   if(result.failed||result.partialFailure||(!scopedBpArchive&&result.truncated)||catalog.truncated||!rows.length||rows.length>1000){
     await sendText(from,'Cannot confirm a complete accessible result. Narrow the search and try again.');return true;
@@ -3452,7 +3501,7 @@ function incidentSearchTermsV81523(question){
   return groups.slice(0,5);
 }
 async function answerIncidentArchiveV81523(from,user,question,language){
-  if(!isOwner(from)||!(await hasAuthorityV874(user,'VIEW')))return false;
+  if(!canReadDepartmentArchiveV81540(from,user)||!(await hasAuthorityV874(user,'VIEW')))return false;
   if(!/\b(?:when|eppudu|date|dates|failed?|leak|puncture|burst|replace|replaced|repair|incident|happen|ayyindi|chesam)\b/i.test(question))return false;
   const groups=incidentSearchTermsV81523(question);if(!groups)return false;
   const where=groups.map((_,i)=>`source_text ~* $${i+1}`).join(' AND ');
@@ -3521,7 +3570,7 @@ async function sendFullDrawingPdfV81522(from,user,state){
   await sendGeneratedDocumentV878(from,bytes,'lmmm_drawing_results.pdf','application/pdf');return true;
 }
 async function showDrawingPageV81521(from,user,more=false){
-  if(!isOwner(from)||!(await hasAuthorityV874(user,'VIEW')))return false;
+  if(!canReadDepartmentArchiveV81540(from,user)||!(await hasAuthorityV874(user,'VIEW')))return false;
   const state=documentSessionValueV81511(await safeSessionV855(from,'MAINT_DRAW_PAGE'));
   if(!state?.items||state.expiresAt<Date.now()){await sendText(from,'Drawing results expired. Search ECS again.');return true;}
   const start=more?state.offset||0:0,items=state.items.slice(start,start+20);
@@ -3540,7 +3589,7 @@ async function showDrawingPageV81521(from,user,more=false){
   return true;
 }
 async function searchEcsDrawingsV81521(from,question,user){
-  if(!isOwner(from)||!(await hasAuthorityV874(user,'VIEW')))return false;
+  if(!canReadDepartmentArchiveV81540(from,user)||!(await hasAuthorityV874(user,'VIEW')))return false;
   const term=String(question||'').toUpperCase();
   if(!/(^|[^A-Z])ECS(?:[- ]?[12])?(?![A-Z])/.test(term)||!/(?:DRAWING|DRAWINGS|DRG)/.test(term))return false;
   const exact=term.match(/\b\d{7,}\b/)?.[0];
@@ -3576,7 +3625,7 @@ async function searchEcsDrawingsV81521(from,question,user){
   return showDrawingPageV81521(from,user);
 }
 async function searchDrawingCatalogV81522(from,question,user){
-  if(!isOwner(from)||!(await hasAuthorityV874(user,'VIEW')))return false;
+  if(!canReadDepartmentArchiveV81540(from,user)||!(await hasAuthorityV874(user,'VIEW')))return false;
   const q=String(question||'').trim();
   if(!/\b(?:drawings?|drg)\b/i.test(q))return false;
   const request=universalTermsV81513(q),term=request.primary;
@@ -3602,7 +3651,7 @@ async function searchDrawingCatalogV81522(from,question,user){
   return showDrawingPageV81521(from,user);
 }
 async function datedJobReferencesV81538(from,user,request,language){
-  if(!isOwner(from)||!await hasAuthorityV874(user,'VIEW')||!request.primary||request.exact)return false;
+  if(!canReadDepartmentArchiveV81540(from,user)||!await hasAuthorityV874(user,'VIEW')||!request.primary||request.exact)return false;
   const phrase=request.primary.replace(/[%_\\]/g,'').slice(0,80);
   if(phrase.length<5)return false;
   const matches=await pool.query(`SELECT source_file,location,source_text FROM lmmm_source_review
@@ -3631,7 +3680,7 @@ async function datedJobReferencesV81538(from,user,request,language){
   return true;
 }
 async function searchScopedSourceCatalogV81524(from,user,request,module){
-  if(!isOwner(from)||!(await hasAuthorityV874(user,'VIEW'))||!['JOBS','HISTORY','DEFECTS','MANUALS','SPARES','PARTS','TROUBLESHOOTING'].includes(module))
+  if(!canReadDepartmentArchiveV81540(from,user)||!(await hasAuthorityV874(user,'VIEW'))||!['JOBS','HISTORY','DEFECTS','MANUALS','SPARES','PARTS','TROUBLESHOOTING'].includes(module))
     return {rows:[],truncated:false};
   const types={JOBS:['JOB_HISTORY','GENERAL_SOURCE'],HISTORY:['JOB_HISTORY','GENERAL_SOURCE'],
     DEFECTS:['JOB_HISTORY','GENERAL_SOURCE'],MANUALS:['MANUAL','SMP','SPARES_PARTS','GENERAL_SOURCE'],
@@ -3687,7 +3736,7 @@ async function searchScopedSourceCatalogV81524(from,user,request,module){
 async function chargingHistoryRowsV81533(from,user,question,module){
   const asset=chargingAssetV81533(question);
   if(!asset?.sheet||!['JOBS','HISTORY','DEFECTS'].includes(module)||
-    !isOwner(from)||!(await hasAuthorityV874(user,'VIEW')))return [];
+    !canReadDepartmentArchiveV81540(from,user)||!(await hasAuthorityV874(user,'VIEW')))return [];
   const result=await pool.query(`SELECT source_key,source_file,location,source_text FROM lmmm_source_review
     WHERE source_file='CH SIDE HISTORY(2).numbers' AND content_type='JOB_HISTORY'
       AND split_part(location,':',2)=ANY($1::text[])
@@ -3733,7 +3782,7 @@ function bpHistoryDateV81526(value){
 }
 async function bpHistoryRowsV81526(from,user,request,module){
   if(!request.bloomPusher||request.furnaceQualifier||!['JOBS','HISTORY','ALL'].includes(module)||
-    !isOwner(from)||!(await hasAuthorityV874(user,'VIEW')))return [];
+    !canReadDepartmentArchiveV81540(from,user)||!(await hasAuthorityV874(user,'VIEW')))return [];
   const result=await pool.query(`SELECT source_key,source_file,location,source_text FROM lmmm_source_review
     WHERE source_file='CH SIDE HISTORY(2).numbers' AND content_type='JOB_HISTORY' AND location ~ '^sheet:BP:.*row:[0-9]+$'
     ORDER BY (substring(location from 'row:([0-9]+)'))::int LIMIT 150`);
@@ -3763,7 +3812,7 @@ async function bpHistoryRowsV81526(from,user,request,module){
 }
 async function explainBpMechanicalAlongsideDefectsV81530(from,user,request,module,rows){
   if(module!=='DEFECTS'||!request.bloomPusher||request.furnaceQualifier||
-    !isOwner(from)||!rows.length||!rows.every(r=>/hyd cyl history/i.test(String(r.source||''))))return;
+    !canReadDepartmentArchiveV81540(from,user)||!rows.length||!rows.every(r=>/hyd cyl history/i.test(String(r.source||''))))return;
   let related=[];
   try{related=await bpHistoryRowsV81526(from,user,request,'JOBS');}
   catch(e){console.error('[BP_RELATED_MECHANICAL]',e.message);return;}
@@ -3814,7 +3863,7 @@ async function answerProductionV81524(from,user,question,language){
   if(!date){await sendText(from,'Which production date? Send YYYY-MM-DD, today, or yesterday.');return true;}
   const emp=normWA(from),area=canonicalArea(user.area_of_working);
   const override=!isOwner(from)?await adminOverrideV850(user.employee_number):null;
-  const allScope=isOwner(from)||override?.scope==='LMMM_ALL';
+  const allScope=canReadDepartmentArchiveV81540(from,user)||override?.scope==='LMMM_ALL';
   const q=String(question||'').toUpperCase(),namedArea=q.match(/\b(BDM|BAR MILL|BILLET MILL|WRM[- ]?[12]|WBF[- ]?[12])\b/)?.[1]||'';
   const namedShift=q.match(/\b(?:SHIFT[ -]?)?([ABC])(?:[ -]?SHIFT)?\b/)?.[1]||'';
   const areaCondition=namedArea?`AND upper(l.area) LIKE $5`:'',areaParam=namedArea?`%${namedArea.replace(/[- ]/g,'%')}%`:'';
@@ -3840,6 +3889,7 @@ async function handleUniversalSearchV81513(from,question,user,options={}){
   if((!options.module||['JOBS','HISTORY','DEFECTS'].includes(options.module))&&await answerIncidentArchiveV81523(from,user,question,language))return true;
   const module=searchIntentV81524(question,options.module);
   if(module==='PRODUCTION'&&await answerProductionV81524(from,user,question,language))return true;
+  if(module==='ALL'&&await showMasterEquipmentChoicesV81539(from,user,question,language))return true;
   const {request,rows:allRows,failed,partialFailure,truncated}=await universalSearchV81513(from,user,question,module);
   if(!request.primary){await sendText(from,te?'ఏ equipment, number, part లేదా విషయం గురించి వెతకాలో చెప్పండి.':'Specify an equipment, number, part or subject to search.');return true;}
   let catalog={rows:[],truncated:false},catalogFailed=false;
@@ -3861,12 +3911,12 @@ async function handleUniversalSearchV81513(from,question,user,options={}){
   const incomplete=partialFailure||catalogFailed;
   // The generic archive lookup is capped at 25 rows. For Bloom Pusher jobs
   // the dedicated dated source catalogue and BP sheet cover the raw records.
-  const scopedBpArchive=isOwner(from)&&request.bloomPusher&&!request.furnaceQualifier&&
+  const scopedBpArchive=canReadDepartmentArchiveV81540(from,user)&&request.bloomPusher&&!request.furnaceQualifier&&
     ['ALL','JOBS','HISTORY','DEFECTS'].includes(module)&&!catalogFailed;
   const limited=(scopedBpArchive?false:truncated)||catalog.truncated;
   if((failed&&!catalog.rows.length&&!chargingRows.length)||(incomplete&&!rows.length)){await sendText(from,'Some data sources are temporarily unavailable. Please try again; I cannot confirm a complete search.');return true;}
   if(!rows.length){if(module==='JOBS'&&await datedJobReferencesV81538(from,user,request,language))return true;
-    if(module==='DRAWINGS'&&await showUnlinkedDrawingRefsV81516(from,request.exact||request.primary))return true;
+    if(module==='DRAWINGS'&&await showUnlinkedDrawingRefsV81516(from,request.exact||request.primary,user))return true;
     if(module==='ALL'&&await proposeSearchCorrectionV81515(from,question,user))return true;
     await sendText(from,te?`${request.primary}: అందుబాటులో ఉన్న, మీకు అనుమతి ఉన్న డేటాలో ఆధారం దొరకలేదు. నిర్ధారించలేను.`:
     `${request.primary}: No matching ${module==='JOBS'?'dated job record':module==='ALL'?'record':module.toLowerCase()+' record'} in data you can access.`);return true;}
@@ -3944,7 +3994,7 @@ async function handleUniversalSearchV81513(from,question,user,options={}){
       await sendGeneratedDocumentV878(from,tablePdfV880(pack,`${items.length} accessible matches`),'lmmm_search_results.pdf','application/pdf');
     }else if(limited&&items.length>20){
       const imported=rows.filter(r=>String(r.key||'').startsWith('archive:history:')&&/\.xlsx/i.test(String(r.source||'')));
-      if(isOwner(from)&&!incomplete&&!catalog.truncated&&imported.length>20&&imported.length<3000&&
+      if(canReadDepartmentArchiveV81540(from,user)&&!incomplete&&!catalog.truncated&&imported.length>20&&imported.length<3000&&
         await hasAuthorityV874(user,'PDF')){
         const seenImported=new Set(),excelItems=[];
         for(const row of imported){const item=readableSearchItemV81522(row,request),key=item.toUpperCase().replace(/[^A-Z0-9]+/g,'');
@@ -4041,6 +4091,70 @@ async function maintenanceBareSearchV81514(text,cmd,payload){
   const employee=(await pool.query('SELECT 1 FROM users WHERE lower(name)=lower($1) LIMIT 1',[String(text).trim()])).rows.length;
   return !employee;
 }
+const SAFETY_FIELDS_V81539={
+  NEAR_MISS:[['event_date','When did it happen? Send YYYY-MM-DD, today, or yesterday.'],
+    ['location','Exact location?'],['description','What happened? Describe the near miss.'],
+    ['immediate_action','What immediate action was taken? Send None if no action was taken.'],
+    ['proposed_action','What risk or potential consequence was identified, and what should prevent recurrence?']],
+  SUGGESTION:[['location','Which location or equipment is this suggestion for?'],
+    ['description','What improvement do you suggest?'],['proposed_action','What benefit or risk reduction do you expect?']]
+};
+async function safetySessionV81539(from){return documentSessionValueV81511(await safeSessionV855(from,'SAFETY_ENTRY'));}
+async function clearSafetySessionV81539(from){await pool.query(`DELETE FROM ui_sessions WHERE whatsapp_number=$1 AND session_key='SAFETY_ENTRY'`,[normWA(from)]);}
+async function handleSafetyEntryV81539(from,text,cmd){
+  const start=cmd==='SAFETY_NEAR_MISS'?'NEAR_MISS':cmd==='SAFETY_SUGGESTION'?'SUGGESTION':null;
+  let state=await safetySessionV81539(from);
+  if(!start&&!state)return false;
+  const user=await byWA(from);
+  if(!user||user.approval_status!=='approved'||!user.is_active||!await hasAuthorityV874(user,'ENTRY')){
+    await sendText(from,'Approved ENTRY access is required for safety reports.');return true;
+  }
+  if(start){state={type:start,step:0,values:{},expiresAt:Date.now()+30*60000};
+    await saveDocumentSessionV81511(from,'SAFETY_ENTRY',state);
+    await sendText(from,`Safety ${start==='NEAR_MISS'?'Near Miss Report':'Suggestion'}\n${SAFETY_FIELDS_V81539[start][0][1]}\nSend Cancel to stop.`);return true;}
+  if(/^cancel$/i.test(cmd)||cmd==='SAFETY_CANCEL'){await clearSafetySessionV81539(from);await sendText(from,'Safety entry cancelled.');return true;}
+  if(state.expiresAt<Date.now()){await clearSafetySessionV81539(from);await sendText(from,'Safety entry expired. Start again from Add Entry.');return true;}
+  const fields=SAFETY_FIELDS_V81539[state.type];
+  if(!fields){await clearSafetySessionV81539(from);return false;}
+  if(state.step>=fields.length){
+    if(cmd!=='SAFETY_CONFIRM'){await sendText(from,'Review the report and tap Confirm, or send Cancel.');return true;}
+    const v=state.values;
+    const saved=await pool.query(`INSERT INTO safety_reports(report_type,area,section,location,event_date,description,immediate_action,proposed_action,submitted_by_employee_number,submitted_by_whatsapp)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,[
+      state.type,canonicalArea(user.area_of_working),canonicalSection(user.section_department),v.location,
+      v.event_date||null,v.description,v.immediate_action||null,v.proposed_action||null,
+      String(user.employee_number),normWA(from)]);
+    await clearSafetySessionV81539(from);
+    await sendText(from,`Safety ${state.type==='NEAR_MISS'?'near miss':'suggestion'} #${saved.rows[0].id} submitted. Recorded with your identity and submission time.`);return true;
+  }
+  if(cmd==='SAFETY_CONFIRM'){await sendText(from,'Complete the report before confirming.');return true;}
+  const [field]=fields[state.step];let value=String(text||'').trim();
+  if(field==='event_date'){
+    value=dateForSearchV81524(value)||'';
+    if(!value){await sendText(from,'Send a valid date as YYYY-MM-DD, today, or yesterday.');return true;}
+  }else if(value.length<3||value.length>2000){await sendText(from,'Enter 3–2000 characters for this field.');return true;}
+  state.values[field]=value;state.step++;state.expiresAt=Date.now()+30*60000;
+  await saveDocumentSessionV81511(from,'SAFETY_ENTRY',state);
+  if(state.step<fields.length){await sendText(from,fields[state.step][1]);return true;}
+  const v=state.values;
+  await sendButtons(from,`${state.type==='NEAR_MISS'?'Near Miss Report':'Safety Suggestion'}\nLocation: ${v.location}\n${v.event_date?`Event date: ${v.event_date}\n`:''}Description: ${v.description}\n${v.immediate_action?`Immediate action: ${v.immediate_action}\n`:''}Risk / proposal: ${v.proposed_action}`.slice(0,950),[
+    {id:'SAFETY_CONFIRM',title:'Confirm'},{id:'SAFETY_CANCEL',title:'Cancel'}]);return true;
+}
+async function handleSafetyLookupV81539(from,cmd){
+  if(!/^(?:show|list|search|find)\s+(?:(?:safety|my)\s+)?(?:near miss(?: reports?)?|suggestions?)$/i.test(cmd))return false;
+  const user=await byWA(from);
+  if(!user||user.approval_status!=='approved'||!user.is_active||!await hasAuthorityV874(user,'VIEW')){
+    await sendText(from,'Approved VIEW access is required.');return true;
+  }
+  const kind=/near miss/i.test(cmd)?'NEAR_MISS':'SUGGESTION';
+  const allScope=canReadDepartmentArchiveV81540(from,user)||!!((await adminOverrideV850(user.employee_number))?.scope==='LMMM_ALL');
+  const result=await pool.query(`SELECT id,location,event_date,description,submitted_at FROM safety_reports
+    WHERE department_code='35' AND report_type=$1 AND (submitted_by_whatsapp=$2 OR $3::boolean OR (area=$4 AND section=$5))
+    ORDER BY submitted_at DESC LIMIT 21`,[kind,normWA(from),allScope,canonicalArea(user.area_of_working),canonicalSection(user.section_department)]);
+  if(!result.rows.length){await sendText(from,'No accessible safety reports found.');return true;}
+  const lines=result.rows.slice(0,20).map(r=>`#${r.id} · ${r.event_date?String(r.event_date).slice(0,10):String(r.submitted_at).slice(0,10)} · ${r.location}: ${String(r.description).slice(0,160)}`);
+  await sendText(from,`${kind==='NEAR_MISS'?'Near Miss Reports':'Safety Suggestions'}:\n${lines.join('\n')}${result.rows.length>20?'\nMore records exist. Refine by date or location.':''}`.slice(0,3000));return true;
+}
 async function processMessage(from,text,payload=''){
   const cmd=String(payload||text||'').trim();
   if(cmd==='RETRY_LAST_UPLOAD' || /^retry( extraction| upload)?$/i.test(cmd)){await retryLastQueuedV895(from);return;}
@@ -4053,6 +4167,8 @@ async function processMessage(from,text,payload=''){
     if(!user||user.approval_status!=='approved'||!user.is_active){await sendText(from,'Approved registration required for file actions.');return;}
     if(await handlePendingIngestCommandV877(from,cmd))return;
   }
+  if(await handleSafetyEntryV81539(from,text,cmd))return;
+  if(await handleSafetyLookupV81539(from,cmd))return;
   // Ask a document question before the employee-name directory catches natural phrases.
   const qaContext=documentSessionValueV81511(await safeSessionV855(from,'DOC_QA_CONTEXT'));
   const qaSelection=/^DOC_QA_SELECT:(stored|pending):\d+$/.test(cmd)||/^MAINT_EXPORT:(PDF|EXCEL)$/.test(cmd)||
@@ -4112,7 +4228,7 @@ async function processMessage(from,text,payload=''){
       await sendButtons(from,'My Details',[{id:'MY_CONTACT',title:'Contact Details'},{id:'MY_ACCESS',title:'Access Details'}]);return;
     }
     if((!payload&&(l852==='contact details'||l852==='my contact'))||c852==='MY_CONTACT'){await sendMyContactV852(from,selfUser);return;}
-    if(c852==='MY_ACCESS'){await ensureProfile(selfUser,normWA(from));const pp=(await pool.query('SELECT * FROM user_access_profile WHERE employee_number=$1',[selfUser.employee_number])).rows[0];await sendText(from,`My Access Details\nRole: ${pp?.assigned_role||'-'}\nAccess: ${pp?.access_level||'-'}\nResponsibility: ${pp?.responsibility||'-'}\nAuthorities: ${(pp?.authorities||[]).join(', ')||'-'}`);return;}
+    if(c852==='MY_ACCESS'){await ensureProfile(selfUser,normWA(from));const pp=(await pool.query('SELECT * FROM user_access_profile WHERE employee_number=$1',[selfUser.employee_number])).rows[0];await sendText(from,`My Access Details\nRole: ${pp?.assigned_role||'-'}\nAccess: ${testDataUserV81540(selfUser)?'Testing: all data features':pp?.access_level||'-'}\nResponsibility: ${pp?.responsibility||'-'}\nAuthorities: ${testDataUserV81540(selfUser)?ALL_USER_AUTHORITIES_V858.join(', '):(pp?.authorities||[]).join(', ')||'-'}\nUser approval and access changes: Super Admin only.`);return;}
     if(/^MYC_(ALT|CMAIL|PMAIL|MAX|EXT|EMER)$/.test(c852)){
       const f=c852.slice(4);
       await pool.query(`INSERT INTO ui_sessions(whatsapp_number,session_key,session_value,updated_at) VALUES($1,'V852_SELF_CONTACT',$2,now())
@@ -4259,8 +4375,13 @@ Office Extension: ${r.office_extension||'-'}`);
   if(clean==='MENU_ADD'){
     if(!u){await sendText(from,'You are not registered. Send Hi to register.');return;}
     if(!(await hasAuthorityV874(u,'ENTRY'))){await sendText(from,'Permission denied. ENTRY authority is required.');return;}
+    await sendButtons(from,'Add Entry',[{id:'SAFETY_NEAR_MISS',title:'Near Miss Report'},
+      {id:'SAFETY_SUGGESTION',title:'Safety Suggestion'},{id:'ADD_FILE',title:'Upload File'}]);return;
+  }
+  if(clean==='ADD_FILE'){
+    if(!u||!await hasAuthorityV874(u,'ENTRY')){await sendText(from,'ENTRY authority is required.');return;}
     await setIngestModeV874(from,true);
-    await sendText(from,'Add Entry mode ready. Send maintenance data as PDF, TIFF/image, TXT/CSV, Word, Excel or Access MDB/ACCDB. English/Telugu/Hindi/mixed content is accepted. The file is extracted to a preview first. Nothing is stored until you confirm. Uncertain data stays in Review and is never auto-stored.');return;
+    await sendText(from,'Send a maintenance file. I will show a preview before storing it.');return;
   }
   if(clean==='MENU_ACCOUNT'){
     if(!u){await sendText(from,'You are not registered. Send Hi to register.');return;}
