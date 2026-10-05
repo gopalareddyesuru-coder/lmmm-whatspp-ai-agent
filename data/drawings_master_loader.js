@@ -9,12 +9,18 @@ const DRAWING_MASTER_FILES = [
 ];
 
 export function loadDrawingsMaster() {
-  const parts = DRAWING_MASTER_FILES.map(file => JSON.parse(readFileSync(file, 'utf8')));
-  const drawings = parts.flatMap(part => Array.isArray(part.drawings) ? part.drawings : []);
+  const drawings = [];
+  let metadata;
+  // Parse each part in turn to limit temporary startup memory.
+  for (const file of DRAWING_MASTER_FILES) {
+    const part = JSON.parse(readFileSync(file, 'utf8'));
+    metadata ??= part;
+    if (Array.isArray(part.drawings)) drawings.push(...part.drawings);
+  }
   return {
-    schema_version: parts[0]?.schema_version || '1',
-    department_code: parts[0]?.department_code || '35',
-    department: parts[0]?.department || 'LMMM',
+    schema_version: metadata?.schema_version || '1',
+    department_code: metadata?.department_code || '35',
+    department: metadata?.department || 'LMMM',
     record_count: drawings.length,
     drawings,
   };
