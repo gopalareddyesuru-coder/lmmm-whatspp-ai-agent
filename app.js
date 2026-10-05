@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.35 DRAWINGS IMAGE + COMPACT REPLIES 2026-10-05
+// LMMM AI Maintenance V8.15.37 DRAWING BROWSE + FULL EXCEL 2026-10-05
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -3821,7 +3821,7 @@ async function searchJsonDrawingMasterV81535(from,question,user){
   const hits=searchDrawingsMasterV81535(question,user); if(!hits.length)return false;
   const exact=hits.filter(x=>x.exact);
   // Do not collapse repeated drawing numbers: they may be separate pages/revisions/files.
-  const selected=(exact.length?exact:hits).slice(0,20);
+  const selected=exact.length?exact:hits;
   if(selected.length===1){
     const d=selected[0].d;
     try{if(await sendDrawingMediaV81536(from,d)){
@@ -3831,12 +3831,38 @@ async function searchJsonDrawingMasterV81535(from,question,user){
     catch(e){console.error('[DRAWING_MEDIA]',d.id,String(e?.message||e).slice(0,250));}
     await sendText(from,`📐 ${d.drawing_number||d.filename} — ${drawingShortDescriptionV81536(d)}\nImage temporarily unavailable.\n🔗 ${d.drive_url||''}`.slice(0,1000));return true;
   }
-  await saveDocumentSessionV81511(from,'DRAWING_MEDIA_CHOICES',{ids:selected.map(x=>x.d.id),expiresAt:Date.now()+10*60000});
-  for(let start=0;start<selected.length;start+=10){
-    const page=selected.slice(start,start+10);
-    await sendList(from,`${selected.length} drawing matches${exact.length?' for this number':''}. Select one to receive its image and original link${selected.length>10?` (${start+1}–${start+page.length})`:''}.`,'Select drawing',page.map((x,i)=>({id:`DRAWING_MEDIA:${start+i}`,title:String(x.d.drawing_number||x.d.filename||`Drawing ${start+i+1}`).slice(0,24),description:drawingShortDescriptionV81536(x.d,72)})),'Drawing matches');
-  }
+  await saveDocumentSessionV81511(from,'DRAWING_MEDIA_CHOICES',{question,expiresAt:Date.now()+30*60000});
+  if(selected.length<=10)await sendDrawingPageV81537(from,selected,0);
+  else await sendButtons(from,`${selected.length} drawing matches. Choose how to view the complete list.`,[{id:'DRAWING_RESULTS:WHATSAPP',title:'WhatsApp list'},{id:'DRAWING_RESULTS:EXCEL',title:'Excel full list'}]);
   return true;
+}
+function drawingSessionMatchesV81537(s,user){
+  if(!s?.question||s.expiresAt<Date.now())return null;
+  const hits=searchDrawingsMasterV81535(s.question,user),exact=hits.filter(x=>x.exact);
+  return exact.length?exact:hits;
+}
+async function sendDrawingPageV81537(from,selected,start){
+  const size=selected.length<=10?10:8,offset=Math.max(0,Math.floor(start/size)*size);
+  if(offset>=selected.length){await sendText(from,'End of drawing results. Search again for another drawing.');return;}
+  const rows=selected.slice(offset,offset+size).map((x,i)=>({id:`DRAWING_MEDIA:${offset+i}`,title:String(x.d.drawing_number||x.d.filename||`Drawing ${offset+i+1}`).slice(0,24),description:drawingShortDescriptionV81536(x.d,72)}));
+  if(offset>0)rows.push({id:`DRAWING_PAGE:${offset-size}`,title:'Previous drawings',description:`Show results ${Math.max(1,offset-size+1)}–${offset}`});
+  if(offset+size<selected.length)rows.push({id:`DRAWING_PAGE:${offset+size}`,title:'Next drawings',description:`Show results ${offset+size+1}–${Math.min(selected.length,offset+2*size)}`});
+  await sendList(from,`${selected.length} drawings · ${offset+1}–${Math.min(selected.length,offset+size)}. Select a drawing for its image and original link.`,'View drawings',rows,'Drawing results');
+}
+function drawingResultsXlsxV81537(selected){
+  const headers=['Drawing number','Description (source)','Area (source hint)','Equipment (source index; unverified)','Sub-equipment (source index)','Part / assembly','Discipline (source catalogue)','Revision','Filename','Folder path','Google Drive link'];
+  const rows=[headers,...selected.map(({d})=>[drawingFieldV81535(d,'drawing_number'),drawingFieldV81535(d,'description','descriptive_name'),drawingFieldV81535(d,'area','section'),drawingFieldV81535(d,'equipment'),drawingFieldV81535(d,'indexed_sub_equipment','sub_equipment'),drawingFieldV81535(d,'part_assembly','indexed_part_name','part','assembly'),Array.isArray(d.indexed_disciplines)?d.indexed_disciplines.join(', '):drawingFieldV81535(d,'discipline'),drawingFieldV81535(d,'revision'),drawingFieldV81535(d,'filename'),drawingFieldV81535(d,'folder_path'),drawingFieldV81535(d,'drive_url','url','web_view_link')])];
+  const cells=rows.map((row,ri)=>`<row r="${ri+1}">${row.map((v,ci)=>`<c r="${colNameV882(ci)}${ri+1}" t="inlineStr"><is><t xml:space="preserve">${xmlEscV882(v)}</t></is></c>`).join('')}</row>`).join('');
+  const links=rows.slice(1).map((r,i)=>r[10]?{row:i+2,url:r[10]}:null).filter(Boolean);
+  const sheet=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><dimension ref="A1:K${rows.length}"/><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><cols>${[24,64,24,36,36,40,27,12,42,55,65].map((w,i)=>`<col min="${i+1}" max="${i+1}" width="${w}" customWidth="1"/>`).join('')}</cols><sheetData>${cells}</sheetData><autoFilter ref="A1:K${rows.length}"/><hyperlinks>${links.map((x,i)=>`<hyperlink ref="K${x.row}" r:id="rId${i+1}"/>`).join('')}</hyperlinks></worksheet>`;
+  const rels=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${links.map((x,i)=>`<Relationship Id="rId${i+1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="${xmlEscV882(x.url)}" TargetMode="External"/>`).join('')}</Relationships>`;
+  return zipStoreV882([
+    ['[Content_Types].xml','<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>'],
+    ['_rels/.rels','<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'],
+    ['xl/workbook.xml','<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Drawings" sheetId="1" r:id="rId1"/></sheets></workbook>'],
+    ['xl/_rels/workbook.xml.rels','<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>'],
+    ['xl/worksheets/sheet1.xml',sheet],['xl/worksheets/_rels/sheet1.xml.rels',rels]
+  ]);
 }
 
 async function searchEcsDrawingsV81521(from,question,user){
@@ -4293,13 +4319,27 @@ async function answerDocumentQuestionV81511(from,question,doc){
 }
 async function handleDocumentQuestionV81511(from,text,cmd,user){
   if(!user||user.approval_status!=='approved'||!user.is_active){await sendText(from,'Approved registration required to ask about documents.');return;}
-  const drawingChoice=cmd.match(/^DRAWING_MEDIA:(\d{1,2})$/);
+  if(/^DRAWING_RESULTS:(WHATSAPP|EXCEL)$/.test(cmd)||/^DRAWING_PAGE:\d+$/.test(cmd)){
+    if(!canReadDepartmentArchiveV81540(from,user)||!(await hasAuthorityV874(user,'VIEW'))){await sendText(from,'Drawing access is not available.');return;}
+    const s=documentSessionValueV81511(await safeSessionV855(from,'DRAWING_MEDIA_CHOICES'));
+    const selected=drawingSessionMatchesV81537(s,user);
+    if(!selected?.length){await sendText(from,'Selection expired. Search the drawing again.');return;}
+    if(cmd==='DRAWING_RESULTS:EXCEL'){
+      if(selected.length>5000){await sendText(from,`${selected.length} drawings match. Please add an equipment, area or part to make one complete Excel file of up to 5,000 drawings.`);return;}
+      try{await sendGeneratedDocumentV878(from,drawingResultsXlsxV81537(selected),'LMMM_Drawing_Search_Results.xlsx','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');}
+      catch(e){console.error('[DRAWING_EXCEL]',String(e?.message||e).slice(0,250));await sendText(from,'Excel export is temporarily unavailable. Choose WhatsApp list to browse the drawings.');}
+      return;
+    }
+    await sendDrawingPageV81537(from,selected,cmd.startsWith('DRAWING_PAGE:')?Number(cmd.split(':')[1]):0);return;
+  }
+  const drawingChoice=cmd.match(/^DRAWING_MEDIA:(\d+)$/);
   if(drawingChoice){
     if(!canReadDepartmentArchiveV81540(from,user)||!(await hasAuthorityV874(user,'VIEW'))){await sendText(from,'Drawing access is not available.');return;}
     const s=documentSessionValueV81511(await safeSessionV855(from,'DRAWING_MEDIA_CHOICES'));
-    const id=s?.expiresAt>Date.now()?s.ids?.[Number(drawingChoice[1])]:null;
-    const d=id?DRAWINGS_MASTER.drawings.find(x=>x.id===id):null;
+    const selected=drawingSessionMatchesV81537(s,user);
+    const d=selected?.[Number(drawingChoice[1])]?.d;
     if(!d){await sendText(from,'Selection expired. Search the drawing again.');return;}
+    const id=d.id;
     try{if(await sendDrawingMediaV81536(from,d)){
       if(/\.pdf$/i.test(String(d.filename||'')))await sendText(from,`📐 ${d.drawing_number||d.filename} — ${drawingShortDescriptionV81536(d)}`);
       await sendDrawingSourceV81536(from,d);return;
@@ -4436,7 +4476,7 @@ async function processMessage(from,text,payload=''){
   if(await handleSafetyLookupV81539(from,cmd))return;
   // Ask a document question before the employee-name directory catches natural phrases.
   const qaContext=documentSessionValueV81511(await safeSessionV855(from,'DOC_QA_CONTEXT'));
-  const qaSelection=/^DOC_QA_SELECT:(stored|pending):\d+$/.test(cmd)||/^DRAWING_MEDIA:\d{1,2}$/.test(cmd)||/^MAINT_EXPORT:(PDF|EXCEL)$/.test(cmd)||
+  const qaSelection=/^DOC_QA_SELECT:(stored|pending):\d+$/.test(cmd)||/^DRAWING_(?:MEDIA:\d+|PAGE:\d+|RESULTS:(?:WHATSAPP|EXCEL))$/.test(cmd)||/^MAINT_EXPORT:(PDF|EXCEL)$/.test(cmd)||
     /^MAINT_(?:DRAW_MORE|RESULT_MORE|ASSET:(?:ALL|[0-7])|MOD:(?:HISTORY|JOBS|DEFECTS|DRAWINGS|PARTS|SPARES|MANUALS|ALL)|SUGGEST:(?:SHOW|CANCEL))$/.test(cmd);
   const qaFreeText=!payload&&(looksLikeDrawingRequestV81535(text)||drawingNameIntentV81535(text)||documentQuestionIntentV81511(text)||
     (qaContext?.mode && qaContext.expiresAt>Date.now() && !/^(hi|hello|hey|start|back|search|version|menu|add entry|store data|check status|retry extraction|my account|my details|contact details|profile|remove me|exit|quit)$/i.test(cmd) && (!/^\d{6}$/.test(cmd)) && !/^[A-Z][a-z.'-]+(?: [A-Z][a-z.'-]+){1,2}$/.test(cmd)));
