@@ -3707,12 +3707,93 @@ async function drawingDriveBytesV81536(d){
   for await(const chunk of response.body){total+=chunk.length;if(total>limit){await response.body.cancel().catch(()=>{});throw new Error('Drawing exceeds WhatsApp media download limit');}chunks.push(chunk);}
   return Buffer.concat(chunks);
 }
+async function drawingDrivePreviewV81536(d){
+  // Drive renders TIFF previews itself. Fetching the thumbnail avoids decoding
+  // a very large engineering scan in the 512 MiB WhatsApp service.
+  const client=process.env.GOOGLE_DRIVE_CLIENT_ID,secret=process.env.GOOGLE_DRIVE_CLIENT_SECRET,refresh=process.env.GOOGLE_DRIVE_REFRESH_TOKEN;
+  if(!client||!secret||!refresh)return null;
+  const id=String(d.id||'');if(!/^[A-Za-z0-9_-]{12,}$/.test(id))return null;
+  const auth=await fetch('https://oauth2.googleapis.com/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({client_id:client,client_secret:secret,refresh_token:refresh,grant_type:'refresh_token'})});
+  if(!auth.ok)throw new Error(`Drive token refresh failed ${auth.status}`);
+  const token=(await auth.json()).access_token;if(!token)throw new Error('Drive token unavailable');
+  const meta=await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}?fields=thumbnailLink&supportsAllDrives=true`,{headers:{Authorization:`Bearer ${token}`}});
+  if(!meta.ok)throw new Error(`Drive preview metadata failed ${meta.status}`);
+  const url=String((await meta.json()).thumbnailLink||'');if(!url||!/^https:\/\//i.test(url))return null;
+  const previewUrl=url.replace(/=s\d+(?:-c)?(?=$|[&#])/i,'=s1600');
+  const response=await fetch(previewUrl,{headers:{Authorization:`Bearer ${token}`}});
+  if(!response.ok)throw new Error(`Drive preview download failed ${response.status}`);
+  const mime=String(response.headers.get('content-type')||'').split(';')[0].toLowerCase();
+  if(!['image/jpeg','image/png'].includes(mime))return null;
+  const limit=5*1024*1024,parts=[];let size=0;
+  for await(const part of response.body){size+=part.length;if(size>limit){await response.body.cancel().catch(()=>{});return null;}parts.push(part);}
+  return {bytes:Buffer.concat(parts),mime};
+}
+function tiffGroup4PdfV81536(bytes){
+  // A one-strip bilevel Group 4 scan can be embedded in a PDF unchanged.
+  // The renderer then scales before allocating an enormous pixel image.
+  if(bytes.length<16)return null;
+  const order=bytes.toString('ascii',0,2),le=order==='II';if(!le&&order!=='MM')return null;
+  const u16=o=>le?bytes.readUInt16LE(o):bytes.readUInt16BE(o);
+  const u32=o=>le?bytes.readUInt32LE(o):bytes.readUInt32BE(o);
+  if(u16(2)!==42)return null;
+  const ifd=u32(4);if(ifd+2>bytes.length)return null;
+  const entries=u16(ifd);if(entries>256||ifd+2+entries*12+4>bytes.length)return null;
+  const tags=new Map();
+  for(let i=0;i<entries;i++){
+    const o=ifd+2+i*12,tag=u16(o),type=u16(o+2),count=u32(o+4);
+    if(count===1&&(type===3||type===4))tags.set(tag,type===3?u16(o+8):u32(o+8));
+  }
+  const width=tags.get(256),height=tags.get(257),offset=tags.get(273),length=tags.get(279);
+  if(tags.get(259)!==4||!width||!height||width>30000||height>30000||!offset||!length||offset+length>bytes.length||tags.get(258)!==1||![0,1].includes(tags.get(262))||![undefined,1].includes(tags.get(274)))return null;
+  const data=bytes.subarray(offset,offset+length),parts=[],positions=[0];let cursor=0;
+  const add=b=>{const part=Buffer.isBuffer(b)?b:Buffer.from(b,'latin1');parts.push(part);cursor+=part.length;};
+  const obj=(id,body)=>{positions[id]=cursor;add(`${id} 0 obj\n`);add(body);add('\nendobj\n');};
+  add('%PDF-1.4\n');
+  obj(1,'<< /Type /Catalog /Pages 2 0 R >>');
+  obj(2,'<< /Type /Pages /Kids [3 0 R] /Count 1 >>');
+  obj(3,`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${width} ${height}] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>`);
+  positions[4]=cursor;add('4 0 obj\n');add(`<< /Type /XObject /Subtype /Image /Width ${width} /Height ${height} /ColorSpace /DeviceGray /BitsPerComponent 1 /Filter /CCITTFaxDecode /DecodeParms << /K -1 /Columns ${width} /Rows ${height} /BlackIs1 ${tags.get(262)===0?'false':'true'} >> /Length ${data.length} >>\nstream\n`);add(data);add('\nendstream\nendobj\n');
+  const content=`q ${width} 0 0 ${height} 0 0 cm /Im0 Do Q`;
+  obj(5,`<< /Length ${content.length} >>\nstream\n${content}\nendstream`);
+  const xref=cursor;add('xref\n0 6\n0000000000 65535 f \n');
+  for(let i=1;i<=5;i++)add(`${String(positions[i]).padStart(10,'0')} 00000 n \n`);
+  add(`trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`);
+  return Buffer.concat(parts);
+}
+async function tiffGroup4JpegV81536(bytes){
+  const pdf=tiffGroup4PdfV81536(bytes);if(!pdf)return null;
+  const fs=await import('node:fs/promises'),os=await import('node:os'),path=await import('node:path'),{spawn}=await import('node:child_process');
+  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'lmmm-group4-'));
+  const input=path.join(dir,'drawing.pdf'),output=path.join(dir,'preview');
+  try{
+    await fs.writeFile(input,pdf);
+    await new Promise((resolve,reject)=>{
+      const cp=spawn('/bin/sh',['-c','ulimit -v 262144; exec "$@"','drawing-render','pdftoppm','-f','1','-singlefile','-scale-to','1800','-jpeg','-jpegopt','quality=70',input,output],{stdio:['ignore','ignore','pipe']});
+      let err='',done=false;const finish=e=>{if(done)return;done=true;clearTimeout(timer);e?reject(e):resolve();};
+      const timer=setTimeout(()=>{cp.kill('SIGKILL');finish(new Error('PDF drawing preview timeout'));},45000);
+      cp.stderr.on('data',b=>{if(err.length<1000)err+=b.toString().slice(0,1000-err.length)});
+      cp.on('error',finish);cp.on('close',code=>finish(code===0?null:new Error(`PDF drawing preview failed ${code}: ${err.slice(0,180)}`)));
+    });
+    const stat=await fs.stat(`${output}.jpg`);if(stat.size>4*1024*1024)throw new Error('Drawing preview too large');
+    return await fs.readFile(`${output}.jpg`);
+  }finally{await fs.rm(dir,{recursive:true,force:true}).catch(()=>{});}
+}
 async function sendDrawingMediaV81536(from,d){
   const file=String(d.filename||'drawing'),ext=file.split('.').pop().toLowerCase();
   if(!['jpg','jpeg','png','tif','tiff','pdf'].includes(ext))return false;
-  const bytes=await drawingDriveBytesV81536(d);if(!bytes)return false;
   const caption=`${d.drawing_number||file} — ${String(d.description||d.descriptive_name||'Drawing').slice(0,350)}`;
   if(ext==='tif'||ext==='tiff'){
+    try{
+      const preview=await drawingDrivePreviewV81536(d);
+      if(preview?.bytes?.length){await sendDrawingImageV81536(from,preview.bytes,`drawing-${d.id}.${preview.mime==='image/png'?'png':'jpg'}`,caption,preview.mime);return true;}
+    }catch(e){console.warn('[DRAWING_PREVIEW]',d.id,String(e?.message||e).slice(0,180));}
+  }
+  const bytes=await drawingDriveBytesV81536(d);if(!bytes)return false;
+  if(ext==='tif'||ext==='tiff'){
+    try{
+      const jpg=await tiffGroup4JpegV81536(bytes);
+      if(jpg){await sendDrawingImageV81536(from,jpg,`drawing-${d.id}.jpg`,caption);return true;}
+    }catch(e){console.warn('[DRAWING_GROUP4]',d.id,String(e?.message||e).slice(0,180));}
     await withTiffTempV8136(bytes,async path=>{
       const {total}=await tiffPageCountV8137(path,250),count=Math.min(total||1,5);
       for(let page=1;page<=count;page++){
