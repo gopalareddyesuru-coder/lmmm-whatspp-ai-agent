@@ -1,9 +1,11 @@
-// LMMM drawings master loader — loads both split JSON masters.
+// LMMM drawings master loader — loads four GitHub-uploadable JSON parts.
 import { readFileSync } from 'node:fs';
 
 const DRAWING_MASTER_FILES = [
   new URL('./drawings_master.json', import.meta.url),
   new URL('./drawings_master_1.json', import.meta.url),
+  new URL('./drawings_master_2.json', import.meta.url),
+  new URL('./drawings_master_3.json', import.meta.url),
 ];
 
 export function loadDrawingsMaster() {
