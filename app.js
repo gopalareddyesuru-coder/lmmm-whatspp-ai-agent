@@ -1,10 +1,11 @@
-// LMMM AI Maintenance V8.15.34 TOD EQUIPMENT ALIASES
+// LMMM AI Maintenance V8.15.35 DRAWINGS MASTER TWO-FILE SEARCH
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
 import pg from 'pg';
 import { inflateRawSync } from 'node:zlib';
 import { readFileSync } from 'node:fs';
+import { DRAWINGS_MASTER } from './data/drawings_master_loader.js';
 
 const { Pool } = pg;
 const app = express();
@@ -3588,6 +3589,76 @@ async function showDrawingPageV81521(from,user,more=false){
   }
   return true;
 }
+
+
+// V8.15.35 — read-only drawing catalogue search over the two split JSON masters.
+// This does not alter registration, permissions, ingestion, history or existing archive search.
+function drawingNormV81535(v=''){return String(v||'').toUpperCase().replace(/[^A-Z0-9]/g,'');}
+function drawingFieldV81535(d,...keys){for(const k of keys){const v=d?.[k];if(v!==undefined&&v!==null&&String(v).trim())return String(v).trim();}return '';}
+function drawingTextV81535(d={}){
+  return [d.drawing_number,d.drawing_number_normalized,d.descriptive_name,d.description,d.equipment,d.sub_equipment,
+    d.part,d.part_assembly,d.assembly,d.area,d.section,d.filename,d.folder_path,...(Array.isArray(d.aliases)?d.aliases:[])]
+    .filter(Boolean).join(' ').toLowerCase();
+}
+function drawingAreaHintV81535(question='',user=null){
+  const q=String(question).toUpperCase();
+  if(/\b(?:BDM|BILLET MILL|BREAK ?DOWN MILL)\b/.test(q))return 'BDM';
+  if(/\b(?:BAR ?MILL|BARMILL)\b/.test(q))return 'BAR MILL';
+  return canonicalArea(user?.area_of_working||'');
+}
+function drawingQueryV81535(question=''){
+  const raw=String(question||'').trim();
+  const cleaned=raw.replace(/\b(?:show|open|find|search|give|need|want|please|drawing|drawings|drg|number|no|chupi|chupinchu|kavali)\b/gi,' ').replace(/\s+/g,' ').trim();
+  return cleaned||raw;
+}
+function looksLikeDrawingRequestV81535(question=''){
+  const q=String(question||'');
+  if(/\b(?:drawings?|drg)\b/i.test(q))return true;
+  // Identifier-like values containing both letters and digits, or common LMMM drawing-series numbers.
+  const compact=drawingNormV81535(q);
+  return /[A-Z]/.test(compact)&&/\d/.test(compact)&&compact.length>=6 || /\b170\d{3,7}(?:[-/]\d+)?\b/i.test(q);
+}
+function searchDrawingsMasterV81535(question='',user=null){
+  const query=drawingQueryV81535(question), qNorm=drawingNormV81535(query), qLower=query.toLowerCase();
+  const words=(qLower.match(/[a-z0-9]{2,}/g)||[]).filter(w=>!['drawing','drawings','drg','show','open','find','search'].includes(w));
+  const areaHint=drawingAreaHintV81535(question,user), areaKey=String(areaHint||'').toUpperCase();
+  const results=[];
+  for(const d of (DRAWINGS_MASTER?.drawings||[])){
+    const no=drawingFieldV81535(d,'drawing_number','drawing_no'), noNorm=drawingNormV81535(no||d.drawing_number_normalized||'');
+    const text=drawingTextV81535(d), dArea=String(d.area||'').toUpperCase(); let score=0, exact=false;
+    if(qNorm&&noNorm&&qNorm===noNorm){score+=10000;exact=true;}
+    else if(qNorm&&noNorm&&qNorm.length>=5&&(noNorm.includes(qNorm)||qNorm.includes(noNorm)))score+=800;
+    if(qLower&&text.includes(qLower))score+=500;
+    for(const w of words)if(text.includes(w))score+=35;
+    if(areaKey&&dArea&&dArea===areaKey)score+=120;
+    // Strong explicit area mismatch penalty prevents BDM/ECS and Bar Mill furnace cross-retrieval.
+    if(/\bBDM\b/i.test(question)&&dArea&&dArea!=='BDM')score-=500;
+    if(/\bBAR ?MILL\b/i.test(question)&&dArea&&dArea!=='BAR MILL')score-=500;
+    if(score>0)results.push({d,score,exact});
+  }
+  results.sort((a,b)=>Number(b.exact)-Number(a.exact)||b.score-a.score||String(a.d.drawing_number||'').localeCompare(String(b.d.drawing_number||''),undefined,{numeric:true}));
+  return results;
+}
+function drawingDisplayV81535(d={}){
+  const no=drawingFieldV81535(d,'drawing_number','drawing_no')||'Drawing number not indexed';
+  const name=drawingFieldV81535(d,'descriptive_name','description','filename');
+  const eq=drawingFieldV81535(d,'equipment'), part=drawingFieldV81535(d,'sub_equipment','part','part_assembly','assembly');
+  const area=drawingFieldV81535(d,'area'), rev=drawingFieldV81535(d,'revision'), sheet=drawingFieldV81535(d,'page_sheet');
+  const link=drawingFieldV81535(d,'drive_url','url','web_view_link');
+  return [`📐 ${no}${name?` — ${name}`:''}`,area?`Area: ${area}`:'',eq?`Equipment: ${eq}`:'',part?`Part/Assembly: ${part}`:'',rev?`Revision: ${rev}`:'',sheet?`Sheet/Page: ${sheet}`:'',link?`🔗 Open drawing: ${link}`:''].filter(Boolean).join('\n');
+}
+async function searchJsonDrawingMasterV81535(from,question,user){
+  if(!looksLikeDrawingRequestV81535(question)||!canReadDepartmentArchiveV81540(from,user)||!(await hasAuthorityV874(user,'VIEW')))return false;
+  const hits=searchDrawingsMasterV81535(question,user); if(!hits.length)return false;
+  const exact=hits.filter(x=>x.exact);
+  // Do not collapse repeated drawing numbers: they may be separate pages/revisions/files.
+  const selected=(exact.length?exact:hits).slice(0,20);
+  if(selected.length===1){await sendText(from,drawingDisplayV81535(selected[0].d).slice(0,3900));return true;}
+  const lines=selected.map((x,i)=>`${i+1}. ${drawingDisplayV81535(x.d)}`);
+  await sendText(from,`Drawing matches${exact.length?' for exact identifier':''}:\n\n${lines.join('\n\n')}`.slice(0,3900));
+  return true;
+}
+
 async function searchEcsDrawingsV81521(from,question,user){
   if(!canReadDepartmentArchiveV81540(from,user)||!(await hasAuthorityV874(user,'VIEW')))return false;
   const term=String(question||'').toUpperCase();
@@ -3883,6 +3954,7 @@ async function handleUniversalSearchV81513(from,question,user,options={}){
   if(!(await hasAuthorityV874(user,'VIEW'))){await sendText(from,'Search access is not enabled for your account.');return true;}
   question=normalizeMaintenanceQueryV81524(question);
   if(await answerChargingEquipmentCountV81533(from,question))return true;
+  if((!options.module||options.module==='DRAWINGS')&&await searchJsonDrawingMasterV81535(from,question,user))return true;
   if((!options.module||options.module==='DRAWINGS')&&await searchEcsDrawingsV81521(from,question,user))return true;
   if((!options.module||options.module==='DRAWINGS')&&await searchDrawingCatalogV81522(from,question,user))return true;
   const language=options.language||await searchLanguageV81515(from,question),te=language==='TE';
