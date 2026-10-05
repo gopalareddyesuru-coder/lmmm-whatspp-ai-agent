@@ -12,7 +12,8 @@ const app = express();
 app.use(express.json({limit:'5mb'}));
 
 const PORT = Number(process.env.PORT || 10000);
-const INGEST_WORKERS_V8156 = Math.max(1, Math.min(3, Number(process.env.INGEST_WORKERS || 2)));
+// The 512 MiB Render instance must not run parallel document extractions.
+const INGEST_WORKERS_V8156 = 1;
 const INGEST_POLL_MS_V8156 = Math.max(1000, Number(process.env.INGEST_POLL_MS || 2000));
 let activeIngestWorkersV8156 = 0;
 let ingestPumpBusyV8156 = false;
@@ -3639,6 +3640,16 @@ function searchDrawingsMasterV81535(question='',user=null){
   const query=drawingQueryV81535(question), qNorm=drawingNormV81535(query), qLower=query.toLowerCase();
   const discipline= /\bhydraulics?\b/i.test(query)?'Hydraulic':/\bcivil\b/i.test(query)?'Civil / structural':/\b(?:electrical|electric|automation)\b/i.test(query)?'Electrical / automation':/\bmechanical\b/i.test(query)?'Mechanical':/\b(?:piping|utilities)\b/i.test(query)?'Piping / utilities':'';
   const identifierOnly=/^[A-Za-z0-9./-]{6,}$/.test(query)&&/[A-Za-z]/.test(query)&&/\d/.test(query);
+  // Exact number lookup avoids building catalogue-wide description strings.
+  if(identifierOnly){
+    const exact=[];
+    for(const d of (DRAWINGS_MASTER?.drawings||[])){
+      const no=drawingFieldV81535(d,'drawing_number','drawing_no');
+      const stem=String(d.filename||'').replace(/\.(?:tiff?|pdf|jpe?g|png|dwg|dxf)$/i,'').replace(/\s+(?:SHEET|SH)\s*\d+(?:\s*OF\s*\d+)?$/i,'');
+      if([no,d.drawing_number_normalized,stem,...(Array.isArray(d.aliases)?d.aliases:[])].some(v=>String(v||'').split('|').some(s=>drawingNormV81535(s)===qNorm)))exact.push({d,score:10000,exact:true});
+    }
+    if(exact.length)return exact;
+  }
   const words=(qLower.match(/[a-z0-9]{2,}/g)||[]).filter(w=>!['drawing','drawings','drg','show','open','find','search'].includes(w));
   const areaHint=drawingAreaHintV81535(question,user), areaKey=String(areaHint||'').toUpperCase();
   const results=[];
