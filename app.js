@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.38 ADMIN DRAWING MEDIA ACCESS 2026-10-05
+// LMMM AI Maintenance V8.15.39 DRAWING LIST PDF ACCESS 2026-10-05
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -3834,10 +3834,32 @@ async function searchJsonDrawingMasterV81535(from,question,user){
     catch(e){console.error('[DRAWING_MEDIA]',d.id,String(e?.message||e).slice(0,250));}
     await sendText(from,`📐 ${d.drawing_number||d.filename} — ${drawingShortDescriptionV81536(d)}\nImage temporarily unavailable.\n🔗 ${d.drive_url||''}`.slice(0,1000));return true;
   }
+  if(!isOwner(from)){
+    await sendDrawingTwentyV81539(from,selected);
+    if(selected.length>20&&await hasAuthorityV874(user,'PDF')){
+      try{await sendDrawingNamesPdfV81539(from,selected);}
+      catch(e){console.error('[DRAWING_LIST_PDF]',String(e?.message||e).slice(0,250));await sendText(from,'Full drawing PDF is temporarily unavailable. Narrow the search and try again.');}
+    }
+    return true;
+  }
   await saveDocumentSessionV81511(from,'DRAWING_MEDIA_CHOICES',{question,expiresAt:Date.now()+30*60000});
   if(selected.length<=10)await sendDrawingPageV81537(from,selected,0,isOwner(from));
   else await sendButtons(from,`${selected.length} drawing matches. Choose how to view the complete list.`,[{id:'DRAWING_RESULTS:WHATSAPP',title:'WhatsApp list'},{id:'DRAWING_RESULTS:EXCEL',title:'Excel full list'}]);
   return true;
+}
+async function sendDrawingTwentyV81539(from,selected){
+  const shown=selected.slice(0,20),lines=shown.map((x,i)=>{
+    const d=x.d,number=drawingFieldV81535(d,'drawing_number','filename')||'Number unverified';
+    const area=drawingFieldV81535(d,'area'),equipment=drawingFieldV81535(d,'equipment');
+    return `${i+1}. ${number} — ${drawingShortDescriptionV81536(d,115)}${area?` | Area: ${area}`:''}${equipment?` | Equipment (source index): ${equipment}`:''}`;
+  });
+  let message=`Drawing matches: ${selected.length}. Showing ${shown.length} names and numbers:`;
+  for(const line of lines){if(message.length+line.length>2900){await sendText(from,message);message='';}message+=`\n${line}`;}
+  if(message)await sendText(from,message);
+}
+async function sendDrawingNamesPdfV81539(from,selected){
+  const rows=selected.map((x,i)=>({item_no:i+1,identifier:drawingFieldV81535(x.d,'drawing_number')||'Unverified',description:drawingFieldV81535(x.d,'description','descriptive_name','filename'),area:drawingFieldV81535(x.d,'area'),equipment:drawingFieldV81535(x.d,'equipment')}));
+  await sendGeneratedDocumentV878(from,tablePdfV880({document_type:'DRAWING_SEARCH',extracted_items:rows},`Drawing search: ${selected.length} matches`),'LMMM_Drawing_Names_and_Numbers.pdf','application/pdf');
 }
 function drawingSessionMatchesV81537(s,user){
   if(!s?.question||s.expiresAt<Date.now())return null;
@@ -4329,6 +4351,13 @@ async function handleDocumentQuestionV81511(from,text,cmd,user){
     const s=documentSessionValueV81511(await safeSessionV855(from,'DRAWING_MEDIA_CHOICES'));
     const selected=drawingSessionMatchesV81537(s,user);
     if(!selected?.length){await sendText(from,'Selection expired. Search the drawing again.');return;}
+    if(!isOwner(from)){
+      await sendDrawingTwentyV81539(from,selected);
+      if(selected.length>20&&await hasAuthorityV874(user,'PDF')){
+        try{await sendDrawingNamesPdfV81539(from,selected);}catch(e){console.error('[DRAWING_LIST_PDF]',String(e?.message||e).slice(0,250));await sendText(from,'Full drawing PDF is temporarily unavailable.');}
+      }
+      return;
+    }
     if(cmd==='DRAWING_RESULTS:EXCEL'){
       if(selected.length>5000){await sendText(from,`${selected.length} drawings match. Please add an equipment, area or part to make one complete Excel file of up to 5,000 drawings.`);return;}
       try{await sendGeneratedDocumentV878(from,drawingResultsXlsxV81537(selected,isOwner(from)),'LMMM_Drawing_Search_Results.xlsx','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');}
@@ -4796,4 +4825,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.35 DRAWINGS IMAGE + COMPACT REPLIES listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.39 DRAWING LIST PDF ACCESS listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
