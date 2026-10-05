@@ -3596,8 +3596,8 @@ async function showDrawingPageV81521(from,user,more=false){
 function drawingNormV81535(v=''){return String(v||'').toUpperCase().replace(/[^A-Z0-9]/g,'');}
 function drawingFieldV81535(d,...keys){for(const k of keys){const v=d?.[k];if(v!==undefined&&v!==null&&String(v).trim())return String(v).trim();}return '';}
 function drawingTextV81535(d={}){
-  return [d.drawing_number,d.drawing_number_normalized,d.descriptive_name,d.description,d.equipment,d.sub_equipment,
-    d.part,d.part_assembly,d.assembly,d.area,d.section,d.filename,d.folder_path,...(Array.isArray(d.aliases)?d.aliases:[])]
+  return [d.drawing_number,d.drawing_number_normalized,d.drawing_series_6,d.descriptive_name,d.description,d.indexed_subject,d.indexed_part_name,d.indexed_sub_equipment,d.equipment,d.sub_equipment,
+    d.part,d.part_assembly,d.assembly,d.area,d.section,d.filename,d.folder_path,d.equipment_inference?.candidate,...(d.indexed_disciplines||[]),...(d.folder_hierarchy_hint||[]),...(Array.isArray(d.aliases)?d.aliases:[])]
     .filter(Boolean).join(' ').toLowerCase();
 }
 function drawingAreaHintV81535(question='',user=null){
@@ -3618,44 +3618,69 @@ function looksLikeDrawingRequestV81535(question=''){
   const compact=drawingNormV81535(q);
   return /[A-Z]/.test(compact)&&/\d/.test(compact)&&compact.length>=6 || /\b170\d{3,7}(?:[-/]\d+)?\b/i.test(q);
 }
+function drawingNameIntentV81535(question=''){
+  const q=String(question||'').trim().toLowerCase();
+  if(q.length<7||q.length>100||/\b(?:history|job|defect|procedure|smp|sop|manpower|permit|inspection|breakdown|status)\b/i.test(q))return false;
+  const term=drawingQueryV81535(q);
+  if(term.length<7)return false;
+  return (DRAWINGS_MASTER?.drawings||[]).some(d=>[d.description,d.descriptive_name,d.indexed_subject,d.indexed_part_name,d.indexed_sub_equipment].some(v=>v&&String(v).toLowerCase().includes(term)));
+}
 function searchDrawingsMasterV81535(question='',user=null){
   const query=drawingQueryV81535(question), qNorm=drawingNormV81535(query), qLower=query.toLowerCase();
+  const discipline= /\bhydraulics?\b/i.test(query)?'Hydraulic':/\bcivil\b/i.test(query)?'Civil / structural':/\b(?:electrical|electric|automation)\b/i.test(query)?'Electrical / automation':/\bmechanical\b/i.test(query)?'Mechanical':/\b(?:piping|utilities)\b/i.test(query)?'Piping / utilities':'';
+  const identifierOnly=/^[A-Za-z0-9./-]{6,}$/.test(query)&&/[A-Za-z]/.test(query)&&/\d/.test(query);
   const words=(qLower.match(/[a-z0-9]{2,}/g)||[]).filter(w=>!['drawing','drawings','drg','show','open','find','search'].includes(w));
   const areaHint=drawingAreaHintV81535(question,user), areaKey=String(areaHint||'').toUpperCase();
   const results=[];
   for(const d of (DRAWINGS_MASTER?.drawings||[])){
     const no=drawingFieldV81535(d,'drawing_number','drawing_no'), noNorm=drawingNormV81535(no||d.drawing_number_normalized||'');
     const text=drawingTextV81535(d), dArea=String(d.area||'').toUpperCase(); let score=0, exact=false;
-    if(qNorm&&noNorm&&qNorm===noNorm){score+=10000;exact=true;}
+    const fileStem=String(d.filename||'').replace(/\.(?:tiff?|pdf|jpe?g|png|dwg|dxf)$/i,'').replace(/\s+(?:SHEET|SH)\s*\d+(?:\s*OF\s*\d+)?$/i,'');
+    const exactIds=[no,d.drawing_number_normalized,fileStem,...(Array.isArray(d.aliases)?d.aliases:[])]
+      .flatMap(v=>String(v||'').split('|')).map(drawingNormV81535);
+    if(qNorm&&exactIds.includes(qNorm)){score+=10000;exact=true;}
     else if(qNorm&&noNorm&&qNorm.length>=5&&(noNorm.includes(qNorm)||qNorm.includes(noNorm)))score+=800;
-    if(qLower&&text.includes(qLower))score+=500;
-    for(const w of words)if(text.includes(w))score+=35;
-    if(areaKey&&dArea&&dArea===areaKey)score+=120;
+    const subject=[d.description,d.descriptive_name,d.indexed_subject,d.indexed_part_name,d.indexed_sub_equipment].filter(Boolean).join(' ').toLowerCase();
+    if(discipline && (d.indexed_disciplines||[]).includes(discipline))score+=1200;
+    if(qLower&&subject.includes(qLower))score+=1500;
+    else if(qLower&&text.includes(qLower))score+=500;
+    if(!identifierOnly&&words.length&&words.every(w=>subject.includes(w)))score+=650;
+    if(!identifierOnly)for(const w of words)if(text.includes(w))score+=35;
+    if(score>0&&areaKey&&dArea&&dArea===areaKey)score+=120;
     // Strong explicit area mismatch penalty prevents BDM/ECS and Bar Mill furnace cross-retrieval.
     if(/\bBDM\b/i.test(question)&&dArea&&dArea!=='BDM')score-=500;
     if(/\bBAR ?MILL\b/i.test(question)&&dArea&&dArea!=='BAR MILL')score-=500;
     if(score>0)results.push({d,score,exact});
   }
   results.sort((a,b)=>Number(b.exact)-Number(a.exact)||b.score-a.score||String(a.d.drawing_number||'').localeCompare(String(b.d.drawing_number||''),undefined,{numeric:true}));
+  if(results.some(x=>x.exact))return results.filter(x=>x.exact);
+  if(discipline){const matching=results.filter(x=>(x.d.indexed_disciplines||[]).includes(discipline));if(matching.length)return matching;}
+  if(!identifierOnly&&words.length>1){
+    const complete=results.filter(x=>words.every(w=>drawingTextV81535(x.d).includes(w)));
+    if(complete.length)return complete;
+  }
   return results;
 }
 function drawingDisplayV81535(d={}){
-  const no=drawingFieldV81535(d,'drawing_number','drawing_no')||'Drawing number not indexed';
-  const name=drawingFieldV81535(d,'descriptive_name','description','filename');
+  const no=drawingFieldV81535(d,'drawing_number','drawing_no')||`Number unverified; file: ${drawingFieldV81535(d,'filename')}`;
+  const name=drawingFieldV81535(d,'description','descriptive_name','filename');
   const eq=drawingFieldV81535(d,'equipment'), part=drawingFieldV81535(d,'sub_equipment','part','part_assembly','assembly');
   const area=drawingFieldV81535(d,'area'), rev=drawingFieldV81535(d,'revision'), sheet=drawingFieldV81535(d,'page_sheet');
   const link=drawingFieldV81535(d,'drive_url','url','web_view_link');
-  return [`📐 ${no}${name?` — ${name}`:''}`,area?`Area: ${area}`:'',eq?`Equipment: ${eq}`:'',part?`Part/Assembly: ${part}`:'',rev?`Revision: ${rev}`:'',sheet?`Sheet/Page: ${sheet}`:'',link?`🔗 Open drawing: ${link}`:''].filter(Boolean).join('\n');
+  return [`📐 ${no}${name?` — ${name}`:''}`,area?`Area (source index/hint): ${area}`:'',eq?`Equipment (source index; unverified): ${eq}`:'',!eq&&d.equipment_inference?.candidate?`Likely equipment (inferred; verify drawing): ${d.equipment_inference.candidate}`:'',part?`Part/Assembly: ${part}`:'',d.indexed_sub_equipment?`Indexed sub-equipment: ${d.indexed_sub_equipment}`:'',d.indexed_part_name?`Indexed subject/part: ${d.indexed_part_name}`:'',d.drawing_series_6?`Series: ${d.drawing_series_6} (${d.drawing_series_basis})`:'',d.indexed_disciplines?.length?`Disciplines (${d.discipline_evidence}): ${d.indexed_disciplines.join(', ')}`:'',rev?`Revision: ${rev}`:'',sheet?`Sheet/Page: ${sheet}`:'',link?`🔗 Open drawing: ${link}`:''].filter(Boolean).join('\n');
 }
 async function searchJsonDrawingMasterV81535(from,question,user){
-  if(!looksLikeDrawingRequestV81535(question)||!canReadDepartmentArchiveV81540(from,user)||!(await hasAuthorityV874(user,'VIEW')))return false;
+  if(!(looksLikeDrawingRequestV81535(question)||drawingNameIntentV81535(question))||!canReadDepartmentArchiveV81540(from,user)||!(await hasAuthorityV874(user,'VIEW')))return false;
   const hits=searchDrawingsMasterV81535(question,user); if(!hits.length)return false;
   const exact=hits.filter(x=>x.exact);
   // Do not collapse repeated drawing numbers: they may be separate pages/revisions/files.
   const selected=(exact.length?exact:hits).slice(0,20);
   if(selected.length===1){await sendText(from,drawingDisplayV81535(selected[0].d).slice(0,3900));return true;}
-  const lines=selected.map((x,i)=>`${i+1}. ${drawingDisplayV81535(x.d)}`);
-  await sendText(from,`Drawing matches${exact.length?' for exact identifier':''}:\n\n${lines.join('\n\n')}`.slice(0,3900));
+  const lines=selected.map((x,i)=>`${i+1}. ${drawingFieldV81535(x.d,'drawing_number')||'Number not indexed'} — ${drawingFieldV81535(x.d,'description','descriptive_name','filename')}\n🔗 ${drawingFieldV81535(x.d,'drive_url')}`);
+  let reply=`Drawing matches${exact.length?' for exact identifier':''}:`;let shown=0;
+  for(const line of lines){if(reply.length+line.length>3800)break;reply+=`\n\n${line}`;shown++;}
+  if(selected.length>shown)reply+=`\n\n${selected.length-shown} more matches. Narrow by drawing number or part name.`;
+  await sendText(from,reply);
   return true;
 }
 
@@ -4245,7 +4270,7 @@ async function processMessage(from,text,payload=''){
   const qaContext=documentSessionValueV81511(await safeSessionV855(from,'DOC_QA_CONTEXT'));
   const qaSelection=/^DOC_QA_SELECT:(stored|pending):\d+$/.test(cmd)||/^MAINT_EXPORT:(PDF|EXCEL)$/.test(cmd)||
     /^MAINT_(?:DRAW_MORE|RESULT_MORE|ASSET:(?:ALL|[0-7])|MOD:(?:HISTORY|JOBS|DEFECTS|DRAWINGS|PARTS|SPARES|MANUALS|ALL)|SUGGEST:(?:SHOW|CANCEL))$/.test(cmd);
-  const qaFreeText=!payload&&(documentQuestionIntentV81511(text)||
+  const qaFreeText=!payload&&(looksLikeDrawingRequestV81535(text)||drawingNameIntentV81535(text)||documentQuestionIntentV81511(text)||
     (qaContext?.mode && qaContext.expiresAt>Date.now() && !/^(hi|hello|hey|start|back|search|version|menu|add entry|store data|check status|retry extraction|my account|my details|contact details|profile|remove me|exit|quit)$/i.test(cmd) && (!/^\d{6}$/.test(cmd)) && !/^[A-Z][a-z.'-]+(?: [A-Z][a-z.'-]+){1,2}$/.test(cmd)));
   // A bare equipment/part name can look exactly like an employee's name.
   // Preserve actual employee lookups; route unmatched names to maintenance search.
