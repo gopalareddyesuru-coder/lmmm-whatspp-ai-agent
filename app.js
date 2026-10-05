@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.35 DRAWINGS MASTER SEARCH
+// LMMM AI Maintenance V8.15.35 DRAWINGS IMAGE + COMPACT REPLIES 2026-10-05
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -3778,10 +3778,20 @@ async function tiffGroup4JpegV81536(bytes){
     return await fs.readFile(`${output}.jpg`);
   }finally{await fs.rm(dir,{recursive:true,force:true}).catch(()=>{});}
 }
+function drawingShortDescriptionV81536(d,max=110){
+  const raw=String(d.description||d.descriptive_name||d.indexed_part_name||d.filename||'Drawing').replace(/\s+/g,' ').trim();
+  if(raw.length<=max)return raw;
+  const clipped=raw.slice(0,max-1),end=clipped.lastIndexOf(' ');
+  return `${clipped.slice(0,end>max/2?end:max-1).trim()}…`;
+}
+async function sendDrawingSourceV81536(from,d){
+  const url=String(d.drive_url||d.url||d.web_view_link||'').trim();
+  if(url)await sendText(from,`🔗 Open original drawing: ${url}`);
+}
 async function sendDrawingMediaV81536(from,d){
   const file=String(d.filename||'drawing'),ext=file.split('.').pop().toLowerCase();
   if(!['jpg','jpeg','png','tif','tiff','pdf'].includes(ext))return false;
-  const caption=`${d.drawing_number||file} — ${String(d.description||d.descriptive_name||'Drawing').slice(0,350)}`;
+  const caption=`${d.drawing_number||file} — ${drawingShortDescriptionV81536(d,110)}`;
   if(ext==='tif'||ext==='tiff'){
     try{
       const preview=await drawingDrivePreviewV81536(d);
@@ -3814,17 +3824,18 @@ async function searchJsonDrawingMasterV81535(from,question,user){
   const selected=(exact.length?exact:hits).slice(0,20);
   if(selected.length===1){
     const d=selected[0].d;
-    try{if(await sendDrawingMediaV81536(from,d)){await sendText(from,`📐 ${d.drawing_number||d.filename}\n${String(d.description||d.descriptive_name||'').slice(0,350)}\nSource: ${d.drive_url}`);return true;}}
+    try{if(await sendDrawingMediaV81536(from,d)){
+      if(/\.pdf$/i.test(String(d.filename||'')))await sendText(from,`📐 ${d.drawing_number||d.filename} — ${drawingShortDescriptionV81536(d)}`);
+      await sendDrawingSourceV81536(from,d);return true;
+    }}
     catch(e){console.error('[DRAWING_MEDIA]',d.id,String(e?.message||e).slice(0,250));}
-    await sendText(from,drawingDisplayV81535(d).slice(0,3900));return true;
+    await sendText(from,`📐 ${d.drawing_number||d.filename} — ${drawingShortDescriptionV81536(d)}\nImage temporarily unavailable.\n🔗 ${d.drive_url||''}`.slice(0,1000));return true;
   }
-  const lines=selected.map((x,i)=>`${i+1}. ${drawingFieldV81535(x.d,'drawing_number')||'Number not indexed'} — ${drawingFieldV81535(x.d,'description','descriptive_name','filename')}\n🔗 ${drawingFieldV81535(x.d,'drive_url')}`);
-  await saveDocumentSessionV81511(from,'DRAWING_MEDIA_CHOICES',{ids:selected.slice(0,10).map(x=>x.d.id),expiresAt:Date.now()+10*60000});
-  let reply=`Drawing matches${exact.length?' for exact identifier':''}:`;let shown=0;
-  for(const line of lines){if(reply.length+line.length>3800)break;reply+=`\n\n${line}`;shown++;}
-  if(selected.length>shown)reply+=`\n\n${selected.length-shown} more matches. Narrow by drawing number or part name.`;
-  await sendText(from,reply);
-  await sendList(from,'Select a drawing to receive its image or PDF in WhatsApp.','Select drawing',selected.slice(0,10).map((x,i)=>({id:`DRAWING_MEDIA:${i}`,title:String(x.d.drawing_number||x.d.filename||`Drawing ${i+1}`).slice(0,24),description:String(x.d.description||x.d.descriptive_name||'Open drawing').slice(0,72)})),'Drawings');
+  await saveDocumentSessionV81511(from,'DRAWING_MEDIA_CHOICES',{ids:selected.map(x=>x.d.id),expiresAt:Date.now()+10*60000});
+  for(let start=0;start<selected.length;start+=10){
+    const page=selected.slice(start,start+10);
+    await sendList(from,`${selected.length} drawing matches${exact.length?' for this number':''}. Select one to receive its image and original link${selected.length>10?` (${start+1}–${start+page.length})`:''}.`,'Select drawing',page.map((x,i)=>({id:`DRAWING_MEDIA:${start+i}`,title:String(x.d.drawing_number||x.d.filename||`Drawing ${start+i+1}`).slice(0,24),description:drawingShortDescriptionV81536(x.d,72)})),'Drawing matches');
+  }
   return true;
 }
 
@@ -4282,15 +4293,18 @@ async function answerDocumentQuestionV81511(from,question,doc){
 }
 async function handleDocumentQuestionV81511(from,text,cmd,user){
   if(!user||user.approval_status!=='approved'||!user.is_active){await sendText(from,'Approved registration required to ask about documents.');return;}
-  const drawingChoice=cmd.match(/^DRAWING_MEDIA:(\d)$/);
+  const drawingChoice=cmd.match(/^DRAWING_MEDIA:(\d{1,2})$/);
   if(drawingChoice){
     if(!canReadDepartmentArchiveV81540(from,user)||!(await hasAuthorityV874(user,'VIEW'))){await sendText(from,'Drawing access is not available.');return;}
     const s=documentSessionValueV81511(await safeSessionV855(from,'DRAWING_MEDIA_CHOICES'));
     const id=s?.expiresAt>Date.now()?s.ids?.[Number(drawingChoice[1])]:null;
     const d=id?DRAWINGS_MASTER.drawings.find(x=>x.id===id):null;
     if(!d){await sendText(from,'Selection expired. Search the drawing again.');return;}
-    try{if(await sendDrawingMediaV81536(from,d))return;}catch(e){console.error('[DRAWING_MEDIA_CHOICE]',id,String(e?.message||e).slice(0,250));}
-    await sendText(from,drawingDisplayV81535(d));return;
+    try{if(await sendDrawingMediaV81536(from,d)){
+      if(/\.pdf$/i.test(String(d.filename||'')))await sendText(from,`📐 ${d.drawing_number||d.filename} — ${drawingShortDescriptionV81536(d)}`);
+      await sendDrawingSourceV81536(from,d);return;
+    }}catch(e){console.error('[DRAWING_MEDIA_CHOICE]',id,String(e?.message||e).slice(0,250));}
+    await sendText(from,`📐 ${d.drawing_number||d.filename} — ${drawingShortDescriptionV81536(d)}\nImage temporarily unavailable.\n🔗 ${d.drive_url||''}`.slice(0,1000));return;
   }
   if(/^MAINT_EXPORT:(PDF|EXCEL)$/.test(cmd)){await handleSearchExportV81518(from,cmd,user);return;}
   if(/^MAINT_(?:DRAW_MORE|RESULT_MORE|ASSET:(?:ALL|[0-7])|MOD:(?:HISTORY|JOBS|DEFECTS|DRAWINGS|PARTS|SPARES|MANUALS|ALL)|SUGGEST:(?:SHOW|CANCEL))$/.test(cmd)){
@@ -4422,7 +4436,7 @@ async function processMessage(from,text,payload=''){
   if(await handleSafetyLookupV81539(from,cmd))return;
   // Ask a document question before the employee-name directory catches natural phrases.
   const qaContext=documentSessionValueV81511(await safeSessionV855(from,'DOC_QA_CONTEXT'));
-  const qaSelection=/^DOC_QA_SELECT:(stored|pending):\d+$/.test(cmd)||/^DRAWING_MEDIA:\d$/.test(cmd)||/^MAINT_EXPORT:(PDF|EXCEL)$/.test(cmd)||
+  const qaSelection=/^DOC_QA_SELECT:(stored|pending):\d+$/.test(cmd)||/^DRAWING_MEDIA:\d{1,2}$/.test(cmd)||/^MAINT_EXPORT:(PDF|EXCEL)$/.test(cmd)||
     /^MAINT_(?:DRAW_MORE|RESULT_MORE|ASSET:(?:ALL|[0-7])|MOD:(?:HISTORY|JOBS|DEFECTS|DRAWINGS|PARTS|SPARES|MANUALS|ALL)|SUGGEST:(?:SHOW|CANCEL))$/.test(cmd);
   const qaFreeText=!payload&&(looksLikeDrawingRequestV81535(text)||drawingNameIntentV81535(text)||documentQuestionIntentV81511(text)||
     (qaContext?.mode && qaContext.expiresAt>Date.now() && !/^(hi|hello|hey|start|back|search|version|menu|add entry|store data|check status|retry extraction|my account|my details|contact details|profile|remove me|exit|quit)$/i.test(cmd) && (!/^\d{6}$/.test(cmd)) && !/^[A-Z][a-z.'-]+(?: [A-Z][a-z.'-]+){1,2}$/.test(cmd)));
@@ -4736,4 +4750,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.20 CONCISE SOURCE ANSWERS listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.35 DRAWINGS IMAGE + COMPACT REPLIES listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
