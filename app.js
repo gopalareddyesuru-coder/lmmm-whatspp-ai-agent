@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.37 DRAWING BROWSE + FULL EXCEL 2026-10-05
+// LMMM AI Maintenance V8.15.38 ADMIN DRAWING MEDIA ACCESS 2026-10-05
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -3684,13 +3684,13 @@ function searchDrawingsMasterV81535(question='',user=null){
   }
   return results;
 }
-function drawingDisplayV81535(d={}){
+function drawingDisplayV81535(d={},includeLink=false){
   const no=drawingFieldV81535(d,'drawing_number','drawing_no')||`Number unverified; file: ${drawingFieldV81535(d,'filename')}`;
   const name=drawingFieldV81535(d,'description','descriptive_name','filename');
   const eq=drawingFieldV81535(d,'equipment'), part=drawingFieldV81535(d,'sub_equipment','part','part_assembly','assembly');
   const area=drawingFieldV81535(d,'area'), rev=drawingFieldV81535(d,'revision'), sheet=drawingFieldV81535(d,'page_sheet');
   const link=drawingFieldV81535(d,'drive_url','url','web_view_link');
-  return [`📐 ${no}${name?` — ${name}`:''}`,area?`Area (source index/hint): ${area}`:'',eq?`Equipment (source index; unverified): ${eq}`:'',!eq&&d.equipment_inference?.candidate?`Likely equipment (inferred; verify drawing): ${d.equipment_inference.candidate}`:'',part?`Part/Assembly: ${part}`:'',d.indexed_sub_equipment?`Indexed sub-equipment: ${d.indexed_sub_equipment}`:'',d.indexed_part_name?`Indexed subject/part: ${d.indexed_part_name}`:'',d.drawing_series_6?`Series: ${d.drawing_series_6} (${d.drawing_series_basis})`:'',d.indexed_disciplines?.length?`Disciplines (${d.discipline_evidence}): ${d.indexed_disciplines.join(', ')}`:'',rev?`Revision: ${rev}`:'',sheet?`Sheet/Page: ${sheet}`:'',link?`🔗 Open drawing: ${link}`:''].filter(Boolean).join('\n');
+  return [`📐 ${no}${name?` — ${name}`:''}`,area?`Area (source index/hint): ${area}`:'',eq?`Equipment (source index; unverified): ${eq}`:'',!eq&&d.equipment_inference?.candidate?`Likely equipment (inferred; verify drawing): ${d.equipment_inference.candidate}`:'',part?`Part/Assembly: ${part}`:'',d.indexed_sub_equipment?`Indexed sub-equipment: ${d.indexed_sub_equipment}`:'',d.indexed_part_name?`Indexed subject/part: ${d.indexed_part_name}`:'',d.drawing_series_6?`Series: ${d.drawing_series_6} (${d.drawing_series_basis})`:'',d.indexed_disciplines?.length?`Disciplines (${d.discipline_evidence}): ${d.indexed_disciplines.join(', ')}`:'',rev?`Revision: ${rev}`:'',sheet?`Sheet/Page: ${sheet}`:'',includeLink&&link?`🔗 Open drawing: ${link}`:''].filter(Boolean).join('\n');
 }
 async function drawingDriveBytesV81536(d){
   const client=process.env.GOOGLE_DRIVE_CLIENT_ID,secret=process.env.GOOGLE_DRIVE_CLIENT_SECRET,refresh=process.env.GOOGLE_DRIVE_REFRESH_TOKEN;
@@ -3785,10 +3785,12 @@ function drawingShortDescriptionV81536(d,max=110){
   return `${clipped.slice(0,end>max/2?end:max-1).trim()}…`;
 }
 async function sendDrawingSourceV81536(from,d){
+  if(!isOwner(from))return;
   const url=String(d.drive_url||d.url||d.web_view_link||'').trim();
   if(url)await sendText(from,`🔗 Open original drawing: ${url}`);
 }
 async function sendDrawingMediaV81536(from,d){
+  if(!isOwner(from))return false;
   const file=String(d.filename||'drawing'),ext=file.split('.').pop().toLowerCase();
   if(!['jpg','jpeg','png','tif','tiff','pdf'].includes(ext))return false;
   const caption=`${d.drawing_number||file} — ${drawingShortDescriptionV81536(d,110)}`;
@@ -3824,6 +3826,7 @@ async function searchJsonDrawingMasterV81535(from,question,user){
   const selected=exact.length?exact:hits;
   if(selected.length===1){
     const d=selected[0].d;
+    if(!isOwner(from)){await sendText(from,drawingDisplayV81535(d).slice(0,3000));return true;}
     try{if(await sendDrawingMediaV81536(from,d)){
       if(/\.pdf$/i.test(String(d.filename||'')))await sendText(from,`📐 ${d.drawing_number||d.filename} — ${drawingShortDescriptionV81536(d)}`);
       await sendDrawingSourceV81536(from,d);return true;
@@ -3832,7 +3835,7 @@ async function searchJsonDrawingMasterV81535(from,question,user){
     await sendText(from,`📐 ${d.drawing_number||d.filename} — ${drawingShortDescriptionV81536(d)}\nImage temporarily unavailable.\n🔗 ${d.drive_url||''}`.slice(0,1000));return true;
   }
   await saveDocumentSessionV81511(from,'DRAWING_MEDIA_CHOICES',{question,expiresAt:Date.now()+30*60000});
-  if(selected.length<=10)await sendDrawingPageV81537(from,selected,0);
+  if(selected.length<=10)await sendDrawingPageV81537(from,selected,0,isOwner(from));
   else await sendButtons(from,`${selected.length} drawing matches. Choose how to view the complete list.`,[{id:'DRAWING_RESULTS:WHATSAPP',title:'WhatsApp list'},{id:'DRAWING_RESULTS:EXCEL',title:'Excel full list'}]);
   return true;
 }
@@ -3841,27 +3844,29 @@ function drawingSessionMatchesV81537(s,user){
   const hits=searchDrawingsMasterV81535(s.question,user),exact=hits.filter(x=>x.exact);
   return exact.length?exact:hits;
 }
-async function sendDrawingPageV81537(from,selected,start){
+async function sendDrawingPageV81537(from,selected,start,canOpen=false){
   const size=selected.length<=10?10:8,offset=Math.max(0,Math.floor(start/size)*size);
   if(offset>=selected.length){await sendText(from,'End of drawing results. Search again for another drawing.');return;}
   const rows=selected.slice(offset,offset+size).map((x,i)=>({id:`DRAWING_MEDIA:${offset+i}`,title:String(x.d.drawing_number||x.d.filename||`Drawing ${offset+i+1}`).slice(0,24),description:drawingShortDescriptionV81536(x.d,72)}));
   if(offset>0)rows.push({id:`DRAWING_PAGE:${offset-size}`,title:'Previous drawings',description:`Show results ${Math.max(1,offset-size+1)}–${offset}`});
   if(offset+size<selected.length)rows.push({id:`DRAWING_PAGE:${offset+size}`,title:'Next drawings',description:`Show results ${offset+size+1}–${Math.min(selected.length,offset+2*size)}`});
-  await sendList(from,`${selected.length} drawings · ${offset+1}–${Math.min(selected.length,offset+size)}. Select a drawing for its image and original link.`,'View drawings',rows,'Drawing results');
+  await sendList(from,`${selected.length} drawings · ${offset+1}–${Math.min(selected.length,offset+size)}. Select a drawing for ${canOpen?'its image and original link':'its details'}.`,'View drawings',rows,'Drawing results');
 }
-function drawingResultsXlsxV81537(selected){
-  const headers=['Drawing number','Description (source)','Area (source hint)','Equipment (source index; unverified)','Sub-equipment (source index)','Part / assembly','Discipline (source catalogue)','Revision','Filename','Folder path','Google Drive link'];
-  const rows=[headers,...selected.map(({d})=>[drawingFieldV81535(d,'drawing_number'),drawingFieldV81535(d,'description','descriptive_name'),drawingFieldV81535(d,'area','section'),drawingFieldV81535(d,'equipment'),drawingFieldV81535(d,'indexed_sub_equipment','sub_equipment'),drawingFieldV81535(d,'part_assembly','indexed_part_name','part','assembly'),Array.isArray(d.indexed_disciplines)?d.indexed_disciplines.join(', '):drawingFieldV81535(d,'discipline'),drawingFieldV81535(d,'revision'),drawingFieldV81535(d,'filename'),drawingFieldV81535(d,'folder_path'),drawingFieldV81535(d,'drive_url','url','web_view_link')])];
+function drawingResultsXlsxV81537(selected,includeLinks=false){
+  const headers=['Drawing number','Description (source)','Area (source hint)','Equipment (source index; unverified)','Sub-equipment (source index)','Part / assembly','Discipline (source catalogue)','Revision','Filename','Folder path'];
+  if(includeLinks)headers.push('Google Drive link');
+  const rows=[headers,...selected.map(({d})=>{const row=[drawingFieldV81535(d,'drawing_number'),drawingFieldV81535(d,'description','descriptive_name'),drawingFieldV81535(d,'area','section'),drawingFieldV81535(d,'equipment'),drawingFieldV81535(d,'indexed_sub_equipment','sub_equipment'),drawingFieldV81535(d,'part_assembly','indexed_part_name','part','assembly'),Array.isArray(d.indexed_disciplines)?d.indexed_disciplines.join(', '):drawingFieldV81535(d,'discipline'),drawingFieldV81535(d,'revision'),drawingFieldV81535(d,'filename'),drawingFieldV81535(d,'folder_path')];if(includeLinks)row.push(drawingFieldV81535(d,'drive_url','url','web_view_link'));return row;})];
   const cells=rows.map((row,ri)=>`<row r="${ri+1}">${row.map((v,ci)=>`<c r="${colNameV882(ci)}${ri+1}" t="inlineStr"><is><t xml:space="preserve">${xmlEscV882(v)}</t></is></c>`).join('')}</row>`).join('');
-  const links=rows.slice(1).map((r,i)=>r[10]?{row:i+2,url:r[10]}:null).filter(Boolean);
-  const sheet=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><dimension ref="A1:K${rows.length}"/><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><cols>${[24,64,24,36,36,40,27,12,42,55,65].map((w,i)=>`<col min="${i+1}" max="${i+1}" width="${w}" customWidth="1"/>`).join('')}</cols><sheetData>${cells}</sheetData><autoFilter ref="A1:K${rows.length}"/><hyperlinks>${links.map((x,i)=>`<hyperlink ref="K${x.row}" r:id="rId${i+1}"/>`).join('')}</hyperlinks></worksheet>`;
+  const links=includeLinks?rows.slice(1).map((r,i)=>r[10]?{row:i+2,url:r[10]}:null).filter(Boolean):[];
+  const lastCol=includeLinks?'K':'J';
+  const sheet=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><dimension ref="A1:${lastCol}${rows.length}"/><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><cols>${[24,64,24,36,36,40,27,12,42,55,...(includeLinks?[65]:[])].map((w,i)=>`<col min="${i+1}" max="${i+1}" width="${w}" customWidth="1"/>`).join('')}</cols><sheetData>${cells}</sheetData><autoFilter ref="A1:${lastCol}${rows.length}"/>${includeLinks?`<hyperlinks>${links.map((x,i)=>`<hyperlink ref="K${x.row}" r:id="rId${i+1}"/>`).join('')}</hyperlinks>`:''}</worksheet>`;
   const rels=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${links.map((x,i)=>`<Relationship Id="rId${i+1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="${xmlEscV882(x.url)}" TargetMode="External"/>`).join('')}</Relationships>`;
   return zipStoreV882([
     ['[Content_Types].xml','<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>'],
     ['_rels/.rels','<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'],
     ['xl/workbook.xml','<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Drawings" sheetId="1" r:id="rId1"/></sheets></workbook>'],
     ['xl/_rels/workbook.xml.rels','<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>'],
-    ['xl/worksheets/sheet1.xml',sheet],['xl/worksheets/_rels/sheet1.xml.rels',rels]
+    ['xl/worksheets/sheet1.xml',sheet],...(includeLinks?[['xl/worksheets/_rels/sheet1.xml.rels',rels]]:[])
   ]);
 }
 
@@ -4326,11 +4331,11 @@ async function handleDocumentQuestionV81511(from,text,cmd,user){
     if(!selected?.length){await sendText(from,'Selection expired. Search the drawing again.');return;}
     if(cmd==='DRAWING_RESULTS:EXCEL'){
       if(selected.length>5000){await sendText(from,`${selected.length} drawings match. Please add an equipment, area or part to make one complete Excel file of up to 5,000 drawings.`);return;}
-      try{await sendGeneratedDocumentV878(from,drawingResultsXlsxV81537(selected),'LMMM_Drawing_Search_Results.xlsx','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');}
+      try{await sendGeneratedDocumentV878(from,drawingResultsXlsxV81537(selected,isOwner(from)),'LMMM_Drawing_Search_Results.xlsx','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');}
       catch(e){console.error('[DRAWING_EXCEL]',String(e?.message||e).slice(0,250));await sendText(from,'Excel export is temporarily unavailable. Choose WhatsApp list to browse the drawings.');}
       return;
     }
-    await sendDrawingPageV81537(from,selected,cmd.startsWith('DRAWING_PAGE:')?Number(cmd.split(':')[1]):0);return;
+    await sendDrawingPageV81537(from,selected,cmd.startsWith('DRAWING_PAGE:')?Number(cmd.split(':')[1]):0,isOwner(from));return;
   }
   const drawingChoice=cmd.match(/^DRAWING_MEDIA:(\d+)$/);
   if(drawingChoice){
@@ -4339,6 +4344,7 @@ async function handleDocumentQuestionV81511(from,text,cmd,user){
     const selected=drawingSessionMatchesV81537(s,user);
     const d=selected?.[Number(drawingChoice[1])]?.d;
     if(!d){await sendText(from,'Selection expired. Search the drawing again.');return;}
+    if(!isOwner(from)){await sendText(from,drawingDisplayV81535(d).slice(0,3000));return;}
     const id=d.id;
     try{if(await sendDrawingMediaV81536(from,d)){
       if(/\.pdf$/i.test(String(d.filename||'')))await sendText(from,`📐 ${d.drawing_number||d.filename} — ${drawingShortDescriptionV81536(d)}`);
