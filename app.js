@@ -1446,7 +1446,9 @@ async function runImageMagickV8137(cmd,args,timeout=60000,maxOut=8*1024*1024){
   const {spawn}=await import('node:child_process');
   const guarded=['-limit','thread','1','-limit','memory','80MiB','-limit','map','128MiB','-limit','area','32MP','-limit','disk','2GiB',...args];
   const env={...process.env,MAGICK_MEMORY_LIMIT:'80MiB',MAGICK_MAP_LIMIT:'128MiB',MAGICK_AREA_LIMIT:'32MP',MAGICK_DISK_LIMIT:'2GiB',MAGICK_THREAD_LIMIT:'1',MAGICK_TEMPORARY_PATH:process.env.MAGICK_TEMPORARY_PATH||'/tmp'};
-  return await new Promise((resolve,reject)=>{const cp=spawn(cmd,guarded,{stdio:['ignore','pipe','pipe'],env});const out=[],err=[];let size=0,errSize=0,done=false;
+  // OS virtual-memory ceiling keeps a malformed/huge TIFF decoder from
+  // killing the entire 512 MiB service; the caller can return the Drive link.
+  return await new Promise((resolve,reject)=>{const cp=spawn('/bin/sh',['-c','ulimit -v 262144; exec "$@"','drawing-render',cmd,...guarded],{stdio:['ignore','pipe','pipe'],env});const out=[],err=[];let size=0,errSize=0,done=false;
     const finish=(e,v)=>{if(done)return;done=true;clearTimeout(timer);e?reject(e):resolve(v)};
     const timer=setTimeout(()=>{cp.kill('SIGKILL');finish(new Error(`${cmd} timeout`));},timeout);
     cp.stdout.on('data',d=>{size+=d.length;if(size>maxOut){cp.kill('SIGKILL');finish(new Error('Converted TIFF page exceeded memory-safe output limit'));}else out.push(d)});
@@ -1469,7 +1471,7 @@ async function tiffPageCountV8137(file,maxPages=250){
 async function runPythonTiffPageV8145(file,page,timeout=45000,maxOut=4*1024*1024){
   // Pillow seeks directly to one TIFF IFD/frame and avoids ImageMagick's global pixel cache.
   const {spawn}=await import('node:child_process');
-  const py=`import sys,io\nfrom PIL import Image,ImageOps\np=sys.argv[1]; n=int(sys.argv[2])\nim=Image.open(p); im.seek(n)\nim=ImageOps.exif_transpose(im)\nif im.mode not in ('L','RGB'): im=im.convert('L')\nim.thumbnail((1800,1800))\nb=io.BytesIO(); im.save(b,format='JPEG',quality=68,optimize=False); sys.stdout.buffer.write(b.getvalue())\n`;
+  const py=`import sys,io,resource\nresource.setrlimit(resource.RLIMIT_AS,(256*1024*1024,256*1024*1024))\nfrom PIL import Image,ImageOps\np=sys.argv[1]; n=int(sys.argv[2])\nim=Image.open(p); im.seek(n)\nim=ImageOps.exif_transpose(im)\nif im.mode not in ('L','RGB'): im=im.convert('L')\nim.thumbnail((1800,1800))\nb=io.BytesIO(); im.save(b,format='JPEG',quality=68,optimize=False); sys.stdout.buffer.write(b.getvalue())\n`;
   return await new Promise((resolve,reject)=>{const cp=spawn('python3',['-c',py,file,String(Math.max(0,page-1))],{stdio:['ignore','pipe','pipe']});const out=[],err=[];let size=0,es=0,done=false;
     const finish=(e,v)=>{if(done)return;done=true;clearTimeout(timer);e?reject(e):resolve(v)};
     const timer=setTimeout(()=>{cp.kill('SIGKILL');finish(new Error('python TIFF page timeout'));},timeout);
@@ -1482,7 +1484,7 @@ async function runFfmpegTiffPageV8142(file,page,timeout=45000,maxOut=4*1024*1024
   const {spawn}=await import('node:child_process');
   const filter=`select=eq(n\\,${Math.max(0,page-1)}),scale='min(1800,iw)':-2`;
   const args=['-v','error','-threads','1','-i',file,'-vf',filter,'-frames:v','1','-f','image2pipe','-vcodec','mjpeg','-q:v','7','pipe:1'];
-  return await new Promise((resolve,reject)=>{const cp=spawn('ffmpeg',args,{stdio:['ignore','pipe','pipe']});const out=[],err=[];let size=0,errSize=0,done=false;
+  return await new Promise((resolve,reject)=>{const cp=spawn('/bin/sh',['-c','ulimit -v 262144; exec "$@"','drawing-render','ffmpeg',...args],{stdio:['ignore','pipe','pipe']});const out=[],err=[];let size=0,errSize=0,done=false;
     const finish=(e,v)=>{if(done)return;done=true;clearTimeout(timer);e?reject(e):resolve(v)}; const timer=setTimeout(()=>{cp.kill('SIGKILL');finish(new Error('ffmpeg TIFF page timeout'));},timeout);
     cp.stdout.on('data',d=>{size+=d.length;if(size>maxOut){cp.kill('SIGKILL');finish(new Error('ffmpeg TIFF page exceeded safe output limit'));}else out.push(d)}); cp.stderr.on('data',d=>{if(errSize<32768){err.push(d);errSize+=d.length;}});cp.on('error',e=>finish(e));
     cp.on('close',code=>{const b=Buffer.concat(out);if(code===0&&b.length)finish(null,b);else finish(new Error(`ffmpeg TIFF failed ${code}: ${Buffer.concat(err).toString().slice(0,500)}`));});
