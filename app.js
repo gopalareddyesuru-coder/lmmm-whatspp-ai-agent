@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.35 DRAWINGS MASTER TWO-FILE SEARCH
+// LMMM AI Maintenance V8.15.35 DRAWINGS MASTER SEARCH
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -315,6 +315,16 @@ async function sendGeneratedDocumentV878(to, bytes, filename, mime='text/plain')
     body:JSON.stringify({messaging_product:'whatsapp',to,type:'document',document:{id:uj.id,filename}})
   });
   if(!r.ok) throw new Error(`WhatsApp document send failed ${r.status}: ${await r.text()}`);
+}
+
+async function sendDrawingImageV81536(to,bytes,filename,caption='',mime='image/jpeg'){
+  const fd=new FormData();fd.append('messaging_product','whatsapp');
+  fd.append('file',new Blob([bytes],{type:mime}),filename);
+  const up=await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${PHONE_NUMBER_ID}/media`,{method:'POST',headers:{Authorization:`Bearer ${ACCESS_TOKEN}`},body:fd});
+  if(!up.ok)throw new Error(`Drawing image upload failed ${up.status}: ${(await up.text()).slice(0,250)}`);
+  const id=(await up.json()).id;if(!id)throw new Error('Drawing image upload returned no id');
+  const r=await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${PHONE_NUMBER_ID}/messages`,{method:'POST',headers:{Authorization:`Bearer ${ACCESS_TOKEN}`,'Content-Type':'application/json'},body:JSON.stringify({messaging_product:'whatsapp',to,type:'image',image:{id,caption:String(caption).slice(0,1024)}})});
+  if(!r.ok)throw new Error(`Drawing image send failed ${r.status}: ${(await r.text()).slice(0,250)}`);
 }
 
 async function initDB(){
@@ -3669,18 +3679,58 @@ function drawingDisplayV81535(d={}){
   const link=drawingFieldV81535(d,'drive_url','url','web_view_link');
   return [`📐 ${no}${name?` — ${name}`:''}`,area?`Area (source index/hint): ${area}`:'',eq?`Equipment (source index; unverified): ${eq}`:'',!eq&&d.equipment_inference?.candidate?`Likely equipment (inferred; verify drawing): ${d.equipment_inference.candidate}`:'',part?`Part/Assembly: ${part}`:'',d.indexed_sub_equipment?`Indexed sub-equipment: ${d.indexed_sub_equipment}`:'',d.indexed_part_name?`Indexed subject/part: ${d.indexed_part_name}`:'',d.drawing_series_6?`Series: ${d.drawing_series_6} (${d.drawing_series_basis})`:'',d.indexed_disciplines?.length?`Disciplines (${d.discipline_evidence}): ${d.indexed_disciplines.join(', ')}`:'',rev?`Revision: ${rev}`:'',sheet?`Sheet/Page: ${sheet}`:'',link?`🔗 Open drawing: ${link}`:''].filter(Boolean).join('\n');
 }
+async function drawingDriveBytesV81536(d){
+  const client=process.env.GOOGLE_DRIVE_CLIENT_ID,secret=process.env.GOOGLE_DRIVE_CLIENT_SECRET,refresh=process.env.GOOGLE_DRIVE_REFRESH_TOKEN;
+  if(!client||!secret||!refresh)return null;
+  const tokenResponse=await fetch('https://oauth2.googleapis.com/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({client_id:client,client_secret:secret,refresh_token:refresh,grant_type:'refresh_token'})});
+  if(!tokenResponse.ok)throw new Error(`Drive token refresh failed ${tokenResponse.status}`);
+  const token=(await tokenResponse.json()).access_token;if(!token)throw new Error('Drive token unavailable');
+  const id=String(d.id||'');if(!/^[A-Za-z0-9_-]{12,}$/.test(id))throw new Error('Invalid drawing file ID');
+  const response=await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}?alt=media&supportsAllDrives=true`,{headers:{Authorization:`Bearer ${token}`}});
+  if(!response.ok)throw new Error(`Drive file download failed ${response.status}`);
+  const limit=24*1024*1024,size=Number(response.headers.get('content-length')||0);
+  if(size>limit)throw new Error('Drawing exceeds WhatsApp media download limit');
+  const chunks=[];let total=0;
+  for await(const chunk of response.body){total+=chunk.length;if(total>limit){await response.body.cancel().catch(()=>{});throw new Error('Drawing exceeds WhatsApp media download limit');}chunks.push(chunk);}
+  return Buffer.concat(chunks);
+}
+async function sendDrawingMediaV81536(from,d){
+  const file=String(d.filename||'drawing'),ext=file.split('.').pop().toLowerCase();
+  if(!['jpg','jpeg','png','tif','tiff','pdf'].includes(ext))return false;
+  const bytes=await drawingDriveBytesV81536(d);if(!bytes)return false;
+  const caption=`${d.drawing_number||file} — ${String(d.description||d.descriptive_name||'Drawing').slice(0,350)}`;
+  if(ext==='tif'||ext==='tiff'){
+    await withTiffTempV8136(bytes,async path=>{
+      const {total}=await tiffPageCountV8137(path,250),count=Math.min(total||1,5);
+      for(let page=1;page<=count;page++){
+        const jpg=await tiffOnePageJpegV8137(path,page);
+        await sendDrawingImageV81536(from,jpg,`drawing-${d.id}-${page}.jpg`,`${caption}${total>1?` | Page ${page}/${total}`:''}`);
+      }
+      if(total>count)await sendText(from,`${total-count} more pages. Open the source drawing: ${d.drive_url}`);
+    });
+  }else if(ext==='pdf')await sendGeneratedDocumentV878(from,bytes,file,'application/pdf');
+  else await sendDrawingImageV81536(from,bytes,file,caption,ext==='png'?'image/png':'image/jpeg');
+  return true;
+}
 async function searchJsonDrawingMasterV81535(from,question,user){
   if(!(looksLikeDrawingRequestV81535(question)||drawingNameIntentV81535(question))||!canReadDepartmentArchiveV81540(from,user)||!(await hasAuthorityV874(user,'VIEW')))return false;
   const hits=searchDrawingsMasterV81535(question,user); if(!hits.length)return false;
   const exact=hits.filter(x=>x.exact);
   // Do not collapse repeated drawing numbers: they may be separate pages/revisions/files.
   const selected=(exact.length?exact:hits).slice(0,20);
-  if(selected.length===1){await sendText(from,drawingDisplayV81535(selected[0].d).slice(0,3900));return true;}
+  if(selected.length===1){
+    const d=selected[0].d;
+    try{if(await sendDrawingMediaV81536(from,d)){await sendText(from,`📐 ${d.drawing_number||d.filename}\n${String(d.description||d.descriptive_name||'').slice(0,350)}\nSource: ${d.drive_url}`);return true;}}
+    catch(e){console.error('[DRAWING_MEDIA]',d.id,String(e?.message||e).slice(0,250));}
+    await sendText(from,drawingDisplayV81535(d).slice(0,3900));return true;
+  }
   const lines=selected.map((x,i)=>`${i+1}. ${drawingFieldV81535(x.d,'drawing_number')||'Number not indexed'} — ${drawingFieldV81535(x.d,'description','descriptive_name','filename')}\n🔗 ${drawingFieldV81535(x.d,'drive_url')}`);
+  await saveDocumentSessionV81511(from,'DRAWING_MEDIA_CHOICES',{ids:selected.slice(0,10).map(x=>x.d.id),expiresAt:Date.now()+10*60000});
   let reply=`Drawing matches${exact.length?' for exact identifier':''}:`;let shown=0;
   for(const line of lines){if(reply.length+line.length>3800)break;reply+=`\n\n${line}`;shown++;}
   if(selected.length>shown)reply+=`\n\n${selected.length-shown} more matches. Narrow by drawing number or part name.`;
   await sendText(from,reply);
+  await sendList(from,'Select a drawing to receive its image or PDF in WhatsApp.','Select drawing',selected.slice(0,10).map((x,i)=>({id:`DRAWING_MEDIA:${i}`,title:String(x.d.drawing_number||x.d.filename||`Drawing ${i+1}`).slice(0,24),description:String(x.d.description||x.d.descriptive_name||'Open drawing').slice(0,72)})),'Drawings');
   return true;
 }
 
@@ -4138,6 +4188,16 @@ async function answerDocumentQuestionV81511(from,question,doc){
 }
 async function handleDocumentQuestionV81511(from,text,cmd,user){
   if(!user||user.approval_status!=='approved'||!user.is_active){await sendText(from,'Approved registration required to ask about documents.');return;}
+  const drawingChoice=cmd.match(/^DRAWING_MEDIA:(\d)$/);
+  if(drawingChoice){
+    if(!canReadDepartmentArchiveV81540(from,user)||!(await hasAuthorityV874(user,'VIEW'))){await sendText(from,'Drawing access is not available.');return;}
+    const s=documentSessionValueV81511(await safeSessionV855(from,'DRAWING_MEDIA_CHOICES'));
+    const id=s?.expiresAt>Date.now()?s.ids?.[Number(drawingChoice[1])]:null;
+    const d=id?DRAWINGS_MASTER.drawings.find(x=>x.id===id):null;
+    if(!d){await sendText(from,'Selection expired. Search the drawing again.');return;}
+    try{if(await sendDrawingMediaV81536(from,d))return;}catch(e){console.error('[DRAWING_MEDIA_CHOICE]',id,String(e?.message||e).slice(0,250));}
+    await sendText(from,drawingDisplayV81535(d));return;
+  }
   if(/^MAINT_EXPORT:(PDF|EXCEL)$/.test(cmd)){await handleSearchExportV81518(from,cmd,user);return;}
   if(/^MAINT_(?:DRAW_MORE|RESULT_MORE|ASSET:(?:ALL|[0-7])|MOD:(?:HISTORY|JOBS|DEFECTS|DRAWINGS|PARTS|SPARES|MANUALS|ALL)|SUGGEST:(?:SHOW|CANCEL))$/.test(cmd)){
     await handleSearchChoiceV81515(from,cmd,user);return;
@@ -4268,7 +4328,7 @@ async function processMessage(from,text,payload=''){
   if(await handleSafetyLookupV81539(from,cmd))return;
   // Ask a document question before the employee-name directory catches natural phrases.
   const qaContext=documentSessionValueV81511(await safeSessionV855(from,'DOC_QA_CONTEXT'));
-  const qaSelection=/^DOC_QA_SELECT:(stored|pending):\d+$/.test(cmd)||/^MAINT_EXPORT:(PDF|EXCEL)$/.test(cmd)||
+  const qaSelection=/^DOC_QA_SELECT:(stored|pending):\d+$/.test(cmd)||/^DRAWING_MEDIA:\d$/.test(cmd)||/^MAINT_EXPORT:(PDF|EXCEL)$/.test(cmd)||
     /^MAINT_(?:DRAW_MORE|RESULT_MORE|ASSET:(?:ALL|[0-7])|MOD:(?:HISTORY|JOBS|DEFECTS|DRAWINGS|PARTS|SPARES|MANUALS|ALL)|SUGGEST:(?:SHOW|CANCEL))$/.test(cmd);
   const qaFreeText=!payload&&(looksLikeDrawingRequestV81535(text)||drawingNameIntentV81535(text)||documentQuestionIntentV81511(text)||
     (qaContext?.mode && qaContext.expiresAt>Date.now() && !/^(hi|hello|hey|start|back|search|version|menu|add entry|store data|check status|retry extraction|my account|my details|contact details|profile|remove me|exit|quit)$/i.test(cmd) && (!/^\d{6}$/.test(cmd)) && !/^[A-Z][a-z.'-]+(?: [A-Z][a-z.'-]+){1,2}$/.test(cmd)));
