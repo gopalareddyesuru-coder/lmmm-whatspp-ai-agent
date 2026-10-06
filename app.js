@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.54 EQUIPMENT AND DRAWING SEARCH FIX 2026-10-06
+// LMMM AI Maintenance V8.15.55 ENGLISH DEFAULT REPLIES 2026-10-06
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -980,7 +980,7 @@ if((a=text.match(/^AUTH_ADV:(\d+)$/))){await sendList(from,'Advanced Authorities
     if(normWA(from)!==u.whatsapp_number) await sendText(from,`${m[1]} registration removed. Maintenance history preserved.`);
     return true;
   }
-  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.15.54');return true;}
+  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.15.55');return true;}
   return false;
 }
 async function hasAuthorityV874(u, authority){
@@ -3431,13 +3431,12 @@ async function universalSearchV81513(from,user,question,archiveMode='ALL'){
     truncated,partialFailure:results.some(x=>x.status==='rejected')||archiveFailure};
 }
 async function searchLanguageV81515(from,question){
-  const old=documentSessionValueV81511(await safeSessionV855(from,'SEARCH_LANGUAGE'));
   const explicit=/\b(telugu|తెలుగు)\b|[\u0c00-\u0c7f]/i.test(question)?'TE':
     /\b(hindi|हिंदी)\b|[\u0900-\u097f]/i.test(question)?'HI':null;
-  const roman=/\b(deniki|sambandhanchindi|gurinchi|gurunchi|cheppandi|cheppu|enti|entha|eppudu|ivvu|kavali|chudu|raavali|ayyindi|chesaru|chesam)\b/i.test(question)?'TE':null;
-  const language=explicit||roman||old?.language||'EN';
-  if(!old||language!==old.language)await saveDocumentSessionV81511(from,'SEARCH_LANGUAGE',{language});
-  return language;
+  const roman=/\b(deniki|sambandhanchindi|gurinchi|gurunchi|cheppandi|cheppu|enti|entha|eppudu|ivvandi|ivvu|kavali|kaavali|chudu|raavali|raale|raaledu|avunu|kaadu|ledu|sare|ela|em|cheseyandi|cheyyandi|cheyandi|chesthanu|chesaru|chesam|undhi|vundi|vasthundi|vachindi|ayyindi)\b/i.test(question)?'TE':null;
+  // Choose the reply language from this message. A previous Telugu query must
+  // not make a later English acknowledgement such as "Ok" receive Telugu.
+  return explicit||roman||'EN';
 }
 function bareAssetQuestionV81515(question,request){
   const q=String(question||'').trim();
@@ -5636,4 +5635,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.54 EQUIPMENT AND DRAWING SEARCH listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.55 ENGLISH DEFAULT REPLIES listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
