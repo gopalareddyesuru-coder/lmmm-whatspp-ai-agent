@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.53 EQUIPMENT ALIAS SEARCH 2026-10-06
+// LMMM AI Maintenance V8.15.54 EQUIPMENT AND DRAWING SEARCH FIX 2026-10-06
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -980,7 +980,7 @@ if((a=text.match(/^AUTH_ADV:(\d+)$/))){await sendList(from,'Advanced Authorities
     if(normWA(from)!==u.whatsapp_number) await sendText(from,`${m[1]} registration removed. Maintenance history preserved.`);
     return true;
   }
-  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.15.53');return true;}
+  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.15.54');return true;}
   return false;
 }
 async function hasAuthorityV874(u, authority){
@@ -3912,7 +3912,12 @@ function drawingNameIntentV81535(question=''){
   return (DRAWINGS_MASTER?.drawings||[]).some(d=>[d.description,d.descriptive_name,d.indexed_subject,d.indexed_part_name,d.indexed_sub_equipment].some(v=>v&&String(v).toLowerCase().includes(term)));
 }
 function searchDrawingsMasterV81535(question='',user=null){
-  const query=drawingQueryV81535(question), qNorm=drawingNormV81535(query), qLower=query.toLowerCase();
+  // The user calls the Furnace-1 ECS vessel "Steam Drum-1". The drawing
+  // index files it under ECS drum/platform, so search that verified title
+  // vocabulary while retaining the Furnace-1 qualifier.
+  const steamDrumFurnace1=/\bSTEAM\s+DRUM\s+1\s+FURNACE\s+1\b/i.test(question);
+  const query=steamDrumFurnace1?'FURNACE PLATFORM ECS DRUM FURNACE 1':drawingQueryV81535(question),
+    qNorm=drawingNormV81535(query), qLower=query.toLowerCase();
   const discipline= /\bhydraulics?\b/i.test(query)?'Hydraulic':/\bcivil\b/i.test(query)?'Civil / structural':/\b(?:electrical|electric|automation)\b/i.test(query)?'Electrical / automation':/\bmechanical\b/i.test(query)?'Mechanical':/\b(?:piping|utilities)\b/i.test(query)?'Piping / utilities':'';
   const identifierOnly=/^[A-Za-z0-9./-]{6,}$/.test(query)&&/[A-Za-z]/.test(query)&&/\d/.test(query);
   // Exact number lookup avoids building catalogue-wide description strings.
@@ -3931,6 +3936,7 @@ function searchDrawingsMasterV81535(question='',user=null){
   for(const d of (DRAWINGS_MASTER?.drawings||[])){
     const no=drawingFieldV81535(d,'drawing_number','drawing_no'), noNorm=drawingNormV81535(no||d.drawing_number_normalized||'');
     const text=drawingTextV81535(d), dArea=String(d.area||'').toUpperCase(); let score=0, exact=false;
+    if(steamDrumFurnace1&&(!/\bFURNACE[- ]?1\b/i.test(text)||/\bFURNACE[- ]?2\b/i.test(text)))continue;
     const fileStem=String(d.filename||'').replace(/\.(?:tiff?|pdf|jpe?g|png|dwg|dxf)$/i,'').replace(/\s+(?:SHEET|SH)\s*\d+(?:\s*OF\s*\d+)?$/i,'');
     const exactIds=[no,d.drawing_number_normalized,fileStem,...(Array.isArray(d.aliases)?d.aliases:[])]
       .flatMap(v=>String(v||'').split('|')).map(drawingNormV81535);
@@ -5630,4 +5636,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.53 EQUIPMENT ALIASES listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.54 EQUIPMENT AND DRAWING SEARCH listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
