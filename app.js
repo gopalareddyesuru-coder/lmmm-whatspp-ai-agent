@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.44 WORKFLOW RECORDS 2026-10-06
+// LMMM AI Maintenance V8.15.45 SHIFT-AWARE WORKFLOWS 2026-10-06
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -980,7 +980,7 @@ if((a=text.match(/^AUTH_ADV:(\d+)$/))){await sendList(from,'Advanced Authorities
     if(normWA(from)!==u.whatsapp_number) await sendText(from,`${m[1]} registration removed. Maintenance history preserved.`);
     return true;
   }
-  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.7.7 CONFIRM BEFORE STORE');return true;}
+  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.15.45');return true;}
   return false;
 }
 async function hasAuthorityV874(u, authority){
@@ -2230,9 +2230,14 @@ async function storePendingVerifiedV877(from,p){
     const module=String(x.module||'NEEDS_REVIEW').toUpperCase();
     const referenceDoc=['DRAWING_DOCS','MANUAL_REFERENCE'].includes(module);
     if(confidence==='NEEDS_REVIEW'||(!referenceDoc && !x.equipment)){review++;continue;}
-    try{const raw={...x,document_type:pack.document_type,document_summary:pack.document_summary,extracted_items:pack.extracted_items,drawing_details:pack.drawing_details||null,
+    try{
+      const dated=/^\d{4}-\d{2}-\d{2}$/.test(String(x.event_date||'')),clock=/^\d{2}:\d{2}/.test(String(x.event_time||''));
+      const timing=dated&&clock?shiftContextV81545(x.event_date,String(x.event_time).slice(0,5),null,x.shift||''):null;
+      const inferredShift=!x.shift&&timing?.resolution==='TIME_UNAMBIGUOUS'?timing.shift:null;
+      const raw={...x,_timing:timing&&!timing.error?{...timing,source:'SOURCE_EVENT_TIME'}:null,
+      document_type:pack.document_type,document_summary:pack.document_summary,extracted_items:pack.extracted_items,drawing_details:pack.drawing_details||null,
       full_text:String(pack.full_text||'').slice(0,120000)};
-      const q=await pool.query(`INSERT INTO maintenance_ingest_records(data_class,source_type,source_media_id,source_filename,source_mime_type,source_caption,source_sha256,submitted_by_employee_number,submitted_by_whatsapp,module,area,equipment,sub_equipment,event_date,event_time,shift,description,action_taken,status,remarks,confidence,raw_extraction) VALUES('VERIFIED','WHATSAPP_FILE',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::date,$13::time,$14,$15,$16,$17,$18,$19,$20::jsonb) ON CONFLICT DO NOTHING RETURNING id`,[p.source_media_id,p.source_filename,p.source_mime_type,p.source_caption,p.source_sha256,u.employee_number,normWA(from),module,x.area||null,x.equipment||null,x.sub_equipment||null,x.event_date||null,x.event_time||null,x.shift||null,x.description||pack.document_summary||null,x.action_taken||null,x.status||null,x.remarks||null,confidence,JSON.stringify(raw)]);if(q.rowCount)saved++;else dupe++;}catch(e){console.error('[INGEST_STORE]',e.message);review++;}
+      const q=await pool.query(`INSERT INTO maintenance_ingest_records(data_class,source_type,source_media_id,source_filename,source_mime_type,source_caption,source_sha256,submitted_by_employee_number,submitted_by_whatsapp,module,area,equipment,sub_equipment,event_date,event_time,shift,description,action_taken,status,remarks,confidence,raw_extraction) VALUES('VERIFIED','WHATSAPP_FILE',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::date,$13::time,$14,$15,$16,$17,$18,$19,$20::jsonb) ON CONFLICT DO NOTHING RETURNING id`,[p.source_media_id,p.source_filename,p.source_mime_type,p.source_caption,p.source_sha256,u.employee_number,normWA(from),module,x.area||null,x.equipment||null,x.sub_equipment||null,x.event_date||null,x.event_time||null,x.shift||inferredShift||null,x.description||pack.document_summary||null,x.action_taken||null,x.status||null,x.remarks||null,confidence,JSON.stringify(raw)]);if(q.rowCount)saved++;else dupe++;}catch(e){console.error('[INGEST_STORE]',e.message);review++;}
   }
   if(saved===0 && dupe===0){
     await sendText(from,'Nothing was stored because no verified source-backed record was available. The extraction remains pending for review.');return;
@@ -4547,19 +4552,25 @@ async function handleSafetyLookupV81539(from,cmd){
   await sendText(from,`${kind==='NEAR_MISS'?'Near Miss Reports':'Safety Suggestions'}:\n${lines.join('\n')}${result.rows.length>20?'\nMore records exist. Refine by date or location.':''}`.slice(0,3000));return true;
 }
 const WORKFLOW_FIELDS_V81544={
-  JOB:['Equipment','Job','WO','Date','Tools','Spares','Planned manpower','Planned hours','SMP','Drawing'],
-  SHUTDOWN:['Date','Equipment','Job','Incharge','Motor action','Electrical isolation','Remarks'],
-  ISOLATION:['Equipment','Job','Permit type','Energy sources','Isolation points','Motor connections','Requested date'],
-  LABOUR:['Date','Shift','Contractor','Worker ID','Worker name','Trade','Job','Equipment','Attendance'],
-  EMP_ATTENDANCE:['Date','Shift','Attendance','Job','Equipment'],
-  HOURS:['Date','Job','Equipment','Worker ID','Start','End','Break minutes','Remarks'],
-  CBM:['Date','Equipment','Point','H mm/s','V mm/s','A mm/s','Temperature C','RPM']
+  JOB:['Equipment','Job','WO','Date','Event time','Shift','Tools','Spares','Planned manpower','Planned hours','SMP','Drawing'],
+  SHUTDOWN:['Date','Event time','Shift','Equipment','Job','Incharge','Motor action','Electrical isolation','Remarks'],
+  ISOLATION:['Equipment','Job','Permit type','Energy sources','Isolation points','Motor connections','Requested date','Event time','Shift'],
+  LOGBOOK:['Date','Event time','Shift','Equipment','Observation','Action'],
+  INSPECTION:['Date','Event time','Shift','Equipment','Observation','Action required','Measurement'],
+  DEFECT:['Date','Event time','Shift','Equipment','Defect','Action'],
+  BREAKDOWN:['Date','Event time','Shift','Equipment','Problem','Action','Restored at'],
+  LABOUR:['Date','Shift','Event time','Contractor','Worker ID','Worker name','Trade','Job','WO','Equipment','Required manpower','Attendance','OT hours','Remarks'],
+  EMP_ATTENDANCE:['Date','Shift','Event time','Attendance','Job','Equipment','Remarks'],
+  HOURS:['Date','Shift','Job','WO','Equipment','Worker ID','Start','End','Break minutes','Remarks'],
+  CBM:['Date','Event time','Shift','Equipment','Point','Measurement type','Value','Unit','H mm/s','V mm/s','A mm/s','Temperature C','RPM','Operating condition']
 };
 const WORKFLOW_REQUIRED_V81544={
   JOB:['Equipment','Job','Date'],SHUTDOWN:['Date','Equipment','Job','Incharge','Motor action','Electrical isolation'],
   ISOLATION:['Equipment','Job','Permit type','Energy sources','Isolation points','Requested date'],
+  LOGBOOK:['Date','Equipment','Observation'],INSPECTION:['Date','Equipment','Observation'],
+  DEFECT:['Date','Equipment','Defect'],BREAKDOWN:['Date','Equipment','Problem'],
   LABOUR:['Date','Shift','Contractor','Worker ID','Job','Equipment','Attendance'],
-  EMP_ATTENDANCE:['Date','Shift','Attendance'],
+  EMP_ATTENDANCE:['Attendance'],
   HOURS:['Date','Job','Equipment','Worker ID','Start','End'],
   CBM:['Date','Equipment','Point']
 };
@@ -4569,8 +4580,11 @@ async function initMaintenanceWorkflowV81544(){
     area TEXT NOT NULL,section TEXT NOT NULL,employee_number TEXT NOT NULL,
     submitted_by_whatsapp TEXT NOT NULL,payload JSONB NOT NULL,
     status TEXT NOT NULL,submitted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CHECK(kind IN ('JOB','SHUTDOWN','ISOLATION','LABOUR','EMP_ATTENDANCE','HOURS','CBM'))
+    CHECK(kind IN ('JOB','SHUTDOWN','ISOLATION','LOGBOOK','INSPECTION','DEFECT','BREAKDOWN','LABOUR','EMP_ATTENDANCE','HOURS','CBM'))
   )`);
+  await pool.query(`ALTER TABLE maintenance_workflow_records DROP CONSTRAINT IF EXISTS maintenance_workflow_records_kind_check`);
+  await pool.query(`ALTER TABLE maintenance_workflow_records ADD CONSTRAINT maintenance_workflow_records_kind_check
+    CHECK(kind IN ('JOB','SHUTDOWN','ISOLATION','LOGBOOK','INSPECTION','DEFECT','BREAKDOWN','LABOUR','EMP_ATTENDANCE','HOURS','CBM'))`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_maintenance_workflow_scope
     ON maintenance_workflow_records(kind,area,section,submitted_at DESC)`);
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_workflow_employee_attendance_unique
@@ -4606,6 +4620,47 @@ function parseWorkflowV81544(text,fields){
   }
   return {data,unknown};
 }
+function istPartsV81545(instant){
+  const parts=new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Kolkata',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(instant);
+  const p=Object.fromEntries(parts.map(x=>[x.type,x.value]));
+  return {date:`${p.year}-${p.month}-${p.day}`,time:`${p.hour}:${p.minute}`};
+}
+function shiftCandidatesV81545(time){
+  const m=String(time).match(/^(\d{2}):(\d{2})$/);
+  if(!m||+m[1]>23||+m[2]>59)return null;
+  const t=+m[1]*60+(+m[2]);
+  return ['A','B','C','General'].filter(k=>{
+    const w=SHIFT_TIMINGS[k],start=Number(w.start.slice(0,2))*60+Number(w.start.slice(3)),end=Number(w.end.slice(0,2))*60+Number(w.end.slice(3));
+    return start<=end?t>=start&&t<=end:t>=start||t<=end;
+  });
+}
+function previousDateV81545(date){
+  return new Date(Date.parse(date+'T00:00:00Z')-86400000).toISOString().slice(0,10);
+}
+function shiftContextV81545(date,time,roster,explicit=''){
+  const candidates=shiftCandidatesV81545(time);
+  if(!candidates)return {error:'Event time must be HH:mm (24-hour clock).'};
+  const stated=explicit?canonicalShift(explicit):null,assigned=canonicalShift(roster);
+  if(stated&&!['A','B','C','General'].includes(stated))return {error:'Shift must be A, B, C or G.'};
+  const chosen=stated||(['A','B','C','General'].includes(assigned)&&candidates.includes(assigned)?assigned:candidates.length===1?candidates[0]:null);
+  const resolution=stated?(candidates.includes(stated)?'USER_REPORTED':'OUTSIDE_WINDOW_REPORTED'):
+    chosen===assigned?'ROSTER_MATCH':chosen?(assigned&&assigned!==chosen?'TIME_UNAMBIGUOUS_OUTSIDE_ROSTER':'TIME_UNAMBIGUOUS'):'NEEDS_REVIEW';
+  return {candidates,shift:chosen,resolution,roster:assigned||null,
+    duty_shift:(stated||chosen===assigned)?chosen:null,possible_callout:!!(assigned&&chosen&&chosen!==assigned),
+    event_date:date,event_time:time,shift_date:chosen==='C'&&time<='06:30'?previousDateV81545(date):date};
+}
+function attendanceCurrentV81545(roster,explicit='',instant=new Date()){
+  const now=istPartsV81545(instant),base=shiftContextV81545(now.date,now.time,roster,explicit);
+  if(base.error)return base;
+  if(base.shift&&!['OUTSIDE_WINDOW_REPORTED','TIME_UNAMBIGUOUS_OUTSIDE_ROSTER'].includes(base.resolution))return {...base,date_source:'SUBMISSION_TIME'};
+  // A rostered shift can be reported shortly after it ends; C belongs to the preceding shift date.
+  const assigned=canonicalShift(explicit||roster),end={A:14*60+30,B:22*60+30,C:6*60+30,General:17*60+30}[assigned];
+  const t=Number(now.time.slice(0,2))*60+Number(now.time.slice(3));
+  const elapsed=end===undefined?Infinity:(t-end+1440)%1440;
+  if(elapsed<=90)return {...base,shift:assigned,shift_date:assigned==='C'?previousDateV81545(now.date):now.date,
+    resolution:'ROSTER_END_REPORT',date_source:'SUBMISSION_TIME'};
+  return {...base,resolution:'NEEDS_REVIEW',date_source:null};
+}
 function workflowErrorV81544(kind,data){
   const missing=WORKFLOW_REQUIRED_V81544[kind].filter(k=>!data[k]);
   if(missing.length)return 'Required: '+missing.join(', ');
@@ -4616,7 +4671,12 @@ function workflowErrorV81544(kind,data){
       if(Number.isNaN(d.getTime())||d.toISOString().slice(0,10)!==data[k])return k+' is invalid.';
     }
   }
-  if(['LABOUR','EMP_ATTENDANCE'].includes(kind)&&!['PRESENT','ABSENT'].includes(data.Attendance.toUpperCase()))return 'Attendance must be Present or Absent.';
+  if(data['Event time']&&!shiftCandidatesV81545(data['Event time']))return 'Event time must be HH:mm (24-hour clock).';
+  if(data.Shift&&!['A','B','C','General'].includes(canonicalShift(data.Shift)))return 'Shift must be A, B, C or G.';
+  if(kind==='LABOUR'&&!['PRESENT','ABSENT'].includes(data.Attendance.toUpperCase()))return 'Contract attendance must be Present or Absent.';
+  if(kind==='EMP_ATTENDANCE'&&!['PRESENT','ABSENT','LEAVE','OFF'].includes(data.Attendance.toUpperCase()))return 'Attendance must be Present, Absent, Leave or Off.';
+  if(kind==='LABOUR'&&data['OT hours']&&(!Number.isFinite(Number(data['OT hours']))||Number(data['OT hours'])<0||Number(data['OT hours'])>24))return 'OT hours must be between 0 and 24.';
+  if(kind==='LABOUR'&&data['Required manpower']&&(!Number.isInteger(Number(data['Required manpower']))||Number(data['Required manpower'])<1))return 'Required manpower must be a positive whole number.';
   if(kind==='HOURS'){
     const start=Date.parse(data.Start),end=Date.parse(data.End),breaks=Number(data['Break minutes']||0);
     if(!Number.isFinite(start)||!Number.isFinite(end)||end<=start||end-start>24*3600000)return 'Start and End must be ISO date-times within 24 hours, with End after Start.';
@@ -4624,28 +4684,83 @@ function workflowErrorV81544(kind,data){
     data['Reported hours']=Math.round(((end-start)/60000-breaks)/60*100)/100;
   }
   if(kind==='CBM'){
-    const readings=['H mm/s','V mm/s','A mm/s','Temperature C','RPM'];
+    const readings=['Value','H mm/s','V mm/s','A mm/s','Temperature C','RPM'];
     if(!readings.some(k=>data[k]))return 'Enter at least one measured value.';
     for(const k of readings)if(data[k]&&(!Number.isFinite(Number(data[k]))||Number(data[k])<0))return k+' must be a non-negative number.';
+    if(data.Value&&(!data['Measurement type']||!data.Unit))return 'Add Measurement type and Unit for Value.';
   }
   return '';
 }
 async function maintenanceWorkflowV81544(from,text,cmd){
-  const start=cmd.match(/^WF_NEW:(JOB|SHUTDOWN|ISOLATION|LABOUR|EMP_ATTENDANCE|HOURS|CBM)$/);
+  const start=cmd.match(/^WF_NEW:(JOB|SHUTDOWN|ISOLATION|LOGBOOK|INSPECTION|DEFECT|BREAKDOWN|LABOUR|EMP_ATTENDANCE|HOURS|CBM)$/);
+  const logAttendance=cmd.match(/^WF_LOG_ATTEND:(\d+)$/);
+  const range=cmd.match(/^(employee attendance|contract attendance|attendance)\s+(?:from\s+)?(\d{4}-\d{2}-\d{2})\s+(?:to|-)\s+(\d{4}-\d{2}-\d{2})$/i);
   const cancelling=cmd==='WF_CANCEL'||/^cancel$/i.test(cmd);
-  const command=cmd==='WF_MENU'||cmd==='WF_LIST'||cancelling||!!start;
+  const command=cmd==='WF_MENU'||cmd==='WF_MORE'||cmd==='WF_LIST'||cancelling||!!start||!!range||!!logAttendance;
   const session=await workflowSessionV81544(from);
   if(!command&&!session)return false;
   const user=await byWA(from);
   if(!user||user.approval_status!=='approved'||!user.is_active){await sendText(from,'Approved registration required.');return true;}
   if(cancelling){await setWorkflowSessionV81544(from,null);await sendText(from,'Entry cancelled.');return true;}
+  if(logAttendance){
+    if(!await hasAuthorityV874(user,'ENTRY')){await sendText(from,'Entry permission required.');return true;}
+    const found=await pool.query(`SELECT id,payload FROM maintenance_workflow_records
+      WHERE id=$1 AND kind='LOGBOOK' AND submitted_by_whatsapp=$2 LIMIT 1`,[logAttendance[1],normWA(from)]);
+    const log=found.rows[0],timing=log?.payload?._timing;
+    if(!log||!timing?.shift){await sendText(from,'Log book shift is unclear. Please enter attendance with its date and shift.');return true;}
+    const data={Date:timing.shift_date,Shift:timing.shift,Attendance:'Present','Employee number':user.employee_number,
+      Equipment:log.payload.Equipment,Job:log.payload.Observation,_date_source:'CONFIRMED_FROM_LOGBOOK',
+      _source_logbook_id:log.id,_timing:timing,_submitter:{employee_number:user.employee_number,name:user.name||null,roster_shift:canonicalShift(user.shift)}};
+    try{
+      const r=await pool.query(`INSERT INTO maintenance_workflow_records
+        (kind,area,section,employee_number,submitted_by_whatsapp,payload,status)
+        VALUES('EMP_ATTENDANCE',$1,$2,$3,$4,$5::jsonb,'REPORTED_UNVERIFIED') RETURNING id`,
+        [canonicalArea(user.area_of_working),canonicalSection(user.section_department),user.employee_number,normWA(from),JSON.stringify(data)]);
+      await sendText(from,`Attendance #${r.rows[0].id} recorded for ${data.Date} · ${data.Shift} · Present.`);
+    }catch(e){
+      if(e.code==='23505'){await sendText(from,'Attendance for this shift is already recorded.');return true;}
+      throw e;
+    }
+    return true;
+  }
+  if(range){
+    if(!await hasAuthorityV874(user,'VIEW')){await sendText(from,'View permission required.');return true;}
+    const [,scope,fromDate,toDate]=range;
+    if(fromDate>toDate){await sendText(from,'Start date must be on or before end date.');return true;}
+    if([fromDate,toDate].some(x=>{const d=new Date(x+'T00:00:00Z');return Number.isNaN(d.getTime())||d.toISOString().slice(0,10)!==x;})){await sendText(from,'Use valid dates as YYYY-MM-DD.');return true;}
+    const kind=/employee/i.test(scope)?'EMP_ATTENDANCE':/contract/i.test(scope)?'LABOUR':null;
+    const broad=canReadDepartmentArchiveV81540(from,user);
+    const r=await pool.query(`SELECT id,kind,status,submitted_at,payload FROM maintenance_workflow_records
+      WHERE kind IN ('EMP_ATTENDANCE','LABOUR') AND ($1::text IS NULL OR kind=$1)
+        AND payload->>'Date' BETWEEN $2 AND $3
+        AND ($4::boolean OR submitted_by_whatsapp=$5 OR (area=$6 AND section=$7))
+      ORDER BY payload->>'Date',id LIMIT 2001`,
+      [kind,fromDate,toDate,broad,normWA(from),canonicalArea(user.area_of_working),canonicalSection(user.section_department)]);
+    if(!r.rows.length){await sendText(from,'No attendance entries in that date range.');return true;}
+    const lines=r.rows.slice(0,20).map(x=>`#${x.id} · ${x.payload.Date} · ${x.payload.Shift||'?'} · ${x.kind==='LABOUR'?x.payload['Worker name']||x.payload['Worker ID']||'Worker':x.payload._submitter?.name||x.payload['Employee number']} · ${x.payload.Attendance} · ${x.status}`);
+    await sendText(from,`${r.rows.length>2000?'2000+':r.rows.length} attendance entries\n${lines.join('\n')}`);
+    if(r.rows.length>20&&await hasAuthorityV874(user,'PDF')){
+      const pack={records:r.rows.slice(0,2000).map(x=>({item_no:String(x.id),module:x.kind,event_date:x.payload.Date,shift:x.payload.Shift||'',equipment:x.payload.Equipment||'',
+        description:`${x.kind==='LABOUR'?x.payload.Contractor+' · '+(x.payload['Worker name']||x.payload['Worker ID']):x.payload['Employee number']} · ${x.payload.Attendance} · ${x.payload.Job||''}`,
+        remarks:`Status: ${x.status}; OT hours: ${x.payload['OT hours']||0}`}))};
+      await sendGeneratedDocumentV878(from,tablePdfV880(pack,''),`LMMM_Attendance_${fromDate}_to_${toDate}.pdf`,'application/pdf');
+    }
+    return true;
+  }
   if(cmd==='WF_MENU'){
     if(!await hasAuthorityV874(user,'ENTRY')){await sendText(from,'Entry permission required.');return true;}
     await sendList(from,'Maintenance entries','Choose',[
-      ['JOB','Job / Work Order'],['SHUTDOWN','Shutdown request'],['ISOLATION','Isolation / Permit request'],
-      ['LABOUR','Contract attendance'],['EMP_ATTENDANCE','Employee attendance'],
-      ['HOURS','Working hours'],['CBM','Condition reading']
-    ].map(([k,title])=>({id:'WF_NEW:'+k,title})).concat([{id:'WF_LIST',title:'Recent entries'}]),'Maintenance');
+      ['JOB','Job / Work Order'],['SHUTDOWN','Shutdown request'],['ISOLATION','Isolation / Permit'],
+      ['LOGBOOK','Shift Log Book'],['INSPECTION','Inspection'],['DEFECT','Defect'],
+      ['BREAKDOWN','Breakdown / Delay'],['CBM','Condition reading']
+    ].map(([k,title])=>({id:'WF_NEW:'+k,title})).concat([{id:'WF_MORE',title:'Attendance / hours'}]),'Maintenance');
+    return true;
+  }
+  if(cmd==='WF_MORE'){
+    if(!await hasAuthorityV874(user,'ENTRY')){await sendText(from,'Entry permission required.');return true;}
+    await sendList(from,'Attendance and hours','Choose',[
+      ['LABOUR','Contract attendance'],['EMP_ATTENDANCE','Employee attendance'],['HOURS','Working hours']
+    ].map(([k,title])=>({id:'WF_NEW:'+k,title})).concat([{id:'WF_LIST',title:'Recent entries'},{id:'WF_MENU',title:'Back to maintenance'}]),'Maintenance');
     return true;
   }
   if(cmd==='WF_LIST'){
@@ -4660,7 +4775,7 @@ async function maintenanceWorkflowV81544(from,text,cmd){
   if(start){
     if(!await hasAuthorityV874(user,'ENTRY')){await sendText(from,'Entry permission required.');return true;}
     await setWorkflowSessionV81544(from,start[1]);
-    await sendText(from,`Send ${start[1]} details, one field per line:\n${WORKFLOW_FIELDS_V81544[start[1]].map(f=>f+':').join('\n')}${start[1]==='HOURS'?'\nStart/End example: 2026-10-06T09:00+05:30':''}\n\nSend Cancel to stop.`);
+    await sendText(from,`Send ${start[1]} details, one field per line:\n${WORKFLOW_FIELDS_V81544[start[1]].map(f=>f+':').join('\n')}${start[1]==='HOURS'?'\nStart/End example: 2026-10-06T09:00+05:30':''}${start[1]==='EMP_ATTENDANCE'?'\nLeave Date/Shift blank only for current duty attendance.':''}\n\nSend Cancel to stop.`);
     return true;
   }
   if(!session||session.expiresAt<Date.now()){await setWorkflowSessionV81544(from,null);await sendText(from,'Entry expired. Open Add Entry again.');return true;}
@@ -4668,8 +4783,49 @@ async function maintenanceWorkflowV81544(from,text,cmd){
   const kind=session.kind,fields=WORKFLOW_FIELDS_V81544[kind];
   if(!fields){await setWorkflowSessionV81544(from,null);return true;}
   const {data,unknown}=parseWorkflowV81544(text,fields);
+  if(kind==='EMP_ATTENDANCE'&&!data.Date&&data['Event time']){
+    await sendText(from,'Add Date: YYYY-MM-DD for this event time. I cannot assume when it happened.');return true;
+  }
+  if(kind==='EMP_ATTENDANCE'&&!data.Date&&['LEAVE','OFF'].includes(String(data.Attendance||'').toUpperCase())){
+    await sendText(from,'Add the duty Date and Shift for Leave or Off.');return true;
+  }
+  if(kind==='EMP_ATTENDANCE'&&!data.Date){
+    const current=attendanceCurrentV81545(user.shift,data.Shift);
+    if(!current.date_source||!current.shift){
+      await sendText(from,'Which duty date and shift is this attendance for? Send Date: YYYY-MM-DD and Shift: A/B/C/G with the full entry.');return true;
+    }
+    data.Date=current.shift_date;
+    data.Shift=current.shift;
+    data._date_source='SUBMISSION_TIME_AUTO';
+  }
+  if(kind==='EMP_ATTENDANCE'&&data.Date&&!data.Shift&&!data['Event time']){
+    await sendText(from,'Add Shift: A/B/C/G for this dated attendance, or Event time: HH:mm so the roster can be checked.');return true;
+  }
   const err=workflowErrorV81544(kind,data);
   if(unknown.length||err){await sendText(from,`${unknown.length?'Check these lines: '+unknown.join(', ')+'.\n':''}${err}\nSend the corrected full entry, or Cancel.`);return true;}
+  if(data.Shift)data.Shift=canonicalShift(data.Shift);
+  let timing=null;
+  if(kind==='EMP_ATTENDANCE'&&data._date_source==='SUBMISSION_TIME_AUTO'){
+    timing=attendanceCurrentV81545(user.shift,data.Shift);
+  }else if(data['Event time']){
+    const eventDate=data.Date||data['Requested date'];
+    timing=shiftContextV81545(eventDate,data['Event time'],kind==='LABOUR'?null:user.shift,data.Shift);
+  }else if(kind==='HOURS'){
+    const startLocal=istPartsV81545(new Date(data.Start));
+    timing=shiftContextV81545(startLocal.date,startLocal.time,null,data.Shift);
+  }else if(data.Date||data['Requested date']){
+    timing={event_date:data.Date||data['Requested date'],event_time:null,shift:data.Shift||null,
+      shift_date:data.Date||data['Requested date'],roster:['LABOUR','HOURS'].includes(kind)?null:canonicalShift(user.shift),
+      resolution:data.Shift?'USER_REPORTED_TIME_UNKNOWN':'NEEDS_EVENT_TIME'};
+  }
+  if(timing?.error){await sendText(from,timing.error);return true;}
+  if(timing){
+    if(kind==='EMP_ATTENDANCE'&&!timing.shift){await sendText(from,'Which duty shift was this? Send Shift: A/B/C/G.');return true;}
+    if(timing.shift&&!data.Shift)data.Shift=timing.shift;
+    data._timing=timing;
+  }
+  data._original_text=String(text).slice(0,4000);
+  data._submitter={employee_number:user.employee_number,name:user.name||null,roster_shift:canonicalShift(user.shift)};
   if(kind==='EMP_ATTENDANCE'){
     if(!/^\d{6}$/.test(user.employee_number)){await sendText(from,'A six-digit employee number is required.');return true;}
     data['Employee number']=user.employee_number;
@@ -4696,6 +4852,10 @@ async function maintenanceWorkflowV81544(from,text,cmd){
   }
   await setWorkflowSessionV81544(from,null);
   await sendText(from,`Saved #${r.rows[0].id} · ${kind} · ${status}${kind==='HOURS'?' · '+data['Reported hours']+' reported hours':''}`);
+  if(kind==='LOGBOOK'&&data._timing?.shift){
+    await sendButtons(from,'Log book saved. If this is your shift attendance, confirm it:',
+      [{id:`WF_LOG_ATTEND:${r.rows[0].id}`,title:'Mark Present'},{id:'WF_MENU',title:'Later'}]);
+  }
   return true;
 }
 async function processMessage(from,text,payload=''){
@@ -4983,8 +5143,8 @@ Shift: ${u.shift||'-'}`,[{id:'REMOVE_ME_CONFIRM',title:'Remove Me'},{id:'ACCOUNT
 }
 
 app.get('/health', async (_req,res)=>{
-  try{await pool.query('SELECT 1');res.json({ok:true,version:'8.15.44',phase:'maintenance-workflows',db:true});}
-  catch(e){res.status(500).json({ok:false,version:'8.15.44',error:e.message});}
+  try{await pool.query('SELECT 1');res.json({ok:true,version:'8.15.45',phase:'shift-aware-workflows',db:true});}
+  catch(e){res.status(500).json({ok:false,version:'8.15.45',error:e.message});}
 });
 app.get('/webhook',(req,res)=>{
   const mode=req.query['hub.mode'], token=req.query['hub.verify_token'], challenge=req.query['hub.challenge'];
@@ -5031,4 +5191,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.44 WORKFLOW RECORDS listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.45 SHIFT-AWARE WORKFLOWS listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
