@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.49 ASSET SEARCH AND DATA QUALITY 2026-10-06
+// LMMM AI Maintenance V8.15.50 DEPLOY AND EQUIPMENT SEARCH FIX 2026-10-06
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -980,7 +980,7 @@ if((a=text.match(/^AUTH_ADV:(\d+)$/))){await sendList(from,'Advanced Authorities
     if(normWA(from)!==u.whatsapp_number) await sendText(from,`${m[1]} registration removed. Maintenance history preserved.`);
     return true;
   }
-  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.15.49');return true;}
+  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.15.50');return true;}
   return false;
 }
 async function hasAuthorityV874(u, authority){
@@ -3697,6 +3697,10 @@ function drawingQueryV81535(question=''){
 function looksLikeDrawingRequestV81535(question=''){
   const q=String(question||'');
   if(/\b(?:drawings?|drg)\b/i.test(q))return true;
+  // A bare equipment name/code (for example BP1 → "bloom pusher 1") is
+  // an asset lookup, not evidence that the user wants the drawing catalogue.
+  const assetOnly=drawingNormV81535(q);
+  if(/^(?:BP|BLOOMPUSHER)[12]?$/.test(assetOnly))return false;
   // Identifier-like values containing both letters and digits, or common LMMM drawing-series numbers.
   const compact=drawingNormV81535(q);
   return /[A-Z]/.test(compact)&&/\d/.test(compact)&&compact.length>=6 || /\b170\d{3,7}(?:[-/]\d+)?\b/i.test(q);
@@ -5368,8 +5372,8 @@ Shift: ${u.shift||'-'}`,[{id:'REMOVE_ME_CONFIRM',title:'Remove Me'},{id:'ACCOUNT
 }
 
 app.get('/health', async (_req,res)=>{
-  try{await pool.query('SELECT 1');res.json({ok:true,version:'8.15.49',phase:'asset-search-data-quality',db:true});}
-  catch(e){res.status(500).json({ok:false,version:'8.15.49',error:e.message});}
+  try{await pool.query('SELECT 1');res.json({ok:true,version:'8.15.50',phase:'deploy-and-equipment-search-fix',db:true});}
+  catch(e){res.status(500).json({ok:false,version:'8.15.50',error:e.message});}
 });
 app.get('/webhook',(req,res)=>{
   const mode=req.query['hub.mode'], token=req.query['hub.verify_token'], challenge=req.query['hub.challenge'];
@@ -5416,4 +5420,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.49 ASSET SEARCH AND DATA QUALITY listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.50 DEPLOY AND EQUIPMENT SEARCH FIX listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
