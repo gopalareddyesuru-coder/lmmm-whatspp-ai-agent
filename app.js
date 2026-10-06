@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.40 CLEAN DRAWING REPLIES 2026-10-06
+// LMMM AI Maintenance V8.15.44 WORKFLOW RECORDS 2026-10-06
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -266,14 +266,17 @@ function parseRegistration(text=''){
 }
 async function sendText(to, body){
   if(!PHONE_NUMBER_ID || !ACCESS_TOKEN) throw new Error('Meta WhatsApp credentials missing');
-  // Source locations are available to the configured Super Admin only.
-  const displayBody=isOwner(to)?String(body):String(body).split('\n').filter(line=>!/^\s*(?:sources?|source file|మూలాలు|మూలం)\s*:/i.test(line)).join('\n');
+  // A source citation is opt-in even for the Super Admin. Never expose it to other users.
+  const sourceAsked=isOwner(to)&&sourceRequestV81541.get(normWA(to))===true;
+  const displayBody=sourceAsked?String(body):String(body).split('\n').filter(line=>!/^\s*(?:sources?|source file|మూలాలు|మూలం)\s*:/i.test(line)).join('\n');
   const r=await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${PHONE_NUMBER_ID}/messages`,{
     method:'POST',headers:{Authorization:`Bearer ${ACCESS_TOKEN}`,'Content-Type':'application/json'},
     body:JSON.stringify({messaging_product:'whatsapp',to,type:'text',text:{body:displayBody.slice(0,4096)}})
   });
   if(!r.ok) throw new Error(`WhatsApp send failed ${r.status}: ${await r.text()}`);
 }
+const sourceRequestV81541=new Map();
+function explicitSourceRequestV81541(value){return /\b(?:source|sources|source file|reference|references|proof|evidence|provenance)\b|మూలం|మూలాలు|ఆధారం|सोर्स|स्रोत/i.test(String(value||''));}
 
 async function sendButtons(to, body, buttons){
   if(!PHONE_NUMBER_ID || !ACCESS_TOKEN) throw new Error('Meta WhatsApp credentials missing');
@@ -2104,7 +2107,8 @@ function tablePdfV880(pack,source){
   const objs=[null],add=x=>(objs.push(x),objs.length-1),catalog=add(''),pagesId=add(''),font=add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
   const pageIds=[];
   pages.forEach((pg,pi)=>{
-    let stream=`BT /F1 11 Tf 1 0 0 1 ${margin} ${H-28} Tm (${escPdfV879(pack.simple_drawing_list?'Drawing list':'LMMM AI Maintenance - Extracted Data')}) Tj /F1 7 Tf 1 0 0 1 ${margin} ${H-42} Tm (${escPdfV879(pack.simple_drawing_list?`Page ${pi+1}/${pages.length}`:`Source: ${source} | Type: ${pack.document_type||'OTHER'} | Page ${pi+1}/${pages.length}`)}) Tj ET `;
+    const cleanReport=pack.simple_drawing_list||pack.simple_search_results;
+    let stream=`BT /F1 11 Tf 1 0 0 1 ${margin} ${H-28} Tm (${escPdfV879(pack.simple_drawing_list?'Drawing list':pack.simple_search_results?'Maintenance results':'LMMM AI Maintenance - Extracted Data')}) Tj /F1 7 Tf 1 0 0 1 ${margin} ${H-42} Tm (${escPdfV879(cleanReport?`Page ${pi+1}/${pages.length}`:`Source: ${source} | Type: ${pack.document_type||'OTHER'} | Page ${pi+1}/${pages.length}`)}) Tj ET `;
     let y=H-titleH;
     // header
     let x=margin;
@@ -2122,7 +2126,7 @@ function tablePdfV880(pack,source){
       });
       y-=rh;
     });
-    stream+=`BT /F1 7 Tf 1 0 0 1 ${margin} 14 Tm (${escPdfV879(pack.simple_drawing_list?'':landscape?'Landscape - print ready':'Portrait - print ready')}) Tj ET`;
+    stream+=`BT /F1 7 Tf 1 0 0 1 ${margin} 14 Tm (${escPdfV879(cleanReport?'':landscape?'Landscape - print ready':'Portrait - print ready')}) Tj ET`;
     const content=add(`<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream`);
     const pid=add(`<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 ${W} ${H}] /Resources << /Font << /F1 ${font} 0 R >> >> /Contents ${content} 0 R >>`);
     pageIds.push(pid);
@@ -2148,6 +2152,10 @@ function excelHtmlV879(pack,source){
   <thead><tr>${keys.map(k=>`<th>${esc(k.replace(/_/g,' ').toUpperCase())}</th>`).join('')}</tr></thead><tbody>${bodyRows.map(r=>`<tr>${keys.map(k=>`<td>${esc(r?.[k])}</td>`).join('')}</tr>`).join('')}</tbody></table></body></html>`;
 }
 function xmlEscV882(v){return String(v??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&apos;');}
+function maintenanceXlsxStylesV81543(){
+  // Body, header, alternate body, linked cell.
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="3"><font><sz val="10"/><name val="Aptos"/><color rgb="FF17333B"/></font><font><b/><sz val="10"/><name val="Aptos"/><color rgb="FFFFFFFF"/></font><font><u/><sz val="10"/><name val="Aptos"/><color rgb="FF075985"/></font></fonts><fills count="4"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF0B3954"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFEAF6F8"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="2"><border/><border><bottom style="hair"><color rgb="FFD7E3EA"/></bottom></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="4"><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyAlignment="1"><alignment horizontal="left" vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="2" fillId="3" borderId="1" xfId="0" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
+}
 function colNameV882(n){let x=n+1,r='';while(x){x--;r=String.fromCharCode(65+(x%26))+r;x=Math.floor(x/26);}return r;}
 function crc32V882(buf){
   let c=0xffffffff;
@@ -2177,11 +2185,11 @@ function nativeXlsxV882(pack,source){
     return `<c r="${ref}" t="inlineStr" s="${style}"><is><t xml:space="preserve">${xmlEscV882(v)}</t></is></c>`;
   };
   let sheetRows='';
-  all.forEach((r,ri)=>{sheetRows+=`<row r="${ri+1}">${r.map((v,ci)=>cell(v,`${colNameV882(ci)}${ri+1}`,ri===0?1:0)).join('')}</row>`;});
+  all.forEach((r,ri)=>{sheetRows+=`<row r="${ri+1}" ht="${ri===0?32:27}" customHeight="1">${r.map((v,ci)=>cell(v,`${colNameV882(ci)}${ri+1}`,ri===0?1:ri%2===0?2:0)).join('')}</row>`;});
   const lastCol=colNameV882(Math.max(0,cols.length-1));
   const colsXml=maxWidths.map((w,i)=>`<col min="${i+1}" max="${i+1}" width="${w}" customWidth="1"/>`).join('');
   const sheet=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><dimension ref="A1:${lastCol}${Math.max(1,all.length)}"/><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><cols>${colsXml}</cols><sheetData>${sheetRows}</sheetData><autoFilter ref="A1:${lastCol}${Math.max(1,all.length)}"/><pageMargins left="0.3" right="0.3" top="0.5" bottom="0.5" header="0.2" footer="0.2"/><pageSetup orientation="${landscape?'landscape':'portrait'}" fitToWidth="1" fitToHeight="0" paperSize="9"/><headerFooter><oddHeader>&amp;CLMMM AI Maintenance</oddHeader><oddFooter>&amp;CPage &amp;P of &amp;N</oddFooter></headerFooter></worksheet>`;
-  const styles=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="10"/><name val="Arial"/></font><font><b/><sz val="10"/><name val="Arial"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="2"><border/><border><left style="thin"/><right style="thin"/><top style="thin"/><bottom style="thin"/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="1" fillId="0" borderId="1" xfId="0" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf></cellXfs></styleSheet>`;
+  const styles=maintenanceXlsxStylesV81543();
   const files=[
     ['[Content_Types].xml',`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/><Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/></Types>`],
     ['_rels/.rels',`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/></Relationships>`],
@@ -2578,8 +2586,8 @@ function documentQuestionIntentV81511(text){
     /\bitem\s*(?:number|no\.?|code|#?\s*\d{1,3}\b)/i.test(s) ||
     /\b(?:ltp|fart|tod|bsy\s*rt|ch\s*grid|ev[ -]?[12]|bh[1-7]|bv[1-7])\b/i.test(s) ||
     /\b(bloom pusher|ecs|bdm|downcomer|nitrogen|leak|burst|puncture|replacement|replaced|incident|shear pin|trunnion|coupling|furnace|hydraulic|pump|motor|shaft|gearbox|bearing)\b/i.test(s) ||
-    /^(ask|explain|describe|tell me|what|which|where|why|how|does|is there|show me|find|check|verify|lookup|drawing|manual|document|file|part|dimension|tolerance|material|standard|specification|meaning|doubt|query|history|jobs|job|spares|spare|equipment|sap|defects|defect|smp|sop|maintenance|production|vibration)\b/i.test(s) ||
-    /\b(explain|drawing|manual|document|tolerance|dimension|specification|meaning|gurinchi|enti|entha|cheppandi|deniki|sambandhanchindi|samjhao|batao|history|jobs|job|spares|spare|equipment|sap|defects|defect|smp|sop)\b/i.test(s));
+    /^(ask|explain|describe|tell me|what|which|where|why|how|does|is there|show me|find|check|verify|lookup|drawing|manual|document|file|part|dimension|tolerance|material|standard|specification|meaning|doubt|query|history|jobs|job|spares|spare|equipment|sap|defects|defect|smp|sop|maintenance|production|vibration|inspection|cbm|condition monitoring|format|checklist|permit)\b/i.test(s) ||
+    /\b(explain|drawing|manual|document|tolerance|dimension|specification|meaning|gurinchi|enti|entha|cheppandi|deniki|sambandhanchindi|samjhao|batao|history|jobs|job|spares|spare|equipment|sap|defects|defect|smp|sop|inspection|cbm|condition monitoring|format|checklist|permit)\b/i.test(s));
 }
 function documentSessionValueV81511(row){
   let v=row?.session_value;
@@ -2747,7 +2755,7 @@ function universalTermsV81513(question){
   const exact=refs.filter(x=>/\d/.test(x)&&x!==date&&!/^\d{1,4}[./-]\d{1,2}[./-]\d{2,4}$/.test(x)&&
       !(/^FURNACE[-./]?[12]$/i.test(x)&&/\bBLOOM\s+PUSHER\b/i.test(q)))
     .sort((a,b)=>b.length-a.length)[0]||null;
-  const stop=new Set(['what','which','where','when','why','how','are','the','and','for','this','that','with','from','about','there','any','all','show','give','tell','please','check','find','search','number','name','data','record','records','lo','ki','di','enti','entha','deniki','gurinchi','cheppandi','cheppu','cheppara','sambandhanchindi','drawing','drawings','manual','manuals','file','sources','related','sambandham','details','history','jobs','job','spares','spare','equipment','maintenance','part','parts','sap','defect','defects','smp','sop','production','troubleshooting','problems','problem','issue','issues','failure','failed','fail','last','previous','before','during','today','yesterday','chudu','ivvu','kavali','ayyindi','chesaru','chesam','eppudu','year','date','dates','nunchi','entha','details','list','total']);
+  const stop=new Set(['what','which','where','when','why','how','are','the','and','for','this','that','with','from','about','there','any','all','show','give','tell','please','check','find','search','number','name','data','record','records','lo','ki','di','enti','entha','deniki','gurinchi','cheppandi','cheppu','cheppara','sambandhanchindi','drawing','drawings','manual','manuals','file','sources','related','sambandham','details','history','jobs','job','spares','spare','equipment','maintenance','part','parts','sap','defect','defects','smp','sop','production','troubleshooting','problems','problem','issue','issues','failure','failed','fail','last','previous','before','during','today','yesterday','chudu','ivvu','kavali','ayyindi','chesaru','chesam','eppudu','year','date','dates','nunchi','entha','details','list','total','format','formats','template','templates','checklist','checklists','permit','permits','inspection','inspections','condition','monitoring','cbm','vibration','vibrations','readings','measurements','thickness']);
   const terms=[...new Set((q.toLowerCase().match(/[a-z0-9]{3,}|[\u0c00-\u0c7f]{2,}|[\u0900-\u097f]{2,}/g)||[]).filter(x=>!stop.has(x)&&x!=='gurunchi'&&x!==date))];
   return {exact,date,terms,primary:bp?'bloom pusher':/\b(?:bloom\s+pusher|bp)\b/i.test(q)?'bloom pusher':brakeSlide?'brake slide':exact||terms.sort((a,b)=>b.length-a.length)[0]||null,bpNumber:bp?.[1]||null,bloomPusher:/\b(?:bloom\s+pusher|bp)(?:[\s-]*[12])?\b/i.test(q),furnaceQualifier:/\b(?:in\s+front\s+of\s+)?furnace\s*[- ]?[12]\b/i.test(q)&&/\bBLOOM\s+PUSHER\b/i.test(q)};
 }
@@ -2755,6 +2763,10 @@ function searchIntentV81524(question,module){
   if(module&&module!=='ALL')return module;
   const q=String(question||'');
   if(/\b(drawings?|drg|tracing|tids|pd drawing)\b/i.test(q))return 'DRAWINGS';
+  if(/\b(formats?|templates?|check\s*sheets?|checklists?)\b/i.test(q))return 'FORMATS';
+  if(/\b(permits?|isolation certificates?|work clearances?)\b/i.test(q))return 'PERMITS';
+  if(/\b(cbm|condition monitoring|vibration|thickness|door loads?|deflection|wheel diameter)\b/i.test(q))return 'CBM';
+  if(/\b(inspections?|survey readings?)\b/i.test(q))return 'INSPECTION';
   if(/\b(troubleshoot|troubleshooting|why (?:did|does)|root cause|likely cause)\b/i.test(q))return 'TROUBLESHOOTING';
   if(/\b(smp|sop|manuals?|procedure|instructions?|how to|steps to|method to)\b/i.test(q))return 'MANUALS';
   if(/\b(jobs?|work orders?|actions? taken)\b/i.test(q))return 'JOBS';
@@ -3223,8 +3235,12 @@ async function proposeSearchCorrectionV81515(from,question,user){
   return true;
 }
 async function showAssetModulesV81515(from,term,language,warning=''){
-  const options=[['HISTORY','History'],['JOBS','Jobs'],['DEFECTS','Defects'],['DRAWINGS','Drawings'],['PARTS','Parts'],['SPARES','Spares'],['MANUALS','Manuals / SMP'],['ALL','All sources']];
+  const options=[['HISTORY','History'],['JOBS','Jobs'],['DEFECTS','Defects'],['DRAWINGS','Drawings'],['PARTS','Parts'],['SPARES','Spares'],['MANUALS','Manuals / SMP'],['ALL','All results'],['MORE','More topics']];
   await sendList(from,`${language==='TE'?'ఎంచుకున్న అంశం':'Selected subject'}: ${term}${warning?`\n${warning}`:''}\n${language==='TE'?'ఏ సమాచారం కావాలి?':'What would you like to find?'}`, 'Choose',options.map(([id,title])=>({id:`MAINT_MOD:${id}`,title})), 'Maintenance Search');
+}
+async function showMoreMaintenanceModulesV81542(from,term){
+  const options=[['INSPECTION','Inspection'],['CBM','Condition monitoring'],['FORMATS','Formats / check sheets'],['PERMITS','Permits'],['ALL','All results']];
+  await sendList(from,`${term}: What would you like to find?`,'Choose',options.map(([id,title])=>({id:`MAINT_MOD:${id}`,title})),'Maintenance Search');
 }
 async function showAssetChoicesV81515(from,question,rows,language,warning=''){
   const bpRequest=universalTermsV81513(normalizeMaintenanceQueryV81524(question));
@@ -3290,7 +3306,7 @@ async function handleSearchChoiceV81515(from,cmd,user){
   if(!state?.query||state.expiresAt<Date.now()){
     await sendText(from,'Search selection expired. Send the equipment or subject again.');return true;
   }
-  const language=await searchLanguageV81515(from,state.query),asset=cmd.match(/^MAINT_ASSET:(ALL|[0-7])$/),module=cmd.match(/^MAINT_MOD:(HISTORY|JOBS|DEFECTS|DRAWINGS|PARTS|SPARES|MANUALS|ALL)$/);
+  const language=await searchLanguageV81515(from,state.query),asset=cmd.match(/^MAINT_ASSET:(ALL|[0-7])$/),module=cmd.match(/^MAINT_MOD:(HISTORY|JOBS|DEFECTS|DRAWINGS|PARTS|SPARES|MANUALS|INSPECTION|CBM|FORMATS|PERMITS|MORE|ALL)$/);
   if(cmd==='MAINT_SUGGEST:CANCEL'){await sendText(from,'Send the equipment name or exact ID to search.');return true;}
   if(cmd==='MAINT_SUGGEST:SHOW'){
     const found=await universalSearchV81513(from,user,state.query);
@@ -3304,7 +3320,8 @@ async function handleSearchChoiceV81515(from,cmd,user){
     await showAssetModulesV81515(from,state.selected||state.query,language,state.warning);return true;
   }
   if(module){
-    const label={HISTORY:'history',JOBS:'jobs',DEFECTS:'defects',DRAWINGS:'drawings',PARTS:'parts',SPARES:'spares',MANUALS:'manuals',ALL:'all sources'}[module[1]];
+    if(module[1]==='MORE'){await showMoreMaintenanceModulesV81542(from,state.selected||state.query);return true;}
+    const label={HISTORY:'history',JOBS:'jobs',DEFECTS:'defects',DRAWINGS:'drawings',PARTS:'parts',SPARES:'spares',MANUALS:'manuals',INSPECTION:'inspection',CBM:'condition monitoring',FORMATS:'formats',PERMITS:'permits',ALL:'all results'}[module[1]];
     await handleUniversalSearchV81513(from,module[1]==='ALL'?(state.selected||state.query):`${state.selected||state.query} ${label}`,user,{module:module[1],language});return true;
   }
   return false;
@@ -3340,14 +3357,23 @@ async function showUnlinkedDrawingRefsV81516(from,subject,user){
   if(!canReadDepartmentArchiveV81540(from,user))return false;
   const references=unlinkedDrawingReferencesV81516(subject);
   if(!references.length)return false;
-  const lines=references.map(x=>`• ${x.drawing}\n  Source equipment: ${x.equipment}\n  Source: ${x.source}`).join('\n');
-  await sendText(from,`${subject}: No confirmed drawing is linked to this exact equipment.\nRelated references in the uploaded source archive (equipment link unverified):\n${lines}\nThese references are not stored as confirmed equipment drawings.`.slice(0,2600));
+  const lines=references.map(x=>`• ${x.drawing}${x.equipment?` — ${x.equipment}`:''}${isOwner(from)&&sourceRequestV81541.get(normWA(from))?`\nSource: ${x.source}`:''}`).join('\n');
+  await sendText(from,`${subject}: No confirmed equipment drawing found.\nPossible matches (equipment link needs review):\n${lines}`.slice(0,2600));
   return true;
 }
 function filterSearchRowsV81518(rows,module){
   if(!module||module==='ALL')return rows;
   return rows.filter(r=>{
     const kind=String(r.kind||'').toLowerCase(),src=String(r.source||'').toLowerCase();
+    const title=String(r.title||'').toLowerCase(),body=String(r.content||'').toLowerCase();
+    const context=`${kind} ${src} ${title}`;
+    if(module==='FORMATS')return /format|template|check\s*sheet|checklist|blank form/i.test(context)&&
+      !/\.xlsx?\b.*(?:history|reading|measurement)/i.test(src);
+    if(module==='PERMITS')return /permit|work clearance|isolation certificate/i.test(context);
+    if(module==='CBM')return /cbm|condition monitoring|vibration|thickness|door load|deflection|wheel diameter|safety valve test|skids survey/i.test(context)&&
+      !/format|template|blank form/i.test(`${kind} ${title}`);
+    if(module==='INSPECTION')return /inspection|survey|check\s*sheet/i.test(context)&&
+      !/format|template|blank form/i.test(kind);
     if(module==='JOBS')return kind==='job_action'||kind.startsWith('source maintenance history')||kind.startsWith('source maintenance event')||
       kind.startsWith('source job reference')&&/\b(?:19|20)\d{2}(?:-\d{2}-\d{2})?\b/.test(String(r.content||''));
     if(module==='DEFECTS')return kind==='defect'||kind.startsWith('source defect');
@@ -3393,15 +3419,16 @@ async function handleSearchExportV81518(from,cmd,user){
     await sendText(from,'Cannot confirm a complete accessible result. Narrow the search and try again.');return true;
   }
   // Exports contain source references exactly as searched; they do not create verified equipment mappings.
-  const items=rows.map((r,i)=>({item_no:i+1,description:readableSearchItemV81522(r,result.request),remarks:`${r.kind} | ${r.source||'source'}${r.page?` | page ${r.page}`:''}`}));
+  const showSource=isOwner(from)&&explicitSourceRequestV81541(state.question);
+  const items=rows.map((r,i)=>({item_no:i+1,description:readableSearchItemV81522(r,result.request),...(showSource?{remarks:`${r.kind} | ${r.source||'source'}${r.page?` | page ${r.page}`:''}`}:{})}));
   // The existing PDF table caps cells at four lines; split text into continuation rows so evidence is preserved.
   const pdfItems=items.flatMap(r=>{
     const chunks=String(r.description).match(/[\s\S]{1,110}/g)||[''];
-    return chunks.map((description,i)=>({item_no:i?`${r.item_no} continued`:r.item_no,description,remarks:r.remarks}));
+    return chunks.map((description,i)=>({item_no:i?`${r.item_no} continued`:r.item_no,description,...(showSource?{remarks:r.remarks}:{})}));
   });
-  const pack={document_type:'SEARCH_RESULTS',extracted_items:kind==='PDF'?pdfItems:items};
+  const pack={document_type:'SEARCH_RESULTS',simple_search_results:!showSource,extracted_items:kind==='PDF'?pdfItems:items};
   const file=kind==='PDF'?'lmmm_search_results.pdf':'lmmm_search_results.xlsx';
-  const bytes=kind==='PDF'?tablePdfV880(pack,'Search results; source links as labelled'):nativeXlsxV882(pack,'Search results; source links as labelled');
+  const bytes=kind==='PDF'?tablePdfV880(pack,showSource?'Search results; source links as labelled':''):nativeXlsxV882(pack,showSource?'Search results; source links as labelled':'');
   await sendGeneratedDocumentV878(from,bytes,file,kind==='PDF'?'application/pdf':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   return true;
 }
@@ -3582,7 +3609,7 @@ async function showSearchPageV81522(from,user,more=false){
 async function sendFullDrawingPdfV81522(from,user,state){
   if(!(await hasAuthorityV874(user,'VIEW'))||!(await hasAuthorityV874(user,'PDF')))return false;
   const items=state.items.map((x,i)=>({item_no:i+1,description:`${x.number} — ${x.title}${x.generic?' (furnace unspecified)':''}`,remarks:''}));
-  const bytes=tablePdfV880({document_type:'DRAWING_SEARCH',extracted_items:items},`${state.label}: ${items.length} distinct drawing references`);
+  const bytes=tablePdfV880({document_type:'DRAWING_SEARCH',simple_drawing_list:true,extracted_items:items},'');
   await sendGeneratedDocumentV878(from,bytes,'lmmm_drawing_results.pdf','application/pdf');return true;
 }
 async function showDrawingPageV81521(from,user,more=false){
@@ -3898,20 +3925,20 @@ async function sendDrawingPageV81537(from,selected,start,canOpen=false){
   await sendList(from,`${selected.length} drawings · ${offset+1}–${Math.min(selected.length,offset+size)}. Select a drawing for ${canOpen?'its image and original link':'its details'}.`,'View drawings',rows,'Drawing results');
 }
 function drawingResultsXlsxV81537(selected,includeLinks=false){
-  const headers=['Drawing number','Description (source)','Area (source hint)','Equipment (source index; unverified)','Sub-equipment (source index)','Part / assembly','Discipline (source catalogue)','Revision','Filename','Folder path'];
+  const headers=['Drawing number','Description','Area (unverified)','Equipment (unverified)','Sub-equipment','Part / assembly','Discipline','Revision','Filename','Folder path'];
   if(includeLinks)headers.push('Google Drive link');
   const rows=[headers,...selected.map(({d})=>{const row=[drawingFieldV81535(d,'drawing_number'),drawingFieldV81535(d,'description','descriptive_name'),drawingFieldV81535(d,'area','section'),drawingFieldV81535(d,'equipment'),drawingFieldV81535(d,'indexed_sub_equipment','sub_equipment'),drawingFieldV81535(d,'part_assembly','indexed_part_name','part','assembly'),Array.isArray(d.indexed_disciplines)?d.indexed_disciplines.join(', '):drawingFieldV81535(d,'discipline'),drawingFieldV81535(d,'revision'),drawingFieldV81535(d,'filename'),drawingFieldV81535(d,'folder_path')];if(includeLinks)row.push(drawingFieldV81535(d,'drive_url','url','web_view_link'));return row;})];
-  const cells=rows.map((row,ri)=>`<row r="${ri+1}">${row.map((v,ci)=>`<c r="${colNameV882(ci)}${ri+1}" t="inlineStr"><is><t xml:space="preserve">${xmlEscV882(v)}</t></is></c>`).join('')}</row>`).join('');
+  const cells=rows.map((row,ri)=>`<row r="${ri+1}" ht="${ri===0?32:27}" customHeight="1">${row.map((v,ci)=>`<c r="${colNameV882(ci)}${ri+1}" s="${ri===0?1:includeLinks&&ci===10&&v?3:ri%2===0?2:0}" t="inlineStr"><is><t xml:space="preserve">${xmlEscV882(v)}</t></is></c>`).join('')}</row>`).join('');
   const links=includeLinks?rows.slice(1).map((r,i)=>r[10]?{row:i+2,url:r[10]}:null).filter(Boolean):[];
   const lastCol=includeLinks?'K':'J';
   const sheet=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><dimension ref="A1:${lastCol}${rows.length}"/><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><cols>${[24,64,24,36,36,40,27,12,42,55,...(includeLinks?[65]:[])].map((w,i)=>`<col min="${i+1}" max="${i+1}" width="${w}" customWidth="1"/>`).join('')}</cols><sheetData>${cells}</sheetData><autoFilter ref="A1:${lastCol}${rows.length}"/>${includeLinks?`<hyperlinks>${links.map((x,i)=>`<hyperlink ref="K${x.row}" r:id="rId${i+1}"/>`).join('')}</hyperlinks>`:''}</worksheet>`;
   const rels=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${links.map((x,i)=>`<Relationship Id="rId${i+1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="${xmlEscV882(x.url)}" TargetMode="External"/>`).join('')}</Relationships>`;
   return zipStoreV882([
-    ['[Content_Types].xml','<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>'],
+    ['[Content_Types].xml','<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>'],
     ['_rels/.rels','<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'],
     ['xl/workbook.xml','<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Drawings" sheetId="1" r:id="rId1"/></sheets></workbook>'],
-    ['xl/_rels/workbook.xml.rels','<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>'],
-    ['xl/worksheets/sheet1.xml',sheet],...(includeLinks?[['xl/worksheets/_rels/sheet1.xml.rels',rels]]:[])
+    ['xl/_rels/workbook.xml.rels','<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>'],
+    ['xl/worksheets/sheet1.xml',sheet],['xl/styles.xml',maintenanceXlsxStylesV81543()],...(includeLinks?[['xl/worksheets/_rels/sheet1.xml.rels',rels]]:[])
   ]);
 }
 
@@ -4265,11 +4292,12 @@ async function handleUniversalSearchV81513(from,question,user,options={}){
     if(!verified.length){
       const register=rows.filter(r=>/^Source drawing list/.test(r.kind));
       if(register.length){
-        await sendText(from,`Source drawing-list entries for ${request.primary} (identifiers copied as printed; title-block number unconfirmed):\n${register.slice(0,5).map(r=>universalEvidenceV81513(r,request)).join('\n\n')}\nCheck each row's equipment-link status before treating it as an equipment drawing.`.slice(0,3500));
+        const possible=register.slice(0,5).map((r,i)=>`${i+1}. ${readableSearchItemV81522(r,request)}`).join('\n');
+        await sendText(from,`${request.primary}: Drawing numbers need title-block confirmation.\n${possible}`.slice(0,1800));
         if(!incomplete)await sendSearchExportButtonsV81518(from,user,question,module,rows.length);return true;
       }
       const sources=[...new Set(rows.map(r=>r.source).filter(Boolean))].slice(0,3);
-      await sendText(from,`${request.primary}: ${te?'ఈ అంశానికి సంబంధించిన ఆధారాలు ఉన్నాయి, కానీ వాటిలో ధృవీకరించిన drawing number లేదు.':'Related source records exist, but no verified drawing number was found.'}${sources.length?`\n${te?'మూలాలు':'Sources'}: ${sources.join('; ')}`:''}\nData ledu / confirm cheyyalenu.`.slice(0,1400));return true;
+      await sendText(from,`${request.primary}: ${te?'ధృవీకరించిన drawing number దొరకలేదు.':'No verified drawing number found.'}${isOwner(from)&&explicitSourceRequestV81541(question)&&sources.length?`\nSources: ${sources.join('; ')}`:''}`.slice(0,1400));return true;
     }
     const answer=verified.slice(0,5).map(x=>`${x.number} — ${x.doc.source_filename||'source'}${x.doc.kind==='pending'?' (review pending)':''}`).join('\n');
     await sendText(from,`${te?'టైటిల్ బ్లాక్‌లో ఉన్న drawing number':'Drawing number in title block'}:\n${answer}`.slice(0,1400));
@@ -4318,7 +4346,7 @@ async function handleUniversalSearchV81513(from,question,user,options={}){
     await showSearchPageV81522(from,user);
     await explainBpMechanicalAlongsideDefectsV81530(from,user,request,module,rows);
     if(items.length>20&&!limited&&!incomplete&&await hasAuthorityV874(user,'PDF')){
-      const pack={document_type:'SEARCH_RESULTS',extracted_items:items.map((x,i)=>({item_no:i+1,description:x,remarks:''}))};
+      const pack={document_type:'SEARCH_RESULTS',simple_search_results:true,extracted_items:items.map((x,i)=>({item_no:i+1,description:x}))};
       await sendGeneratedDocumentV878(from,tablePdfV880(pack,`${items.length} accessible matches`),'lmmm_search_results.pdf','application/pdf');
     }else if(limited&&items.length>20){
       const imported=rows.filter(r=>String(r.key||'').startsWith('archive:history:')&&/\.xlsx/i.test(String(r.source||'')));
@@ -4327,7 +4355,7 @@ async function handleUniversalSearchV81513(from,question,user,options={}){
         const seenImported=new Set(),excelItems=[];
         for(const row of imported){const item=readableSearchItemV81522(row,request),key=item.toUpperCase().replace(/[^A-Z0-9]+/g,'');
           if(!key||seenImported.has(key))continue;seenImported.add(key);excelItems.push(item);}
-        if(excelItems.length>20){const pack={document_type:'IMPORTED_EXCEL_HISTORY',extracted_items:excelItems.map((x,i)=>({item_no:i+1,description:x,remarks:''}))};
+        if(excelItems.length>20){const pack={document_type:'IMPORTED_EXCEL_HISTORY',simple_search_results:true,extracted_items:excelItems.map((x,i)=>({item_no:i+1,description:x}))};
           await sendGeneratedDocumentV878(from,tablePdfV880(pack,`${excelItems.length} imported Excel history matches`),'lmmm_excel_history_matches.pdf','application/pdf');}
       }
       await sendText(from,'More matching records may exist outside the displayed sources. Narrow the search to confirm a complete cross-source result.');
@@ -4341,7 +4369,7 @@ async function handleUniversalSearchV81513(from,question,user,options={}){
       if(!key||seen.has(key))continue;seen.add(key);unique.push(item);
       if(unique.length>=3)break;
     }
-    const showSource=isOwner(from)&&/\b(?:source|file|reference|proof|evidence)\b/i.test(question);
+    const showSource=isOwner(from)&&explicitSourceRequestV81541(question);
     const items=unique.map((x,i)=>`${i+1}. ${x.excerpt}${showSource?`\nSource: ${x.file}`:''}`).join('\n\n');
     await sendText(from,`${items}${incomplete?'\nSome sources could not be searched.':''}${rows.length>8?`\n${te?'మరిన్ని ఫలితాలకు విషయం స్పష్టంగా చెప్పండి.':'Narrow the search for more results.'}`:''}`.slice(0,1200));
     if(!incomplete)await sendSearchExportButtonsV81518(from,user,question,module,rows.length);return true;
@@ -4351,7 +4379,7 @@ async function handleUniversalSearchV81513(from,question,user,options={}){
   try{const gx=await geminiGenerateWithFallbackV892({contents:[{parts:[{text:prompt}]}],generationConfig:{maxOutputTokens:850}},45000);
     const data=await gx.response.json(),answer=(data.candidates?.[0]?.content?.parts||[]).map(x=>x.text||'').join('').trim();
     await sendText(from,(incomplete?'Some sources could not be searched.\n':'')+(answer?answer.slice(0,2250):te?'ఆ వివరాలు sourceలో లేవు; నిర్ధారించలేను.':language==='HI'?'स्रोत में जानकारी नहीं है; पुष्टि नहीं कर सकता।':'Data ledu / confirm cheyyalenu.'));
-  }catch(e){console.error('[UNIVERSAL_SEARCH_ANSWER]',e);await sendText(from,`${te?'AI వివరణ ప్రస్తుతం అందుబాటులో లేదు. దొరికిన ఆధారం':'AI explanation unavailable. Source evidence'}:\n${universalEvidenceV81513(rows[0],request)}`.slice(0,2500));}
+  }catch(e){console.error('[UNIVERSAL_SEARCH_ANSWER]',e);await sendText(from,te?'సమాధానం ప్రస్తుతం అందుబాటులో లేదు. మళ్లీ ప్రయత్నించండి.':'Answer temporarily unavailable. Please try again.');}
   if(!incomplete)await sendSearchExportButtonsV81518(from,user,question,module,rows.length);
   return true;
 }
@@ -4364,7 +4392,7 @@ async function answerDocumentQuestionV81511(from,question,doc){
     const gx=await geminiGenerateWithFallbackV892({contents:[{parts:[{text:prompt}]}],generationConfig:{maxOutputTokens:900}},45000);
     const j=await gx.response.json();
     const answer=(j.candidates?.[0]?.content?.parts||[]).map(x=>x.text||'').join('').trim();
-    await sendText(from,answer?`${isOwner(from)&&/\b(?:source|file|reference|proof|evidence)\b/i.test(question)?`Source: ${doc.source_filename||'document'}\n`:''}${answer.slice(0,1400)}`:documentAnswerTextV81511(question));
+    await sendText(from,answer?`${isOwner(from)&&explicitSourceRequestV81541(question)?`Source: ${doc.source_filename||'document'}\n`:''}${answer.slice(0,1400)}`:documentAnswerTextV81511(question));
   }catch(e){console.error('[DOC_QA]',e);await sendText(from,'Document answer is temporarily unavailable. Please try again.');}
 }
 async function handleDocumentQuestionV81511(from,text,cmd,user){
@@ -4405,10 +4433,10 @@ async function handleDocumentQuestionV81511(from,text,cmd,user){
     await sendText(from,`📐 ${d.drawing_number||d.filename} — ${drawingShortDescriptionV81536(d)}\nImage temporarily unavailable.\n🔗 ${d.drive_url||''}`.slice(0,1000));return;
   }
   if(/^MAINT_EXPORT:(PDF|EXCEL)$/.test(cmd)){await handleSearchExportV81518(from,cmd,user);return;}
-  if(/^MAINT_(?:DRAW_MORE|RESULT_MORE|ASSET:(?:ALL|[0-7])|MOD:(?:HISTORY|JOBS|DEFECTS|DRAWINGS|PARTS|SPARES|MANUALS|ALL)|SUGGEST:(?:SHOW|CANCEL))$/.test(cmd)){
+  if(/^MAINT_(?:DRAW_MORE|RESULT_MORE|ASSET:(?:ALL|[0-7])|MOD:(?:HISTORY|JOBS|DEFECTS|DRAWINGS|PARTS|SPARES|MANUALS|INSPECTION|CBM|FORMATS|PERMITS|MORE|ALL)|SUGGEST:(?:SHOW|CANCEL))$/.test(cmd)){
     await handleSearchChoiceV81515(from,cmd,user);return;
   }
-  if(cmd==='MENU_SEARCH'){await saveDocumentSessionV81511(from,'DOC_QA_CONTEXT',{mode:true,expiresAt:Date.now()+30*60000});await sendText(from,'Ask about equipment, jobs, history, parts, spares, SAP, drawings or manuals. I will search the available maintenance data and cite the source.');return;}
+  if(cmd==='MENU_SEARCH'){await saveDocumentSessionV81511(from,'DOC_QA_CONTEXT',{mode:true,expiresAt:Date.now()+30*60000});await sendText(from,'Ask about equipment, jobs, history, inspection, condition monitoring, parts, spares, drawings, manuals, formats or permits.');return;}
   const selection=cmd.match(/^DOC_QA_SELECT:(stored|pending):(\d+)$/);
   let question=String(text||'').trim();
   if(selection){
@@ -4518,11 +4546,165 @@ async function handleSafetyLookupV81539(from,cmd){
   const lines=result.rows.slice(0,20).map(r=>`#${r.id} · ${r.event_date?String(r.event_date).slice(0,10):String(r.submitted_at).slice(0,10)} · ${r.location}: ${String(r.description).slice(0,160)}`);
   await sendText(from,`${kind==='NEAR_MISS'?'Near Miss Reports':'Safety Suggestions'}:\n${lines.join('\n')}${result.rows.length>20?'\nMore records exist. Refine by date or location.':''}`.slice(0,3000));return true;
 }
+const WORKFLOW_FIELDS_V81544={
+  JOB:['Equipment','Job','WO','Date','Tools','Spares','Planned manpower','Planned hours','SMP','Drawing'],
+  SHUTDOWN:['Date','Equipment','Job','Incharge','Motor action','Electrical isolation','Remarks'],
+  ISOLATION:['Equipment','Job','Permit type','Energy sources','Isolation points','Motor connections','Requested date'],
+  LABOUR:['Date','Shift','Contractor','Worker ID','Worker name','Trade','Job','Equipment','Attendance'],
+  EMP_ATTENDANCE:['Date','Shift','Attendance','Job','Equipment'],
+  HOURS:['Date','Job','Equipment','Worker ID','Start','End','Break minutes','Remarks'],
+  CBM:['Date','Equipment','Point','H mm/s','V mm/s','A mm/s','Temperature C','RPM']
+};
+const WORKFLOW_REQUIRED_V81544={
+  JOB:['Equipment','Job','Date'],SHUTDOWN:['Date','Equipment','Job','Incharge','Motor action','Electrical isolation'],
+  ISOLATION:['Equipment','Job','Permit type','Energy sources','Isolation points','Requested date'],
+  LABOUR:['Date','Shift','Contractor','Worker ID','Job','Equipment','Attendance'],
+  EMP_ATTENDANCE:['Date','Shift','Attendance'],
+  HOURS:['Date','Job','Equipment','Worker ID','Start','End'],
+  CBM:['Date','Equipment','Point']
+};
+async function initMaintenanceWorkflowV81544(){
+  await pool.query(`CREATE TABLE IF NOT EXISTS maintenance_workflow_records(
+    id BIGSERIAL PRIMARY KEY,kind TEXT NOT NULL,
+    area TEXT NOT NULL,section TEXT NOT NULL,employee_number TEXT NOT NULL,
+    submitted_by_whatsapp TEXT NOT NULL,payload JSONB NOT NULL,
+    status TEXT NOT NULL,submitted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CHECK(kind IN ('JOB','SHUTDOWN','ISOLATION','LABOUR','EMP_ATTENDANCE','HOURS','CBM'))
+  )`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_maintenance_workflow_scope
+    ON maintenance_workflow_records(kind,area,section,submitted_at DESC)`);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_workflow_employee_attendance_unique
+    ON maintenance_workflow_records(employee_number,(payload->>'Date'),(payload->>'Shift'))
+    WHERE kind='EMP_ATTENDANCE'`);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_workflow_contract_attendance_unique
+    ON maintenance_workflow_records((payload->>'Date'),(payload->>'Shift'),(payload->>'Contractor'),(payload->>'Worker ID'),(payload->>'Job'))
+    WHERE kind='LABOUR'`);
+}
+async function workflowSessionV81544(from){
+  const r=await safeSessionV855(from,'MAINT_WORKFLOW_ENTRY');
+  const x=r?.session_value;
+  return typeof x==='string'?JSON.parse(x):x;
+}
+async function setWorkflowSessionV81544(from,kind){
+  if(!kind){await pool.query(`DELETE FROM ui_sessions WHERE whatsapp_number=$1 AND session_key='MAINT_WORKFLOW_ENTRY'`,[normWA(from)]);return;}
+  await pool.query(`INSERT INTO ui_sessions(whatsapp_number,session_key,session_value,updated_at)
+    VALUES($1,'MAINT_WORKFLOW_ENTRY',$2::jsonb,now())
+    ON CONFLICT(whatsapp_number,session_key) DO UPDATE SET session_value=EXCLUDED.session_value,updated_at=now()`,
+    [normWA(from),JSON.stringify({kind,expiresAt:Date.now()+60*60*1000})]);
+}
+function parseWorkflowV81544(text,fields){
+  const aliases=new Map(fields.map(f=>[f.toLowerCase(),f]));
+  const data={},unknown=[];
+  for(const line of String(text).split(/\r?\n/)){
+    if(!line.trim())continue;
+    const m=line.match(/^\s*([^:]+):\s*(.*?)\s*$/);
+    if(!m){unknown.push(line);continue;}
+    const key=aliases.get(m[1].trim().toLowerCase());
+    if(!key){unknown.push(m[1].trim());continue;}
+    if(data[key]!==undefined)unknown.push(key);
+    else data[key]=m[2].trim();
+  }
+  return {data,unknown};
+}
+function workflowErrorV81544(kind,data){
+  const missing=WORKFLOW_REQUIRED_V81544[kind].filter(k=>!data[k]);
+  if(missing.length)return 'Required: '+missing.join(', ');
+  for(const k of ['Date','Requested date']){
+    if(data[k]&&!/^\d{4}-\d{2}-\d{2}$/.test(data[k]))return k+' must be YYYY-MM-DD.';
+    if(data[k]){
+      const d=new Date(data[k]+'T00:00:00Z');
+      if(Number.isNaN(d.getTime())||d.toISOString().slice(0,10)!==data[k])return k+' is invalid.';
+    }
+  }
+  if(['LABOUR','EMP_ATTENDANCE'].includes(kind)&&!['PRESENT','ABSENT'].includes(data.Attendance.toUpperCase()))return 'Attendance must be Present or Absent.';
+  if(kind==='HOURS'){
+    const start=Date.parse(data.Start),end=Date.parse(data.End),breaks=Number(data['Break minutes']||0);
+    if(!Number.isFinite(start)||!Number.isFinite(end)||end<=start||end-start>24*3600000)return 'Start and End must be ISO date-times within 24 hours, with End after Start.';
+    if(!Number.isFinite(breaks)||breaks<0||breaks>(end-start)/60000)return 'Break minutes is invalid.';
+    data['Reported hours']=Math.round(((end-start)/60000-breaks)/60*100)/100;
+  }
+  if(kind==='CBM'){
+    const readings=['H mm/s','V mm/s','A mm/s','Temperature C','RPM'];
+    if(!readings.some(k=>data[k]))return 'Enter at least one measured value.';
+    for(const k of readings)if(data[k]&&(!Number.isFinite(Number(data[k]))||Number(data[k])<0))return k+' must be a non-negative number.';
+  }
+  return '';
+}
+async function maintenanceWorkflowV81544(from,text,cmd){
+  const start=cmd.match(/^WF_NEW:(JOB|SHUTDOWN|ISOLATION|LABOUR|EMP_ATTENDANCE|HOURS|CBM)$/);
+  const cancelling=cmd==='WF_CANCEL'||/^cancel$/i.test(cmd);
+  const command=cmd==='WF_MENU'||cmd==='WF_LIST'||cancelling||!!start;
+  const session=await workflowSessionV81544(from);
+  if(!command&&!session)return false;
+  const user=await byWA(from);
+  if(!user||user.approval_status!=='approved'||!user.is_active){await sendText(from,'Approved registration required.');return true;}
+  if(cancelling){await setWorkflowSessionV81544(from,null);await sendText(from,'Entry cancelled.');return true;}
+  if(cmd==='WF_MENU'){
+    if(!await hasAuthorityV874(user,'ENTRY')){await sendText(from,'Entry permission required.');return true;}
+    await sendList(from,'Maintenance entries','Choose',[
+      ['JOB','Job / Work Order'],['SHUTDOWN','Shutdown request'],['ISOLATION','Isolation / Permit request'],
+      ['LABOUR','Contract attendance'],['EMP_ATTENDANCE','Employee attendance'],
+      ['HOURS','Working hours'],['CBM','Condition reading']
+    ].map(([k,title])=>({id:'WF_NEW:'+k,title})).concat([{id:'WF_LIST',title:'Recent entries'}]),'Maintenance');
+    return true;
+  }
+  if(cmd==='WF_LIST'){
+    if(!await hasAuthorityV874(user,'VIEW')){await sendText(from,'View permission required.');return true;}
+    const broad=canReadDepartmentArchiveV81540(from,user);
+    const r=await pool.query(`SELECT id,kind,status,submitted_at,payload FROM maintenance_workflow_records
+      WHERE ($1::boolean OR submitted_by_whatsapp=$2 OR (area=$3 AND section=$4))
+      ORDER BY submitted_at DESC LIMIT 20`,[broad,normWA(from),canonicalArea(user.area_of_working),canonicalSection(user.section_department)]);
+    await sendText(from,r.rows.length?r.rows.map(x=>`#${x.id} · ${x.kind} · ${String(x.submitted_at).slice(0,10)} · ${x.payload.Equipment||x.payload.Job||''} · ${x.status}`).join('\n'):'No entries yet.');
+    return true;
+  }
+  if(start){
+    if(!await hasAuthorityV874(user,'ENTRY')){await sendText(from,'Entry permission required.');return true;}
+    await setWorkflowSessionV81544(from,start[1]);
+    await sendText(from,`Send ${start[1]} details, one field per line:\n${WORKFLOW_FIELDS_V81544[start[1]].map(f=>f+':').join('\n')}${start[1]==='HOURS'?'\nStart/End example: 2026-10-06T09:00+05:30':''}\n\nSend Cancel to stop.`);
+    return true;
+  }
+  if(!session||session.expiresAt<Date.now()){await setWorkflowSessionV81544(from,null);await sendText(from,'Entry expired. Open Add Entry again.');return true;}
+  if(!await hasAuthorityV874(user,'ENTRY')){await setWorkflowSessionV81544(from,null);await sendText(from,'Entry permission required.');return true;}
+  const kind=session.kind,fields=WORKFLOW_FIELDS_V81544[kind];
+  if(!fields){await setWorkflowSessionV81544(from,null);return true;}
+  const {data,unknown}=parseWorkflowV81544(text,fields);
+  const err=workflowErrorV81544(kind,data);
+  if(unknown.length||err){await sendText(from,`${unknown.length?'Check these lines: '+unknown.join(', ')+'.\n':''}${err}\nSend the corrected full entry, or Cancel.`);return true;}
+  if(kind==='EMP_ATTENDANCE'){
+    if(!/^\d{6}$/.test(user.employee_number)){await sendText(from,'A six-digit employee number is required.');return true;}
+    data['Employee number']=user.employee_number;
+  }
+  if(['LABOUR','EMP_ATTENDANCE'].includes(kind)){
+    const duplicate=await pool.query(`SELECT id FROM maintenance_workflow_records
+      WHERE kind=$1 AND payload->>'Date'=$2 AND payload->>'Shift'=$3
+      AND ($1='EMP_ATTENDANCE' AND employee_number=$4
+        OR $1='LABOUR' AND payload->>'Contractor'=$5 AND payload->>'Worker ID'=$6 AND payload->>'Job'=$7)
+      LIMIT 1`,[kind,data.Date,data.Shift,user.employee_number,data.Contractor||'',data['Worker ID']||'',data.Job||'']);
+    if(duplicate.rows.length){await sendText(from,`Attendance already recorded as #${duplicate.rows[0].id}. No duplicate saved.`);await setWorkflowSessionV81544(from,null);return true;}
+  }
+  // A request or reported fact is never silently promoted to an approved permit or verified attendance.
+  const status=kind==='ISOLATION'?'REQUESTED':kind==='SHUTDOWN'?'PLANNED':['LABOUR','EMP_ATTENDANCE','HOURS'].includes(kind)?'REPORTED_UNVERIFIED':kind==='CBM'?'MEASURED_UNASSESSED':'OPEN';
+  let r;
+  try{
+    r=await pool.query(`INSERT INTO maintenance_workflow_records
+      (kind,area,section,employee_number,submitted_by_whatsapp,payload,status)
+      VALUES($1,$2,$3,$4,$5,$6::jsonb,$7) RETURNING id`,
+      [kind,canonicalArea(user.area_of_working),canonicalSection(user.section_department),user.employee_number,normWA(from),JSON.stringify(data),status]);
+  }catch(e){
+    if(e.code==='23505'){await setWorkflowSessionV81544(from,null);await sendText(from,'This attendance was already recorded. No duplicate saved.');return true;}
+    throw e;
+  }
+  await setWorkflowSessionV81544(from,null);
+  await sendText(from,`Saved #${r.rows[0].id} · ${kind} · ${status}${kind==='HOURS'?' · '+data['Reported hours']+' reported hours':''}`);
+  return true;
+}
 async function processMessage(from,text,payload=''){
+  sourceRequestV81541.set(normWA(from),isOwner(from)&&!payload&&explicitSourceRequestV81541(text));
   const cmd=String(payload||text||'').trim();
   if(cmd==='RETRY_LAST_UPLOAD' || /^retry( extraction| upload)?$/i.test(cmd)){await retryLastQueuedV895(from);return;}
   if(cmd==='INGEST_STATUS' || /^(check |upload |extraction )?status$/i.test(cmd)){await queuedStatusV895(from);return;}
   try{await pool.query(`CREATE TABLE IF NOT EXISTS ui_sessions(whatsapp_number TEXT NOT NULL,session_key TEXT NOT NULL,session_value JSONB,updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),PRIMARY KEY(whatsapp_number,session_key))`);}catch(e){console.error('[SESSION_SCHEMA]',e.message);}
+  if(await maintenanceWorkflowV81544(from,text,cmd))return;
   // Route WhatsApp action IDs before free-text employee-name lookup. A list reply's
   // visible title is "Store Data", which otherwise looks like a person's name.
   if(/^INGEST_/.test(cmd)){
@@ -4535,7 +4717,7 @@ async function processMessage(from,text,payload=''){
   // Ask a document question before the employee-name directory catches natural phrases.
   const qaContext=documentSessionValueV81511(await safeSessionV855(from,'DOC_QA_CONTEXT'));
   const qaSelection=/^DOC_QA_SELECT:(stored|pending):\d+$/.test(cmd)||/^DRAWING_(?:MEDIA:\d+|PAGE:\d+|RESULTS:(?:WHATSAPP|EXCEL))$/.test(cmd)||/^MAINT_EXPORT:(PDF|EXCEL)$/.test(cmd)||
-    /^MAINT_(?:DRAW_MORE|RESULT_MORE|ASSET:(?:ALL|[0-7])|MOD:(?:HISTORY|JOBS|DEFECTS|DRAWINGS|PARTS|SPARES|MANUALS|ALL)|SUGGEST:(?:SHOW|CANCEL))$/.test(cmd);
+    /^MAINT_(?:DRAW_MORE|RESULT_MORE|ASSET:(?:ALL|[0-7])|MOD:(?:HISTORY|JOBS|DEFECTS|DRAWINGS|PARTS|SPARES|MANUALS|INSPECTION|CBM|FORMATS|PERMITS|MORE|ALL)|SUGGEST:(?:SHOW|CANCEL))$/.test(cmd);
   const qaFreeText=!payload&&(looksLikeDrawingRequestV81535(text)||drawingNameIntentV81535(text)||documentQuestionIntentV81511(text)||
     (qaContext?.mode && qaContext.expiresAt>Date.now() && !/^(hi|hello|hey|start|back|search|version|menu|add entry|store data|check status|retry extraction|my account|my details|contact details|profile|remove me|exit|quit)$/i.test(cmd) && (!/^\d{6}$/.test(cmd)) && !/^[A-Z][a-z.'-]+(?: [A-Z][a-z.'-]+){1,2}$/.test(cmd)));
   // A bare equipment/part name can look exactly like an employee's name.
@@ -4738,8 +4920,8 @@ Office Extension: ${r.office_extension||'-'}`);
   if(clean==='MENU_ADD'){
     if(!u){await sendText(from,'You are not registered. Send Hi to register.');return;}
     if(!(await hasAuthorityV874(u,'ENTRY'))){await sendText(from,'Permission denied. ENTRY authority is required.');return;}
-    await sendButtons(from,'Add Entry',[{id:'SAFETY_NEAR_MISS',title:'Near Miss Report'},
-      {id:'SAFETY_SUGGESTION',title:'Safety Suggestion'},{id:'ADD_FILE',title:'Upload File'}]);return;
+    await sendButtons(from,'Add Entry',[{id:'WF_MENU',title:'Maintenance'},
+      {id:'SAFETY_NEAR_MISS',title:'Near Miss Report'},{id:'ADD_FILE',title:'Upload File'}]);return;
   }
   if(clean==='ADD_FILE'){
     if(!u||!await hasAuthorityV874(u,'ENTRY')){await sendText(from,'ENTRY authority is required.');return;}
@@ -4801,8 +4983,8 @@ Shift: ${u.shift||'-'}`,[{id:'REMOVE_ME_CONFIRM',title:'Remove Me'},{id:'ACCOUNT
 }
 
 app.get('/health', async (_req,res)=>{
-  try{await pool.query('SELECT 1');res.json({ok:true,version:'8.15.20',phase:'registration-and-file-ingestion',db:true});}
-  catch(e){res.status(500).json({ok:false,version:'8.15.20',error:e.message});}
+  try{await pool.query('SELECT 1');res.json({ok:true,version:'8.15.44',phase:'maintenance-workflows',db:true});}
+  catch(e){res.status(500).json({ok:false,version:'8.15.44',error:e.message});}
 });
 app.get('/webhook',(req,res)=>{
   const mode=req.query['hub.mode'], token=req.query['hub.verify_token'], challenge=req.query['hub.challenge'];
@@ -4833,6 +5015,7 @@ app.post('/webhook',(req,res)=>{
 });
 
 await initDB();
+await initMaintenanceWorkflowV81544();
 recoverPendingWorkV8100().then(async()=>{
   await failSafeWorkerV8100();
   await pumpIngestQueueV8156();
@@ -4848,4 +5031,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.40 CLEAN DRAWING REPLIES listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.44 WORKFLOW RECORDS listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
