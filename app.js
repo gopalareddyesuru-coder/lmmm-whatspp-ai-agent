@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.51 FREE-TEXT EQUIPMENT SEARCH FIX 2026-10-06
+// LMMM AI Maintenance V8.15.52 STEAM DRUM ALIAS FIX 2026-10-06
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -980,7 +980,7 @@ if((a=text.match(/^AUTH_ADV:(\d+)$/))){await sendList(from,'Advanced Authorities
     if(normWA(from)!==u.whatsapp_number) await sendText(from,`${m[1]} registration removed. Maintenance history preserved.`);
     return true;
   }
-  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.15.51');return true;}
+  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.15.52');return true;}
   return false;
 }
 async function hasAuthorityV874(u, authority){
@@ -2763,6 +2763,7 @@ async function handleDrawingLookupV81512(from,question,user,selectedDoc=null){
 }
 function universalTermsV81513(question){
   const q=String(question||'').trim();
+  const steamDrumFurnace1=/\bsteam\s+drum\s+1\s+furnace\s+1\b/i.test(q);
   const brakeSlide=/\bbrake[ -]+slides?\b/i.test(q);
   const bp=q.match(/\b(?:bloom\s*pusher|bp)[\s-]*([12])\b/i);
   const refs=q.match(/[A-Za-z0-9]+(?:[./-][A-Za-z0-9]+)+|\b\d{7,}\b/g)||[];
@@ -2772,7 +2773,7 @@ function universalTermsV81513(question){
     .sort((a,b)=>b.length-a.length)[0]||null;
   const stop=new Set(['what','which','where','when','why','how','are','the','and','for','this','that','with','from','about','there','any','all','show','give','tell','please','check','find','search','number','name','data','record','records','lo','ki','di','enti','entha','deniki','gurinchi','cheppandi','cheppu','cheppara','sambandhanchindi','drawing','drawings','manual','manuals','file','sources','related','sambandham','details','history','jobs','job','spares','spare','equipment','maintenance','part','parts','sap','defect','defects','smp','sop','production','troubleshooting','problems','problem','issue','issues','failure','failed','fail','last','previous','before','during','today','yesterday','chudu','ivvu','kavali','ayyindi','chesaru','chesam','eppudu','year','date','dates','nunchi','entha','details','list','total','format','formats','template','templates','checklist','checklists','permit','permits','inspection','inspections','condition','monitoring','cbm','vibration','vibrations','readings','measurements','thickness']);
   const terms=[...new Set((q.toLowerCase().match(/[a-z0-9]{3,}|[\u0c00-\u0c7f]{2,}|[\u0900-\u097f]{2,}/g)||[]).filter(x=>!stop.has(x)&&x!=='gurunchi'&&x!==date))];
-  return {exact,date,terms,primary:bp?'bloom pusher':/\b(?:bloom\s+pusher|bp)\b/i.test(q)?'bloom pusher':brakeSlide?'brake slide':exact||terms.sort((a,b)=>b.length-a.length)[0]||null,bpNumber:bp?.[1]||null,bloomPusher:/\b(?:bloom\s+pusher|bp)(?:[\s-]*[12])?\b/i.test(q),furnaceQualifier:/\b(?:in\s+front\s+of\s+)?furnace\s*[- ]?[12]\b/i.test(q)&&/\bBLOOM\s+PUSHER\b/i.test(q)};
+  return {exact:steamDrumFurnace1?null:exact,date,terms,primary:steamDrumFurnace1?'steam drum':bp?'bloom pusher':/\b(?:bloom\s+pusher|bp)\b/i.test(q)?'bloom pusher':brakeSlide?'brake slide':exact||terms.sort((a,b)=>b.length-a.length)[0]||null,bpNumber:bp?.[1]||null,bloomPusher:/\b(?:bloom\s+pusher|bp)(?:[\s-]*[12])?\b/i.test(q),furnaceQualifier:/\b(?:in\s+front\s+of\s+)?furnace\s*[- ]?[12]\b/i.test(q)&&/\bBLOOM\s+PUSHER\b/i.test(q),steamDrumFurnace1};
 }
 function searchIntentV81524(question,module){
   if(module&&module!=='ALL')return module;
@@ -2798,8 +2799,17 @@ function searchIntentV81524(question,module){
 }
 function normalizeMaintenanceQueryV81524(question){
   // Correct a small set of widely used names; retain numbered identities as printed.
-  return normalizeManualAliasesV81535(String(question||'').replace(/\b(?:bloom|blom|boom|bum)[ -]+(?:pusher|puser|pusr|pushr)\b/gi,'bloom pusher')
+  let q=normalizeManualAliasesV81535(String(question||'').replace(/\b(?:bloom|blom|boom|bum)[ -]+(?:pusher|puser|pusr|pushr)\b/gi,'bloom pusher')
     .replace(/\bBP[ -]?([12])\b/gi,(_,n)=>`bloom pusher ${n}`).replace(/\bBP\b/gi,'bloom pusher'));
+  // In this plant, "Drum 1" means Steam Drum-1 on Furnace-1. Keep explicit
+  // cross-transfer searches untouched so the two assets cannot be conflated.
+  if(!/\b(?:cross\s+transfer|transfer\s+drum)\b/i.test(q)){
+    q=q.replace(/\b(?:steam\s+)?drum[\s-]*1(?:\s+(?:for|on|of))?\s+furnace[\s-]*1\b/i,'steam drum 1 furnace 1')
+      .replace(/\b(?:steam\s+)?drum[\s-]*1\b(?!\s+(?:(?:for|on|of)\s+)?furnace\s+1)/i,'steam drum 1 furnace 1')
+      .replace(/\bfurnace\s+1\s+for\s+furnace\s+1\b/i,'furnace 1')
+      .replace(/\bsteam\s+drum\s+1\s+for\s+furnace\s+1\b/i,'steam drum 1 furnace 1');
+  }
+  return q;
 }
 let manualItemSearchIndexV81535;
 function readManualItemSearchIndexV81535(){
@@ -3018,6 +3028,7 @@ function archiveTextV81517(value){
     .replace(/[^A-Z0-9]+/g,' ').replace(/\s+/g,' ').trim();
 }
 function archiveSubjectV81517(question,request){
+  if(request.steamDrumFurnace1)return 'STEAM DRUM 1 FURNACE 1';
   if(request.exact)return archiveTextV81517(request.exact);
   const subject=String(question||'').replace(/\b(drawings?|drg|jobs?|history|defects?|spares?|parts?|manuals?|sources?|equipment|records?|all|what|which|where|how|are|is|the|a|an|for|this|that|of|show|give|tell|please|check|find|search|number|name|data|details?|enti|entha|deniki|gurinchi|cheppandi|sambandhanchindi|lo|ki)\b/gi,' ').trim();
   return archiveTextV81517(subject||request.primary);
@@ -3025,6 +3036,11 @@ function archiveSubjectV81517(question,request){
 function archiveMatchesV81517(raw,subject,{candidate=false}={}){
   const words=archiveTextV81517(raw),needle=archiveTextV81517(subject);
   if(!words||!needle)return false;
+  if(needle==='STEAM DRUM 1 FURNACE 1'){
+    if(!/(?:^| )STEAM DRUM 1(?: |$)/.test(words))return false;
+    const furnace=words.match(/(?:^| )FURNACE ([0-9]{1,2})(?: |$)/)?.[1];
+    return !furnace||furnace==='1';
+  }
   const id=needle.match(/^([A-Z]{2,}) ([0-9]{1,2})$/);
   if(id){
     const family=new RegExp(`(?:^| )${id[1]}(?: |$)`);
@@ -3305,6 +3321,12 @@ async function showMasterEquipmentChoicesV81539(from,user,question,language){
   if(!await hasAuthorityV874(user,'VIEW'))return false;
   const request=universalTermsV81513(question);
   if(!bareAssetQuestionV81515(question,request)||!request.primary||request.exact)return false;
+  if(request.steamDrumFurnace1){
+    const selected='Steam Drum 1 Furnace 1';
+    await saveDocumentSessionV81511(from,'MAINT_SEARCH_FLOW',
+      {query:question,names:[selected],selected,expiresAt:Date.now()+30*60000});
+    await showAssetModulesV81515(from,selected,language);return true;
+  }
   const needle=archiveTextV81517(request.primary);
   if(needle.length<4)return false;
   const matched=readEquipmentArchiveV81517().equipment.filter(x=>
@@ -5420,4 +5442,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.51 FREE-TEXT EQUIPMENT SEARCH FIX listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.52 STEAM DRUM ALIAS FIX listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
