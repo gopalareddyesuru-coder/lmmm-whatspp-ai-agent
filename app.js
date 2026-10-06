@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.47 RELIABILITY WORKFLOWS 2026-10-06
+// LMMM AI Maintenance V8.15.48 SEARCH AND VOICE REVIEW FIXES 2026-10-06
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -980,7 +980,7 @@ if((a=text.match(/^AUTH_ADV:(\d+)$/))){await sendList(from,'Advanced Authorities
     if(normWA(from)!==u.whatsapp_number) await sendText(from,`${m[1]} registration removed. Maintenance history preserved.`);
     return true;
   }
-  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.15.47');return true;}
+  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.15.48');return true;}
   return false;
 }
 async function hasAuthorityV874(u, authority){
@@ -1960,7 +1960,7 @@ function ingestPreviewV877(packOrRows,filename){
   const review=recordReview+reviewPages+reviewFields+(pack.needs_review&&!reviewPages?1:0);
   const lines=rows.slice(0,5).map((x,i)=>`${i+1}. ${String(x.module||'NEEDS_REVIEW').toUpperCase()} | ${x.equipment||'Equipment: not confirmed'} | ${x.event_date||'Date: not confirmed'}\n${String(x.description||'-').slice(0,220)}`);
   const items=Array.isArray(pack.extracted_items)?pack.extracted_items.length:0;
-  return `File identified & extracted — NOT STORED\nSource: ${filename}\nFile Type: ${pack.document_type||'OTHER'}\nLanguage: ${(pack.detected_languages||[]).join(', ')||'Not confirmed'}\nRecords: ${rows.length} | Detailed items: ${items}\nNeeds Review: ${review}\n\n${String(pack.document_summary||'').slice(0,700)}`;
+  return `File reviewed — NOT STORED\nFile Type: ${pack.document_type||'OTHER'}\nLanguage: ${(pack.detected_languages||[]).join(', ')||'Not confirmed'}\nRecords: ${rows.length} | Detailed items: ${items}\nNeeds Review: ${review}\n\n${String(pack.document_summary||'').slice(0,700)}`;
 }
 async function setPendingIngestSessionV877(from,id){
   await pool.query(`INSERT INTO ui_sessions(whatsapp_number,session_key,session_value,updated_at) VALUES($1,'PENDING_FILE_INGEST',$2::jsonb,now()) ON CONFLICT(whatsapp_number,session_key) DO UPDATE SET session_value=EXCLUDED.session_value,updated_at=now()`,[normWA(from),JSON.stringify({id})]);
@@ -1976,8 +1976,18 @@ async function clearPendingIngestV877(from,id,status='DISCARDED'){
 }
 async function showIngestOptionsV877(from,p){
   const pack=ingestPackV878(p);
-  await sendText(from,ingestPreviewV877(pack,p.source_filename));
-  await sendAdaptiveExtractionPreviewV881(from,p);
+  const isVoice=/^audio\//i.test(String(p.source_mime_type||'')) || /\.(?:m4a|mp3|wav|aac|ogg|opus|amr)$/i.test(String(p.source_filename||''));
+  if(isVoice){
+    const transcript=String(pack.review_text_english||pack.full_text||'').trim();
+    const reviewNeeded=Boolean(pack.needs_review)|| (pack.records||[]).some(x=>String(x.confidence||'').toUpperCase()==='NEEDS_REVIEW');
+    const body=transcript
+      ? `Voice note — not stored\n\n${transcript.slice(0,2600)}\n\n${reviewNeeded?'Please check the wording and send any correction before storing.':'Please confirm this is accurate before storing.'}`
+      : 'Voice note received — not stored. I could not confirm the transcription. Please send the details as a message for review.';
+    await sendText(from,body);
+  }else{
+    await sendText(from,ingestPreviewV877(pack,p.source_filename));
+    await sendAdaptiveExtractionPreviewV881(from,p);
+  }
   await sendList(from,`Review and confirm within ${TEMP_CONFIRMATION_MINUTES_V8120} minutes`,'Choose',[
     {id:`INGEST_STORE_VERIFIED:${p.id}`,title:'Store Data',description:'Store only verified maintenance data'},
     {id:`INGEST_CONVERT:${p.id}`,title:'Convert / Export',description:'PDF, Excel, TXT, CSV or JSON'}
@@ -4257,12 +4267,15 @@ async function handleUniversalSearchV81513(from,question,user,options={}){
   if(!(await hasAuthorityV874(user,'VIEW'))){await sendText(from,'Search access is not enabled for your account.');return true;}
   question=normalizeMaintenanceQueryV81524(question);
   if(await answerChargingEquipmentCountV81533(from,question))return true;
-  if((!options.module||options.module==='DRAWINGS')&&await searchJsonDrawingMasterV81535(from,question,user))return true;
-  if((!options.module||options.module==='DRAWINGS')&&await searchEcsDrawingsV81521(from,question,user))return true;
-  if((!options.module||options.module==='DRAWINGS')&&await searchDrawingCatalogV81522(from,question,user))return true;
+  const module=searchIntentV81524(question,options.module);
+  // Do not run drawing-catalog lookups for generic queries: equipment codes
+  // such as BP1 previously hijacked history, defect, and inspection searches.
+  const drawingSearch=module==='DRAWINGS' || (module==='ALL' && looksLikeDrawingRequestV81535(question));
+  if(drawingSearch&&await searchJsonDrawingMasterV81535(from,question,user))return true;
+  if(drawingSearch&&await searchEcsDrawingsV81521(from,question,user))return true;
+  if(drawingSearch&&await searchDrawingCatalogV81522(from,question,user))return true;
   const language=options.language||await searchLanguageV81515(from,question),te=language==='TE';
   if((!options.module||['JOBS','HISTORY','DEFECTS'].includes(options.module))&&await answerIncidentArchiveV81523(from,user,question,language))return true;
-  const module=searchIntentV81524(question,options.module);
   if(module==='PRODUCTION'&&await answerProductionV81524(from,user,question,language))return true;
   if(module==='ALL'&&await showMasterEquipmentChoicesV81539(from,user,question,language))return true;
   const {request,rows:allRows,failed,partialFailure,truncated}=await universalSearchV81513(from,user,question,module);
@@ -5330,8 +5343,8 @@ Shift: ${u.shift||'-'}`,[{id:'REMOVE_ME_CONFIRM',title:'Remove Me'},{id:'ACCOUNT
 }
 
 app.get('/health', async (_req,res)=>{
-  try{await pool.query('SELECT 1');res.json({ok:true,version:'8.15.47',phase:'reliability-workflows',db:true});}
-  catch(e){res.status(500).json({ok:false,version:'8.15.47',error:e.message});}
+  try{await pool.query('SELECT 1');res.json({ok:true,version:'8.15.48',phase:'search-voice-review-fixes',db:true});}
+  catch(e){res.status(500).json({ok:false,version:'8.15.48',error:e.message});}
 });
 app.get('/webhook',(req,res)=>{
   const mode=req.query['hub.mode'], token=req.query['hub.verify_token'], challenge=req.query['hub.challenge'];
@@ -5378,4 +5391,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.47 RELIABILITY WORKFLOWS listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.48 SEARCH AND VOICE REVIEW FIXES listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
