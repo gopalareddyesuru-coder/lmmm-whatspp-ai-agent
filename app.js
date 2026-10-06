@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.48 SEARCH AND VOICE REVIEW FIXES 2026-10-06
+// LMMM AI Maintenance V8.15.49 ASSET SEARCH AND DATA QUALITY 2026-10-06
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -980,7 +980,7 @@ if((a=text.match(/^AUTH_ADV:(\d+)$/))){await sendList(from,'Advanced Authorities
     if(normWA(from)!==u.whatsapp_number) await sendText(from,`${m[1]} registration removed. Maintenance history preserved.`);
     return true;
   }
-  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.15.48');return true;}
+  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.15.49');return true;}
   return false;
 }
 async function hasAuthorityV874(u, authority){
@@ -2780,6 +2780,8 @@ function searchIntentV81524(question,module){
   if(/\b(drawings?|drg|tracing|tids|pd drawing)\b/i.test(q))return 'DRAWINGS';
   if(/\b(formats?|templates?|check\s*sheets?|checklists?)\b/i.test(q))return 'FORMATS';
   if(/\b(permits?|isolation certificates?|work clearances?)\b/i.test(q))return 'PERMITS';
+  if(/\b(vibrations?|vibration analysis|balancing|alignment)\b/i.test(q))return 'VIBRATIONS';
+  if(/\b(loads?|door loads?|door load)\b/i.test(q))return 'LOADS';
   if(/\b(balanc(?:e|ing)|alignment)\b/i.test(q)&&/\b(history|previous|earlier|past)\b/i.test(q))return 'HISTORY';
   if(/\b(cbm|condition monitoring|vibration|thickness|door loads?|deflection|wheel diameter|balanc(?:e|ing)|alignment)\b/i.test(q))return 'CBM';
   if(/\b(inspections?|survey readings?)\b/i.test(q))return 'INSPECTION';
@@ -3265,11 +3267,11 @@ async function proposeSearchCorrectionV81515(from,question,user){
   return true;
 }
 async function showAssetModulesV81515(from,term,language,warning=''){
-  const options=[['HISTORY','History'],['JOBS','Jobs'],['DEFECTS','Defects'],['DRAWINGS','Drawings'],['PARTS','Parts'],['SPARES','Spares'],['MANUALS','Manuals / SMP'],['ALL','All results'],['MORE','More topics']];
+  const options=[['DEFECTS','Defects'],['HISTORY','History'],['JOBS','Jobs'],['VIBRATIONS','Vibrations'],['LOADS','Loads'],['DRAWINGS','Drawings'],['MANUALS','Manuals / SMP'],['MORE','More topics'],['ALL','All results']];
   await sendList(from,`${language==='TE'?'ఎంచుకున్న అంశం':'Selected subject'}: ${term}${warning?`\n${warning}`:''}\n${language==='TE'?'ఏ సమాచారం కావాలి?':'What would you like to find?'}`, 'Choose',options.map(([id,title])=>({id:`MAINT_MOD:${id}`,title})), 'Maintenance Search');
 }
 async function showMoreMaintenanceModulesV81542(from,term){
-  const options=[['INSPECTION','Inspection'],['CBM','Condition monitoring'],['FORMATS','Formats / check sheets'],['PERMITS','Permits'],['ALL','All results']];
+  const options=[['INSPECTION','Inspection'],['CBM','Condition monitoring'],['PARTS','Parts'],['SPARES','Spares'],['FORMATS','Formats / check sheets'],['PERMITS','Permits'],['ALL','All results']];
   await sendList(from,`${term}: What would you like to find?`,'Choose',options.map(([id,title])=>({id:`MAINT_MOD:${id}`,title})),'Maintenance Search');
 }
 async function showAssetChoicesV81515(from,question,rows,language,warning=''){
@@ -3336,7 +3338,7 @@ async function handleSearchChoiceV81515(from,cmd,user){
   if(!state?.query||state.expiresAt<Date.now()){
     await sendText(from,'Search selection expired. Send the equipment or subject again.');return true;
   }
-  const language=await searchLanguageV81515(from,state.query),asset=cmd.match(/^MAINT_ASSET:(ALL|[0-7])$/),module=cmd.match(/^MAINT_MOD:(HISTORY|JOBS|DEFECTS|DRAWINGS|PARTS|SPARES|MANUALS|INSPECTION|CBM|FORMATS|PERMITS|MORE|ALL)$/);
+  const language=await searchLanguageV81515(from,state.query),asset=cmd.match(/^MAINT_ASSET:(ALL|[0-7])$/),module=cmd.match(/^MAINT_MOD:(HISTORY|JOBS|DEFECTS|VIBRATIONS|LOADS|DRAWINGS|PARTS|SPARES|MANUALS|INSPECTION|CBM|FORMATS|PERMITS|MORE|ALL)$/);
   if(cmd==='MAINT_SUGGEST:CANCEL'){await sendText(from,'Send the equipment name or exact ID to search.');return true;}
   if(cmd==='MAINT_SUGGEST:SHOW'){
     const found=await universalSearchV81513(from,user,state.query);
@@ -3351,7 +3353,7 @@ async function handleSearchChoiceV81515(from,cmd,user){
   }
   if(module){
     if(module[1]==='MORE'){await showMoreMaintenanceModulesV81542(from,state.selected||state.query);return true;}
-    const label={HISTORY:'history',JOBS:'jobs',DEFECTS:'defects',DRAWINGS:'drawings',PARTS:'parts',SPARES:'spares',MANUALS:'manuals',INSPECTION:'inspection',CBM:'condition monitoring',FORMATS:'formats',PERMITS:'permits',ALL:'all results'}[module[1]];
+    const label={HISTORY:'history',JOBS:'jobs',DEFECTS:'defects',VIBRATIONS:'vibrations',LOADS:'loads',DRAWINGS:'drawings',PARTS:'parts',SPARES:'spares',MANUALS:'manuals',INSPECTION:'inspection',CBM:'condition monitoring',FORMATS:'formats',PERMITS:'permits',ALL:'all results'}[module[1]];
     await handleUniversalSearchV81513(from,module[1]==='ALL'?(state.selected||state.query):`${state.selected||state.query} ${label}`,user,{module:module[1],language});return true;
   }
   return false;
@@ -3402,6 +3404,10 @@ function filterSearchRowsV81518(rows,module){
     if(module==='PERMITS')return /permit|work clearance|isolation certificate|recorded isolation/i.test(context);
     if(module==='CBM')return /cbm|balancing|alignment|condition monitoring|vibration|thickness|door load|deflection|wheel diameter|safety valve test|skids survey/i.test(context)&&
       !/format|template|blank form/i.test(`${kind} ${title}`);
+    if(module==='VIBRATIONS')return /vibration|balancing|alignment/i.test(`${context} ${body}`)&&
+      !/format|template|blank form/i.test(`${kind} ${title}`);
+    if(module==='LOADS')return /\bload(?:s|ing)?\b|door load/i.test(`${context} ${body}`)&&
+      !/format|template|blank form/i.test(`${kind} ${title}`);
     if(module==='INSPECTION')return /inspection|survey|check\s*sheet/i.test(context)&&
       !/format|template|blank form/i.test(kind);
     if(module==='JOBS')return kind==='job_action'||/recorded (job|balancing|alignment)/.test(kind)||kind.startsWith('source maintenance history')||kind.startsWith('source maintenance event')||
@@ -3442,7 +3448,8 @@ async function handleSearchExportV81518(from,cmd,user){
   try{chargingRows=await chargingHistoryRowsV81533(from,user,state.question,state.module)}
   catch(e){console.error('[SEARCH_EXPORT_CHARGING]',e);await sendText(from,'Cannot read charging-side history right now. Please try again.');return true;}
   result.request.question=state.question;
-  const rows=balanceBpMaintenanceRowsV81532(rankSearchRowsV81524(filterSearchRowsV81518([...result.rows,...catalog.rows,...bpRows,...chargingRows],state.module),result.request,state.module),result.request,state.module);
+  const exportRows=dedupeMaintenanceResultsV81537(filterSearchRowsV81518([...result.rows,...catalog.rows,...bpRows,...chargingRows],state.module),result.request);
+  const rows=balanceBpMaintenanceRowsV81532(rankSearchRowsV81524(exportRows,result.request,state.module),result.request,state.module);
   const scopedBpArchive=canReadDepartmentArchiveV81540(from,user)&&result.request.bloomPusher&&!result.request.furnaceQualifier&&
     ['ALL','JOBS','HISTORY','DEFECTS'].includes(state.module);
   if(result.failed||result.partialFailure||(!scopedBpArchive&&result.truncated)||catalog.truncated||!rows.length||rows.length>1000){
@@ -3516,6 +3523,7 @@ function parseEcsDrawingV81521(row){
   return {number,title,variant:one&&!two?'1':two&&!one?'2':'',key:number.toUpperCase().replace(/\s+/g,'')};
 }
 function readableSearchItemV81522(row,request){
+  row=correctKnownBpLocationV81549(row,request);
   let raw=String(row.content||'').replace(/^Source status:[^;]*; candidate area:[^;]*; mapping:[^;]*;\s*/i,'');
   const unitNote=request.bpNumber&&/hyd cyl history/i.test(String(row.source||''))&&
     !/\b(?:BLOOM\s+PUSHER|BP)[ -]?[12]\b/i.test(raw)?' (BP unit unconfirmed)':'';
@@ -3585,11 +3593,14 @@ async function answerIncidentArchiveV81523(from,user,question,language){
     LIMIT 251`,groups);
   if(!result.rows.length)return false;
   if(result.rows.length>250){await sendText(from,'Many incident records match. Add the equipment number, part or approximate year.');return true;}
+  const request=universalTermsV81513(normalizeMaintenanceQueryV81524(question));
   const unique=[],seen=new Set();
-  for(const row of result.rows){
+  for(const original of result.rows){
+    const normalized=correctKnownBpLocationV81549({content:original.source_text,source:original.source_file,location:original.location},request);
+    const row={...original,source_text:normalized.content};
     const date=String(row.source_text).match(/\b(?:19|20)\d{2}-\d{2}-\d{2}(?!\d)/)?.[0]||'';
-    // Reimports of the same archive row share the same sheet and row location.
-    const duplicateKey=`${row.location}:${date}`;
+    // Collapse repeated imports of the same dated event even when sheet rows differ.
+    const duplicateKey=`${date}:${String(row.source_text).replace(/\s+/g,' ').trim().toUpperCase()}`;
     if(seen.has(duplicateKey))continue;seen.add(duplicateKey);
     unique.push({date,text:row.source_text,location:row.location});
   }
@@ -4219,13 +4230,28 @@ function balanceBpMaintenanceRowsV81532(rows,request,module){
   }
   return balanced.concat(rows.filter(r=>!used.has(r)));
 }
-function dedupeMaintenanceResultsV81537(rows){
+function correctKnownBpLocationV81549(row,request={}){
+  const content=String(row?.content||'');
+  const hasBp1=/\b(?:BP\s*[- ]?1|BLOOM\s+PUSHER\s+(?:BP\s*[- ]?1|1))\b/i.test(`${content} ${row?.title||''} ${row?.source||''}`);
+  const requestedBp1=request.bloomPusher&&request.bpNumber==='1';
+  const hasBp2=/\b(?:BP\s*[- ]?2|BLOOM\s+PUSHER\s+(?:BP\s*[- ]?2|2))\b/i.test(`${content} ${row?.title||''} ${row?.source||''}`);
+  // The approved equipment mapping is BP-1 → Cellar-1. Apply it only to BP-1
+  // results (or an explicitly scoped BP-1 search), and only to the display/search copy.
+  const relatedBp=/\bBLOOM\s+PUSHER\b/i.test(`${content} ${row?.title||''} ${row?.source||''}`);
+  if(!(hasBp1||(requestedBp1&&relatedBp))||hasBp2||!/\bCELLAR\s*(?:[:=]\s*)?[- ]?5\b/i.test(content))return row;
+  return {...row,content:content.replace(/\b(CELLAR\s*[:=]\s*)[- ]?5\b/gi,(_,prefix)=>`${prefix}1`)
+    .replace(/\bCELLAR\s*[- ]?5\b/gi,'Cellar-1')};
+}
+function dedupeMaintenanceResultsV81537(rows,request={}){
   const seen=new Set(),unique=[];
-  for(const row of rows){
+  for(const original of rows){
+    const row=correctKnownBpLocationV81549(original,request);
     const body=String(row.content||'').replace(/^Source status:[^;]*; candidate area:[^;]*; mapping:[^;]*;\s*/i,'')
       .replace(/\s+/g,' ').trim().toUpperCase();
-    const signature=/^Source (?:maintenance history|job reference|defect|manual reference)/i.test(row.kind)?
-      String(row.kind).toLowerCase()+':'+body:String(row.key||body);
+    // Imported versions of the same dated event can appear under different
+    // history/defect record types. Dedupe those by date and full event text.
+    const sourceEvent=/^Source (?:maintenance history|job reference|defect)/i.test(row.kind);
+    const signature=sourceEvent?`event:${body}`:String(row.key||body);
     if(seen.has(signature))continue;
     seen.add(signature);unique.push(row);
   }
@@ -4290,8 +4316,8 @@ async function handleUniversalSearchV81513(from,question,user,options={}){
   try{chargingRows=await chargingHistoryRowsV81533(from,user,question,module)}
   catch(e){catalogFailed=true;console.error('[CHARGING_HISTORY]',e.message);}
   request.question=question;
-  const scopedRows=filterSearchRowsV81518([...allRows,...catalog.rows,...bpRows,...chargingRows],module);
-  const rows=balanceBpMaintenanceRowsV81532(dedupeMaintenanceResultsV81537(rankSearchRowsV81524(scopedRows,request,module).filter(r=>{
+  const scopedRows=dedupeMaintenanceResultsV81537(filterSearchRowsV81518([...allRows,...catalog.rows,...bpRows,...chargingRows],module),request);
+  const rows=balanceBpMaintenanceRowsV81532(rankSearchRowsV81524(scopedRows,request,module).filter(r=>{
     if(module==='JOBS'&&/^Source maintenance history/i.test(r.kind)&&
       !/\b(?:19|20)\d{2}(?:-\d{2}-\d{2})?\b/.test(r.content))return false;
     return true;
@@ -4377,7 +4403,6 @@ async function handleUniversalSearchV81513(from,question,user,options={}){
     }
     await saveDocumentSessionV81511(from,'MAINT_RESULT_PAGE',{items,offset:0,expiresAt:Date.now()+30*60000});
     await showSearchPageV81522(from,user);
-    await explainBpMechanicalAlongsideDefectsV81530(from,user,request,module,rows);
     if(items.length>20&&!limited&&!incomplete&&await hasAuthorityV874(user,'PDF')){
       const pack={document_type:'SEARCH_RESULTS',simple_search_results:true,extracted_items:items.map((x,i)=>({item_no:i+1,description:x}))};
       await sendGeneratedDocumentV878(from,tablePdfV880(pack,`${items.length} accessible matches`),'lmmm_search_results.pdf','application/pdf');
@@ -5343,8 +5368,8 @@ Shift: ${u.shift||'-'}`,[{id:'REMOVE_ME_CONFIRM',title:'Remove Me'},{id:'ACCOUNT
 }
 
 app.get('/health', async (_req,res)=>{
-  try{await pool.query('SELECT 1');res.json({ok:true,version:'8.15.48',phase:'search-voice-review-fixes',db:true});}
-  catch(e){res.status(500).json({ok:false,version:'8.15.48',error:e.message});}
+  try{await pool.query('SELECT 1');res.json({ok:true,version:'8.15.49',phase:'asset-search-data-quality',db:true});}
+  catch(e){res.status(500).json({ok:false,version:'8.15.49',error:e.message});}
 });
 app.get('/webhook',(req,res)=>{
   const mode=req.query['hub.mode'], token=req.query['hub.verify_token'], challenge=req.query['hub.challenge'];
@@ -5391,4 +5416,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.48 SEARCH AND VOICE REVIEW FIXES listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.49 ASSET SEARCH AND DATA QUALITY listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
