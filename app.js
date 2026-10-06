@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.46 REVIEWED FREE-TEXT WORKFLOWS 2026-10-06
+// LMMM AI Maintenance V8.15.47 RELIABILITY WORKFLOWS 2026-10-06
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -980,7 +980,7 @@ if((a=text.match(/^AUTH_ADV:(\d+)$/))){await sendList(from,'Advanced Authorities
     if(normWA(from)!==u.whatsapp_number) await sendText(from,`${m[1]} registration removed. Maintenance history preserved.`);
     return true;
   }
-  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.15.46');return true;}
+  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.15.47');return true;}
   return false;
 }
 async function hasAuthorityV874(u, authority){
@@ -2770,7 +2770,8 @@ function searchIntentV81524(question,module){
   if(/\b(drawings?|drg|tracing|tids|pd drawing)\b/i.test(q))return 'DRAWINGS';
   if(/\b(formats?|templates?|check\s*sheets?|checklists?)\b/i.test(q))return 'FORMATS';
   if(/\b(permits?|isolation certificates?|work clearances?)\b/i.test(q))return 'PERMITS';
-  if(/\b(cbm|condition monitoring|vibration|thickness|door loads?|deflection|wheel diameter)\b/i.test(q))return 'CBM';
+  if(/\b(balanc(?:e|ing)|alignment)\b/i.test(q)&&/\b(history|previous|earlier|past)\b/i.test(q))return 'HISTORY';
+  if(/\b(cbm|condition monitoring|vibration|thickness|door loads?|deflection|wheel diameter|balanc(?:e|ing)|alignment)\b/i.test(q))return 'CBM';
   if(/\b(inspections?|survey readings?)\b/i.test(q))return 'INSPECTION';
   if(/\b(troubleshoot|troubleshooting|why (?:did|does)|root cause|likely cause)\b/i.test(q))return 'TROUBLESHOOTING';
   if(/\b(smp|sop|manuals?|procedure|instructions?|how to|steps to|method to)\b/i.test(q))return 'MANUALS';
@@ -3090,6 +3091,20 @@ async function universalSearchV81513(from,user,question,archiveMode='ALL'){
   const pattern=`%${request.primary.replace(/[%_\\]/g,'').slice(0,100)}%`, wa=normWA(from),emp=String(user.employee_number||'');
   const shortToken=/^[a-z]{2,3}$/i.test(request.primary), tokenRegex=shortToken?`(^|[^[:alnum:]])${request.primary}([^[:alnum:]]|$)`:'';
   const jobs=[
+    pool.query(`SELECT id,kind,payload,status,submitted_at FROM maintenance_workflow_records
+      WHERE ($1::boolean OR submitted_by_whatsapp=$2 OR ($3::boolean AND area=$4 AND section=$5))
+        AND (payload::text ILIKE $6 OR kind ILIKE $6)
+      ORDER BY submitted_at DESC LIMIT 61`,
+      [allScope,wa,canView,area,section,pattern]).then(r=>r.rows.map(x=>{
+        const p=x.payload||{};
+        const details=['Equipment','Job','Defect','Problem','Observation','Point','Measurement type','Value','Unit',
+          'H mm/s','V mm/s','A mm/s','Temperature C','RPM','Rotor','Driver','Driven','Method',
+          'Before vibration mm/s','After vibration mm/s','Outcome','Action'].filter(k=>p[k])
+          .map(k=>`${k}: ${String(p[k]).slice(0,180)}`).join('; ');
+        return {kind:`Recorded ${x.kind.toLowerCase()}`,source:`Maintenance entry ${x.id}`,
+          date:p.Date||null,title:p.Equipment||'',content:`Status: ${x.status}; ${details}`,
+          key:`workflow:${x.id}`};
+      })),
     accessibleDocumentsV81511(from,user,request.primary).then(docs=>docs.slice(0,25).map(d=>({kind:d.kind==='pending'?'Pending extraction':'Verified maintenance file',
       source:d.source_filename,title:d.raw?.drawing_details?.title_block?.[0]?.title||d.raw?.document_summary||d.pack?.document_summary||'',
       content:documentEvidenceV81511(d,question),key:`file:${d.kind}:${d.id}`}))),
@@ -3374,21 +3389,21 @@ function filterSearchRowsV81518(rows,module){
     const context=`${kind} ${src} ${title}`;
     if(module==='FORMATS')return /format|template|check\s*sheet|checklist|blank form/i.test(context)&&
       !/\.xlsx?\b.*(?:history|reading|measurement)/i.test(src);
-    if(module==='PERMITS')return /permit|work clearance|isolation certificate/i.test(context);
-    if(module==='CBM')return /cbm|condition monitoring|vibration|thickness|door load|deflection|wheel diameter|safety valve test|skids survey/i.test(context)&&
+    if(module==='PERMITS')return /permit|work clearance|isolation certificate|recorded isolation/i.test(context);
+    if(module==='CBM')return /cbm|balancing|alignment|condition monitoring|vibration|thickness|door load|deflection|wheel diameter|safety valve test|skids survey/i.test(context)&&
       !/format|template|blank form/i.test(`${kind} ${title}`);
     if(module==='INSPECTION')return /inspection|survey|check\s*sheet/i.test(context)&&
       !/format|template|blank form/i.test(kind);
-    if(module==='JOBS')return kind==='job_action'||kind.startsWith('source maintenance history')||kind.startsWith('source maintenance event')||
+    if(module==='JOBS')return kind==='job_action'||/recorded (job|balancing|alignment)/.test(kind)||kind.startsWith('source maintenance history')||kind.startsWith('source maintenance event')||
       kind.startsWith('source job reference')&&/\b(?:19|20)\d{2}(?:-\d{2}-\d{2})?\b/.test(String(r.content||''));
-    if(module==='DEFECTS')return kind==='defect'||kind.startsWith('source defect');
+    if(module==='DEFECTS')return kind==='defect'||/recorded (defect|breakdown)/.test(kind)||kind.startsWith('source defect');
     if(module==='DRAWINGS')return /drawing/.test(kind)||kind==='verified maintenance file'&&/draw|\.tiff?/i.test(src);
     if(module==='MANUALS')return /manual|smp|sop|procedure/.test(kind)&&
       !/\b(?:JOB\s*CARD|JOBCARDNO)\b/i.test(String(r.content||''));
-    if(module==='HISTORY')return /job_action|defect|history|source job reference|maintenance event/.test(kind+' '+src);
+    if(module==='HISTORY')return /job_action|defect|history|source job reference|maintenance event|recorded (job|breakdown|balancing|alignment|inspection|cbm)/.test(kind+' '+src);
     if(module==='PARTS'||module==='SPARES')return new RegExp(module==='PARTS'?'part|drawing|spare':'spare|stock|part').test(kind+' '+src);
     if(module==='PRODUCTION')return /production shift|production delay/i.test(kind);
-    if(module==='TROUBLESHOOTING')return /job_action|defect|history|manual|smp|sop|production delay/i.test(kind+' '+src);
+    if(module==='TROUBLESHOOTING')return /job_action|defect|breakdown|balancing|alignment|history|manual|smp|sop|production delay/i.test(kind+' '+src);
     return true;
   });
 }
@@ -4562,7 +4577,9 @@ const WORKFLOW_FIELDS_V81544={
   LABOUR:['Date','Shift','Event time','Contractor','Worker ID','Worker name','Trade','Job','WO','Equipment','Required manpower','Attendance','OT hours','Remarks'],
   EMP_ATTENDANCE:['Date','Shift','Event time','Attendance','Job','Equipment','Remarks'],
   HOURS:['Date','Shift','Job','WO','Equipment','Worker ID','Start','End','Break minutes','Remarks'],
-  CBM:['Date','Event time','Shift','Equipment','Point','Measurement type','Value','Unit','H mm/s','V mm/s','A mm/s','Temperature C','RPM','Operating condition']
+  CBM:['Date','Event time','Shift','Equipment','Point','Measurement type','Value','Unit','H mm/s','V mm/s','A mm/s','Temperature C','RPM','Operating condition','Instrument','Spectrum notes','Phase notes','Action'],
+  BALANCING:['Date','Event time','Shift','Equipment','Rotor','Job','Reason','Method','Plane','RPM','Before vibration mm/s','After vibration mm/s','Trial mass g','Correction mass g','Angle degrees','Radius mm','Balance report','Outcome'],
+  ALIGNMENT:['Date','Event time','Shift','Equipment','Driver','Driven','Job','Method','Soft foot','Before readings','After readings','Approved tolerance','Thermal growth','Coupling check','Outcome']
 };
 const WORKFLOW_REQUIRED_V81544={
   JOB:['Equipment','Job','Date'],SHUTDOWN:['Date','Equipment','Job','Incharge','Motor action','Electrical isolation'],
@@ -4572,7 +4589,9 @@ const WORKFLOW_REQUIRED_V81544={
   LABOUR:['Date','Shift','Contractor','Worker ID','Job','Equipment','Attendance'],
   EMP_ATTENDANCE:['Attendance'],
   HOURS:['Date','Job','Equipment','Worker ID','Start','End'],
-  CBM:['Date','Equipment','Point']
+  CBM:['Date','Equipment','Point'],
+  BALANCING:['Date','Equipment','Rotor','Job'],
+  ALIGNMENT:['Date','Equipment','Driver','Driven','Job']
 };
 async function initMaintenanceWorkflowV81544(){
   await pool.query(`CREATE TABLE IF NOT EXISTS maintenance_workflow_records(
@@ -4580,11 +4599,11 @@ async function initMaintenanceWorkflowV81544(){
     area TEXT NOT NULL,section TEXT NOT NULL,employee_number TEXT NOT NULL,
     submitted_by_whatsapp TEXT NOT NULL,payload JSONB NOT NULL,
     status TEXT NOT NULL,submitted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CHECK(kind IN ('JOB','SHUTDOWN','ISOLATION','LOGBOOK','INSPECTION','DEFECT','BREAKDOWN','LABOUR','EMP_ATTENDANCE','HOURS','CBM'))
+    CHECK(kind IN ('JOB','SHUTDOWN','ISOLATION','LOGBOOK','INSPECTION','DEFECT','BREAKDOWN','LABOUR','EMP_ATTENDANCE','HOURS','CBM','BALANCING','ALIGNMENT'))
   )`);
   await pool.query(`ALTER TABLE maintenance_workflow_records DROP CONSTRAINT IF EXISTS maintenance_workflow_records_kind_check`);
   await pool.query(`ALTER TABLE maintenance_workflow_records ADD CONSTRAINT maintenance_workflow_records_kind_check
-    CHECK(kind IN ('JOB','SHUTDOWN','ISOLATION','LOGBOOK','INSPECTION','DEFECT','BREAKDOWN','LABOUR','EMP_ATTENDANCE','HOURS','CBM'))`);
+    CHECK(kind IN ('JOB','SHUTDOWN','ISOLATION','LOGBOOK','INSPECTION','DEFECT','BREAKDOWN','LABOUR','EMP_ATTENDANCE','HOURS','CBM','BALANCING','ALIGNMENT'))`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_maintenance_workflow_scope
     ON maintenance_workflow_records(kind,area,section,submitted_at DESC)`);
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_workflow_employee_attendance_unique
@@ -4627,7 +4646,8 @@ async function extractWorkflowFreeTextV81546(kind,text,fields){
   const parsed=safeJsonV874((response.candidates?.[0]?.content?.parts||[]).map(p=>p.text||'').join(''));
   if(!parsed||typeof parsed!=='object'||Array.isArray(parsed)||parsed.ambiguous)return null;
   const data={};
-  for(const field of fields)if(typeof parsed[field]==='string'&&parsed[field].trim())data[field]=parsed[field].trim().slice(0,1000);
+  for(const field of fields)if((typeof parsed[field]==='string'||typeof parsed[field]==='number')&&String(parsed[field]).trim())
+    data[field]=String(parsed[field]).trim().slice(0,1000);
   return data;
 }
 function workflowEquipmentReviewV81546(data){
@@ -4704,10 +4724,15 @@ function workflowErrorV81544(kind,data){
     for(const k of readings)if(data[k]&&(!Number.isFinite(Number(data[k]))||Number(data[k])<0))return k+' must be a non-negative number.';
     if(data.Value&&(!data['Measurement type']||!data.Unit))return 'Add Measurement type and Unit for Value.';
   }
+  if(kind==='BALANCING'){
+    for(const k of ['RPM','Before vibration mm/s','After vibration mm/s','Trial mass g','Correction mass g','Angle degrees','Radius mm'])
+      if(data[k]&&(!Number.isFinite(Number(data[k]))||Number(data[k])<0))return k+' must be a non-negative number.';
+    if(data['Angle degrees']&&Number(data['Angle degrees'])>=360)return 'Angle degrees must be below 360.';
+  }
   return '';
 }
 async function maintenanceWorkflowV81544(from,text,cmd){
-  const start=cmd.match(/^WF_NEW:(JOB|SHUTDOWN|ISOLATION|LOGBOOK|INSPECTION|DEFECT|BREAKDOWN|LABOUR|EMP_ATTENDANCE|HOURS|CBM)$/);
+  const start=cmd.match(/^WF_NEW:(JOB|SHUTDOWN|ISOLATION|LOGBOOK|INSPECTION|DEFECT|BREAKDOWN|LABOUR|EMP_ATTENDANCE|HOURS|CBM|BALANCING|ALIGNMENT)$/);
   const logAttendance=cmd.match(/^WF_LOG_ATTEND:(\d+)$/);
   const range=cmd.match(/^(employee attendance|contract attendance|attendance)\s+(?:from\s+)?(\d{4}-\d{2}-\d{2})\s+(?:to|-)\s+(\d{4}-\d{2}-\d{2})$/i);
   const cancelling=cmd==='WF_CANCEL'||/^cancel$/i.test(cmd);
@@ -4774,7 +4799,8 @@ async function maintenanceWorkflowV81544(from,text,cmd){
   if(cmd==='WF_MORE'){
     if(!await hasAuthorityV874(user,'ENTRY')){await sendText(from,'Entry permission required.');return true;}
     await sendList(from,'Attendance and hours','Choose',[
-      ['LABOUR','Contract attendance'],['EMP_ATTENDANCE','Employee attendance'],['HOURS','Working hours']
+      ['LABOUR','Contract attendance'],['EMP_ATTENDANCE','Employee attendance'],['HOURS','Working hours'],
+      ['BALANCING','Rotor balancing'],['ALIGNMENT','Shaft alignment']
     ].map(([k,title])=>({id:'WF_NEW:'+k,title})).concat([{id:'WF_LIST',title:'Recent entries'},{id:'WF_MENU',title:'Back to maintenance'}]),'Maintenance');
     return true;
   }
@@ -4812,7 +4838,8 @@ async function maintenanceWorkflowV81544(from,text,cmd){
   }else{
     const parsed=parseWorkflowV81544(text,fields);
     data=parsed.data;unknown=parsed.unknown;
-    if(unknown.length||!Object.keys(data).length){
+    if(unknown.length||!Object.keys(data).length||
+       (String(text).split(/\r?\n/).length===1&&WORKFLOW_REQUIRED_V81544[kind].some(k=>!data[k]))){
       try{data=await extractWorkflowFreeTextV81546(kind,text,fields);freeText=true;unknown=[];}
       catch(e){console.error('[WORKFLOW_FREE_TEXT]',e.message);data=null;}
       if(!data){await sendText(from,`I could not reliably read that entry. Send clear ${kind} details with exact equipment and date, or use Field: value lines.`);return true;}
@@ -4870,7 +4897,9 @@ async function maintenanceWorkflowV81544(from,text,cmd){
   if(cmd!=='WF_CONFIRM'){
     await setWorkflowSessionV81544(from,{kind,preview:data,originalText:String(text).slice(0,4000),expiresAt:Date.now()+60*60*1000});
     const shown=fields.filter(f=>data[f]).map(f=>`${f}: ${String(data[f]).slice(0,160)}`).join('\n');
-    await sendButtons(from,`Review ${kind}:\n${shown}${data.Equipment?'\n\nEquipment name is recorded as stated; asset link needs verification.':''}`.slice(0,950),
+    const preview=`Review ${kind}:\n${shown}${data.Equipment?'\n\nEquipment name is recorded as stated; asset link needs verification.':''}`;
+    if(preview.length>950)await sendText(from,preview.slice(0,3500));
+    await sendButtons(from,preview.length>950?'Save this reviewed entry?':preview,
       [{id:'WF_CONFIRM',title:'Confirm'},{id:'WF_EDIT',title:'Edit'},{id:'WF_CANCEL',title:'Cancel'}]);
     return true;
   }
@@ -4883,7 +4912,7 @@ async function maintenanceWorkflowV81544(from,text,cmd){
     if(duplicate.rows.length){await sendText(from,`Attendance already recorded as #${duplicate.rows[0].id}. No duplicate saved.`);await setWorkflowSessionV81544(from,null);return true;}
   }
   // A request or reported fact is never silently promoted to an approved permit or verified attendance.
-  const status=kind==='ISOLATION'?'REQUESTED':kind==='SHUTDOWN'?'PLANNED':['LABOUR','EMP_ATTENDANCE','HOURS'].includes(kind)?'REPORTED_UNVERIFIED':kind==='CBM'?'MEASURED_UNASSESSED':'OPEN';
+  const status=kind==='ISOLATION'?'REQUESTED':kind==='SHUTDOWN'?'PLANNED':['LABOUR','EMP_ATTENDANCE','HOURS','BALANCING','ALIGNMENT'].includes(kind)?'REPORTED_UNVERIFIED':kind==='CBM'?'MEASURED_UNASSESSED':'OPEN';
   let r;
   try{
     r=await pool.query(`INSERT INTO maintenance_workflow_records
@@ -4902,6 +4931,108 @@ async function maintenanceWorkflowV81544(from,text,cmd){
   }
   return true;
 }
+function reliabilityQueryV81547(text){
+  const q=String(text||'').trim();
+  const match=q.match(/^(?:vibration\s+(?:analysis|diagnosis|trend)|analy[sz]e\s+vibration|balance\s+review|alignment\s+review)\s+(?:(?:for|of|on)\s+)?(.+?)[?.!]*$/i);
+  return match?match[1].trim():null;
+}
+function maintenanceEntryKindV81547(text){
+  const q=String(text||'').trim();
+  if(!/^(?:record|log|save|enter)\s+/i.test(q)||/^(?:record|log)\s+(?:of|for)\b/i.test(q))return null;
+  const body=q.replace(/^(?:record|log|save|enter)\s+/i,'');
+  if(/\b(?:balanc(?:e|ed|ing)|impeller balance)\b/i.test(body))return 'BALANCING';
+  if(/\b(?:align(?:ment|ed|ing)?|soft foot)\b/i.test(body))return 'ALIGNMENT';
+  if(/\b(?:vibration|cbm|condition reading|mm\/s|rpm reading)\b/i.test(body))return 'CBM';
+  if(/\b(?:breakdown|stoppage|failure)\b/i.test(body))return 'BREAKDOWN';
+  if(/\b(?:defect|damage|leak)\b/i.test(body))return 'DEFECT';
+  if(/\b(?:inspection|inspected)\b/i.test(body))return 'INSPECTION';
+  if(/\b(?:isolation|loto|permit request)\b/i.test(body))return 'ISOLATION';
+  if(/\b(?:shutdown request)\b/i.test(body))return 'SHUTDOWN';
+  if(/\b(?:work order|job done|job completed|maintenance job)\b/i.test(body))return 'JOB';
+  return null;
+}
+function comparableCbMValueV81547(payload){
+  if(!payload)return null;
+  const point=String(payload.Point||'').trim().toUpperCase();
+  const condition=String(payload['Operating condition']||'').trim().toUpperCase();
+  const rpm=Number(payload.RPM);
+  const values=['H mm/s','V mm/s','A mm/s'].filter(k=>payload[k]!==undefined&&payload[k]!=='')
+    .map(k=>({axis:k,value:Number(payload[k]),unit:'mm/s'}));
+  if(payload.Value!==undefined&&payload.Value!==''&&payload.Unit)
+    values.push({axis:String(payload['Measurement type']||'Value').toUpperCase(),value:Number(payload.Value),unit:String(payload.Unit).toLowerCase()});
+  return {point,condition,rpm:Number.isFinite(rpm)&&rpm>0?rpm:null,values:values.filter(v=>Number.isFinite(v.value)),date:payload.Date};
+}
+function vibrationTrendV81547(records){
+  const samples=records.map(x=>comparableCbMValueV81547(x.payload)).filter(x=>x?.date&&x.point&&x.values.length);
+  const latest=samples[0];
+  if(!latest)return 'No comparable measured vibration readings are recorded here.';
+  const trends=[];
+  for(const v of latest.values){
+    const old=samples.slice(1).find(x=>x.point===latest.point&&x.condition===latest.condition&&
+      (!x.rpm||!latest.rpm||Math.abs(x.rpm-latest.rpm)<=Math.max(x.rpm,latest.rpm)*0.1)&&
+      x.values.some(z=>z.axis===v.axis&&z.unit===v.unit&&Number.isFinite(z.value)));
+    if(!old)continue;
+    const before=old.values.find(z=>z.axis===v.axis&&z.unit===v.unit);
+    trends.push(`${latest.point} ${v.axis}: ${before.value} → ${v.value} ${v.unit} (${old.date} → ${latest.date})`);
+  }
+  return trends.length?trends.slice(0,3).join('\n'):`Latest ${latest.date}, ${latest.point}: ${latest.values.slice(0,3).map(v=>`${v.axis} ${v.value} ${v.unit}`).join(', ')}. No like-for-like earlier reading.`;
+}
+async function handleReliabilityAnalysisV81547(from,text,user){
+  const equipment=reliabilityQueryV81547(text);
+  if(equipment===null)return false;
+  if(!user||user.approval_status!=='approved'||!user.is_active||!await hasAuthorityV874(user,'VIEW')){
+    await sendText(from,'View permission required.');return true;
+  }
+  if(!equipment||equipment.length<2||equipment.length>100){
+    await sendText(from,'Specify the exact equipment, for example: vibration analysis CAF.');return true;
+  }
+  const broad=canReadDepartmentArchiveV81540(from,user);
+  const records=await pool.query(`SELECT id,kind,payload,submitted_at FROM maintenance_workflow_records
+    WHERE kind IN ('CBM','BALANCING','ALIGNMENT','DEFECT','BREAKDOWN','JOB')
+      AND ($1::boolean OR submitted_by_whatsapp=$2 OR (area=$3 AND section=$4))
+      AND payload->>'Equipment' ILIKE $5
+    ORDER BY submitted_at DESC LIMIT 501`,
+    [broad,normWA(from),canonicalArea(user.area_of_working),canonicalSection(user.section_department),
+      `%${equipment.split(/\s+/)[0].replace(/[%_\\]/g,'')}%`]);
+  const norm=s=>String(s||'').toUpperCase().replace(/[^A-Z0-9]+/g,' ').trim();
+  const names=[...new Set(records.rows.map(x=>x.payload.Equipment).filter(Boolean))];
+  let exact=names.filter(x=>norm(x)===norm(equipment));
+  if(!exact.length){
+    const prefix=names.filter(x=>norm(equipment).startsWith(norm(x)+' ')).sort((a,b)=>norm(b).length-norm(a).length);
+    if(prefix.length&&(!prefix[1]||norm(prefix[0]).length>norm(prefix[1]).length))exact=[prefix[0]];
+  }
+  if(exact.length!==1){
+    const possibilities=names.filter(x=>norm(x).includes(norm(equipment))).slice(0,8);
+    await sendText(from,possibilities.length?`Choose the exact equipment:\n${possibilities.map(x=>'• '+x).join('\n')}`:
+      `${equipment}: No accessible recorded readings yet. Send exact equipment, measurement point, H/V/A mm/s, RPM and operating condition for a grounded analysis.`);
+    return true;
+  }
+  const selected=records.rows.filter(x=>norm(x.payload.Equipment)===norm(exact[0]));
+  const cbm=selected.filter(x=>x.kind==='CBM').sort((a,b)=>String(b.payload.Date||'').localeCompare(String(a.payload.Date||''))||b.id-a.id);
+  const history=selected.filter(x=>x.kind!=='CBM').slice(0,3);
+  let events=[],historyAvailable=true;
+  try{
+    const older=await pool.query(`SELECT e.equipment,e.equipment_name,e.event_type,e.event_text,e.event_date
+      FROM section_event_log e WHERE e.deleted_at IS NULL AND e.status='recorded'
+      AND (e.entered_by=$1 OR $2::boolean OR (e.area=$3 AND e.section=$4))
+      AND (e.equipment ILIKE $5 OR e.equipment_name ILIKE $5)
+      ORDER BY e.event_date DESC NULLS LAST,e.id DESC LIMIT 31`,
+      [normWA(from),broad,canonicalArea(user.area_of_working),canonicalSection(user.section_department),`%${exact[0].replace(/[%_\\]/g,'')}%`]);
+    events=older.rows.filter(e=>norm(e.equipment||e.equipment_name)===norm(exact[0])).slice(0,2);
+  }catch(e){historyAvailable=false;console.error('[RELIABILITY_EVENT_HISTORY]',e.message);}
+  const h=[...history.map(x=>{
+    const p=x.payload||{},before=p['Before vibration mm/s'],after=p['After vibration mm/s'];
+    const change=x.kind==='BALANCING'&&before!==undefined&&after!==undefined?` · ${before} → ${after} mm/s`:'';
+    return `${p.Date||String(x.submitted_at).slice(0,10)} ${x.kind.toLowerCase()}: ${String(p.Job||p.Defect||p.Problem||p.Rotor||p.Outcome||'recorded').slice(0,75)}${change}`;
+  }),
+    ...events.map(e=>`${String(e.event_date||'Date unrecorded').slice(0,10)} ${String(e.event_type||'event').toLowerCase()}: ${String(e.event_text||'').slice(0,75)}`)].slice(0,4).join('\n');
+  const recentChange=history.some(x=>x.kind==='BALANCING'||/impeller|rotor|bearing|coupling|align/i.test(String(x.payload.Job||x.payload.Problem||'')));
+  const checks=recentChange?
+    'Check impeller fit/rub, bearing condition, coupling alignment, soft foot and foundation; assess unbalance with spectrum and phase before any correction mass.':
+    'Check running speed and load, repeat H/V/A readings at the same point, inspect foundation/looseness and bearings; use spectrum and phase to distinguish unbalance, misalignment, resonance or process effects.';
+  await sendText(from,`${exact[0]} vibration review\n${vibrationTrendV81547(cbm)}${h?'\nRecent records:\n'+h:''}${historyAvailable?'':'\nOlder event history temporarily unavailable.'}\nGeneral checks: ${checks}\nCause unconfirmed; compare with the approved machine limit and arrange a qualified vibration review.`.slice(0,1700));
+  return true;
+}
 async function processMessage(from,text,payload=''){
   sourceRequestV81541.set(normWA(from),isOwner(from)&&!payload&&explicitSourceRequestV81541(text));
   const cmd=String(payload||text||'').trim();
@@ -4909,6 +5040,18 @@ async function processMessage(from,text,payload=''){
   if(cmd==='INGEST_STATUS' || /^(check |upload |extraction )?status$/i.test(cmd)){await queuedStatusV895(from);return;}
   try{await pool.query(`CREATE TABLE IF NOT EXISTS ui_sessions(whatsapp_number TEXT NOT NULL,session_key TEXT NOT NULL,session_value JSONB,updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),PRIMARY KEY(whatsapp_number,session_key))`);}catch(e){console.error('[SESSION_SCHEMA]',e.message);}
   if(await maintenanceWorkflowV81544(from,text,cmd))return;
+  const autoKind=!payload&&maintenanceEntryKindV81547(text);
+  if(autoKind){
+    const entryUser=await byWA(from);
+    if(!entryUser||entryUser.approval_status!=='approved'||!entryUser.is_active||!await hasAuthorityV874(entryUser,'ENTRY')){
+      await sendText(from,'Entry permission required.');return;
+    }
+    await setWorkflowSessionV81544(from,autoKind);
+    if(await maintenanceWorkflowV81544(from,text,cmd))return;
+  }
+  if(!payload&&reliabilityQueryV81547(text)!==null){
+    if(await handleReliabilityAnalysisV81547(from,text,await byWA(from)))return;
+  }
   // Route WhatsApp action IDs before free-text employee-name lookup. A list reply's
   // visible title is "Store Data", which otherwise looks like a person's name.
   if(/^INGEST_/.test(cmd)){
@@ -5187,8 +5330,8 @@ Shift: ${u.shift||'-'}`,[{id:'REMOVE_ME_CONFIRM',title:'Remove Me'},{id:'ACCOUNT
 }
 
 app.get('/health', async (_req,res)=>{
-  try{await pool.query('SELECT 1');res.json({ok:true,version:'8.15.46',phase:'reviewed-free-text-workflows',db:true});}
-  catch(e){res.status(500).json({ok:false,version:'8.15.46',error:e.message});}
+  try{await pool.query('SELECT 1');res.json({ok:true,version:'8.15.47',phase:'reliability-workflows',db:true});}
+  catch(e){res.status(500).json({ok:false,version:'8.15.47',error:e.message});}
 });
 app.get('/webhook',(req,res)=>{
   const mode=req.query['hub.mode'], token=req.query['hub.verify_token'], challenge=req.query['hub.challenge'];
@@ -5235,4 +5378,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.46 REVIEWED FREE-TEXT WORKFLOWS listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.47 RELIABILITY WORKFLOWS listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
