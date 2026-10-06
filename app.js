@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.50 DEPLOY AND EQUIPMENT SEARCH FIX 2026-10-06
+// LMMM AI Maintenance V8.15.51 FREE-TEXT EQUIPMENT SEARCH FIX 2026-10-06
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -980,7 +980,7 @@ if((a=text.match(/^AUTH_ADV:(\d+)$/))){await sendList(from,'Advanced Authorities
     if(normWA(from)!==u.whatsapp_number) await sendText(from,`${m[1]} registration removed. Maintenance history preserved.`);
     return true;
   }
-  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.15.50');return true;}
+  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.15.51');return true;}
   return false;
 }
 async function hasAuthorityV874(u, authority){
@@ -4539,7 +4539,7 @@ async function handleDocumentQuestionV81511(from,text,cmd,user){
 }
 
 async function maintenanceBareSearchV81514(text,cmd,payload){
-  if(payload||!/^[A-Za-z][A-Za-z .'-]{2,70}$/.test(String(text||'').trim())||
+  if(payload||!/^[\p{L}][\p{L}\p{N} ./'&_:-]{1,70}$/u.test(String(text||'').trim())||
     /^(hi|hello|hey|start|back|search|version|menu|add entry|store data|check status|retry extraction|my account|my details|contact details|profile|remove me|exit|quit)$/i.test(cmd))return false;
   const employee=(await pool.query('SELECT 1 FROM users WHERE lower(name)=lower($1) LIMIT 1',[String(text).trim()])).rows.length;
   return !employee;
@@ -5372,8 +5372,8 @@ Shift: ${u.shift||'-'}`,[{id:'REMOVE_ME_CONFIRM',title:'Remove Me'},{id:'ACCOUNT
 }
 
 app.get('/health', async (_req,res)=>{
-  try{await pool.query('SELECT 1');res.json({ok:true,version:'8.15.50',phase:'deploy-and-equipment-search-fix',db:true});}
-  catch(e){res.status(500).json({ok:false,version:'8.15.50',error:e.message});}
+  try{await pool.query('SELECT 1');res.json({ok:true,version:'8.15.51',phase:'free-text-equipment-search-fix',db:true});}
+  catch(e){res.status(500).json({ok:false,version:'8.15.51',error:e.message});}
 });
 app.get('/webhook',(req,res)=>{
   const mode=req.query['hub.mode'], token=req.query['hub.verify_token'], challenge=req.query['hub.challenge'];
@@ -5420,4 +5420,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.50 DEPLOY AND EQUIPMENT SEARCH FIX listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.51 FREE-TEXT EQUIPMENT SEARCH FIX listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
