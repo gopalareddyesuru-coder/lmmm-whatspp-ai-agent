@@ -4321,7 +4321,7 @@ async function handleUniversalSearchV81513(from,question,user,options={}){
     if(module==='JOBS'&&/^Source maintenance history/i.test(r.kind)&&
       !/\b(?:19|20)\d{2}(?:-\d{2}-\d{2})?\b/.test(r.content))return false;
     return true;
-  })),request,module);
+  }),request,module);
   const incomplete=partialFailure||catalogFailed;
   // The generic archive lookup is capped at 25 rows. For Bloom Pusher jobs
   // the dedicated dated source catalogue and BP sheet cover the raw records.
