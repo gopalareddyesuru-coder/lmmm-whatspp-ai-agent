@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.52 STEAM DRUM ALIAS FIX 2026-10-06
+// LMMM AI Maintenance V8.15.53 EQUIPMENT ALIAS SEARCH 2026-10-06
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -980,7 +980,7 @@ if((a=text.match(/^AUTH_ADV:(\d+)$/))){await sendList(from,'Advanced Authorities
     if(normWA(from)!==u.whatsapp_number) await sendText(from,`${m[1]} registration removed. Maintenance history preserved.`);
     return true;
   }
-  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.15.52');return true;}
+  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.15.53');return true;}
   return false;
 }
 async function hasAuthorityV874(u, authority){
@@ -2801,6 +2801,7 @@ function normalizeMaintenanceQueryV81524(question){
   // Correct a small set of widely used names; retain numbered identities as printed.
   let q=normalizeManualAliasesV81535(String(question||'').replace(/\b(?:bloom|blom|boom|bum)[ -]+(?:pusher|puser|pusr|pushr)\b/gi,'bloom pusher')
     .replace(/\bBP[ -]?([12])\b/gi,(_,n)=>`bloom pusher ${n}`).replace(/\bBP\b/gi,'bloom pusher'));
+  q=normalizeEquipmentSearchTextV81553(q);
   // In this plant, "Drum 1" means Steam Drum-1 on Furnace-1. Keep explicit
   // cross-transfer searches untouched so the two assets cannot be conflated.
   if(!/\b(?:cross\s+transfer|transfer\s+drum)\b/i.test(q)){
@@ -2837,6 +2838,192 @@ function normalizeManualAliasesV81535(question){
     if(pattern.test(question))return question.replace(pattern,(_,prefix)=>`${prefix}${title}`);
   }
   return question;
+}
+let equipmentAliasIndexV81553;
+let equipmentMasterForAliasesV81553;
+function readEquipmentMasterForAliasesV81553(){
+  if(equipmentMasterForAliasesV81553)return equipmentMasterForAliasesV81553;
+  try{
+    const parsed=JSON.parse(readFileSync('data/equipment_master.json','utf8'));
+    if(!Array.isArray(parsed.records)||parsed.records.length!==parsed.record_count)
+      throw Error('Incomplete equipment master');
+    equipmentMasterForAliasesV81553=parsed.records;
+  }catch(e){
+    console.error('[EQUIPMENT_ALIAS_MASTER]',e.message);
+    equipmentMasterForAliasesV81553=[];
+  }
+  return equipmentMasterForAliasesV81553;
+}
+function normalizeEquipmentSearchTextV81553(value){
+  return String(value||'').normalize('NFKC').toUpperCase()
+    .replace(/\b(?:LIVER|LEVER)\s+TYPE\s+PUSH(?:ER|R)\b/g,'LEVER TYPE PUSHER')
+    .replace(/\b(?:FURNANCE|FURNACE)\b/g,'FURNACE')
+    .replace(/\b(?:CHARING|CHARGNG|CHARGING)\b/g,'CHARGING')
+    .replace(/\b(?:DISSAPEARING|DISAPEARING|DISAPPEARING)\b/g,'DISAPPEARING')
+    .replace(/\b(?:TRASFER|TRANFER|TRANSFAR|TRANSFER)\b/g,'TRANSFER')
+    .replace(/\b(?:ELEVATER|ELAVATOR|ELEVATOR)\b/g,'ELEVATOR')
+    .replace(/\b(?:ROLLER|ROLAR|ROLER)\b/g,'ROLLER')
+    .replace(/\b(?:CONVEYER|CONVAYOR|CONVEYOR)\b/g,'CONVEYOR')
+    .replace(/\b(?:PUSHR|PUSER|PUSR|PUSHR)\b/g,'PUSHER')
+    .replace(/\b(?:TABL|TABEL)\b/g,'TABLE')
+    .replace(/\b(?:GEAR BOX)\b/g,'GEARBOX')
+    .replace(/\b(?:NO\.?|NUMBER|UNIT|#)\s*([0-9]+)\b/g,' $1 ')
+    // Number words are only normalized next to equipment nouns. This avoids
+    // changing ordinary request text such as "one defect" or "I need history".
+    .replace(/\b(FURNACE|DRUM|PUSHER|PUMP|MOTOR|ELEVATOR|TABLE|ROLLER|CAR|BOILER|FAN|BEARING|GEARBOX|DOOR)\s+(?:(?:NO\.?|NUMBER|UNIT)\s*)?(?:FIRST|ONE|I|1ST)\b/g,'$1 1')
+    .replace(/\b(FURNACE|DRUM|PUSHER|PUMP|MOTOR|ELEVATOR|TABLE|ROLLER|CAR|BOILER|FAN|BEARING|GEARBOX|DOOR)\s+(?:(?:NO\.?|NUMBER|UNIT)\s*)?(?:SECOND|TWO|II|2ND)\b/g,'$1 2')
+    .replace(/\b(FURNACE|DRUM|PUSHER|PUMP|MOTOR|ELEVATOR|TABLE|ROLLER|CAR|BOILER|FAN|BEARING|GEARBOX|DOOR)\s+(?:(?:NO\.?|NUMBER|UNIT)\s*)?(?:THIRD|THREE|III|3RD)\b/g,'$1 3')
+    .replace(/\b(?:FIRST|ONE|I|1ST)\s+(FURNACE|DRUM|PUSHER|PUMP|MOTOR|ELEVATOR|TABLE|ROLLER|CAR|BOILER|FAN|BEARING|GEARBOX|DOOR)\b/g,'$1 1')
+    .replace(/\b(?:SECOND|TWO|II|2ND)\s+(FURNACE|DRUM|PUSHER|PUMP|MOTOR|ELEVATOR|TABLE|ROLLER|CAR|BOILER|FAN|BEARING|GEARBOX|DOOR)\b/g,'$1 2')
+    .replace(/\b(?:THIRD|THREE|III|3RD)\s+(FURNACE|DRUM|PUSHER|PUMP|MOTOR|ELEVATOR|TABLE|ROLLER|CAR|BOILER|FAN|BEARING|GEARBOX|DOOR)\b/g,'$1 3')
+    .replace(/\bBSY\s*[- ]?RT\b/g,'BLOOM STORAGE YARD ROLLER TABLE')
+    .replace(/\bBSY\b/g,'BLOOM STORAGE YARD')
+    .replace(/\bBP\s*[- ]?([12])\b/g,'BLOOM PUSHER $1').replace(/\bBP\b/g,'BLOOM PUSHER')
+    .replace(/\bLTP\b/g,'LEVER TYPE PUSHER')
+    .replace(/\bFART\b/g,'FURNACE APPROACH ROLLER TABLE')
+    .replace(/\bTOD\b/g,'TAKE OVER DEVICE')
+    .replace(/\bEV\s*[- ]?([12])\b/g,'ELEVATOR $1').replace(/\bEV\b/g,'ELEVATOR')
+    .replace(/\bRT\s*[- ]?([0-9]+)\b/g,'ROLLER TABLE $1')
+    .replace(/\bRT\b/g,'ROLLER TABLE')
+    .replace(/[&+]/g,' AND ').replace(/[^A-Z0-9]+/g,' ').replace(/\s+/g,' ').trim();
+}
+function equipmentAliasVariantsV81553(value){
+  const base=normalizeEquipmentSearchTextV81553(value).replace(/\bSHARED WITH\b.*$/,'').trim();
+  if(base.length<3)return [];
+  const tokens=base.split(' '),out=new Set([base]);
+  const short={ROLLER:['ROLL','ROL'],TABLE:['TBL','TAB'],TRANSFER:['XFER','TRF'],PUSHER:['PUSHR','PSHR'],
+    ELEVATOR:['ELEV','LIFT'],HYDRAULIC:['HYD'],BEARING:['BRG'],GEARBOX:['GB'],GEAR:['GR'],MOTOR:['MTR'],
+    PUMP:['PMP'],CHAIN:['CHN'],CROSS:['CRS'],DEVICE:['DVC'],ASSEMBLY:['ASSY'],MECHANISM:['MECH'],
+    APPROACH:['APPR'],DISCHARGING:['DISCH'],CHARGING:['CHRG'],INCLINED:['INCL'],HEATING:['HTG'],
+    FURNACE:['FCE'],COOLING:['CLG'],STRAIGHTENER:['STR'],LOADING:['LOAD'],TYPE:['TYP'],
+    SYSTEM:['SYS'],UNIT:['UNT'],STATION:['STN'],ROTARY:['ROTRY'],SHEAR:['SHR'],
+    STOP:['STP'],STOPS:['STPS'],FIXED:['FIX'],MOVING:['MOV'],GUIDE:['GDE'],TABLES:['TBLS']};
+  let combos=[''];
+  for(const token of tokens){
+    const choices=[token,...(short[token]||[])];
+    if(['TYPE','SYSTEM','UNIT'].includes(token)&&tokens.length>3)choices.push('');
+    combos=combos.flatMap(prefix=>choices.map(choice=>`${prefix}${prefix?' ':''}${choice}`)).slice(0,96);
+  }
+  for(const value of combos){const normalized=value.replace(/\s+/g,' ').trim();if(normalized.length>=3)out.add(normalized);}
+  const acronym=tokens.filter(x=>x.length>1).map(x=>x[0]).join('');
+  if(acronym.length>=3)out.add(`${acronym}${tokens.at(-1)?.match(/\d+$/)?.[0]||''}`);
+  // Omit common leading boilerplate so users can search by the component name.
+  for(const prefix of ['CHAIN TYPE ','CHAIN ','TYPE ','INCLINED ','HYDRAULIC '])
+    if(base.startsWith(prefix)&&base.slice(prefix.length).length>=4)out.add(base.slice(prefix.length));
+  if(/^DRUM TYPE CROSS TRANSFER(?: \d+)?$/.test(base)){
+    const number=base.match(/\d+$/)?.[0]||'1';
+    out.add(`CROSS TRANSFER DRUM TYPE ${number}`);
+    out.add(`CROSS TRANSFER DRUM ${number}`);
+    out.add(`DRUM CROSS TRANSFER ${number}`);
+    out.add(`CT DRUM ${number}`);
+  }
+  // Accept common operator number forms (Furnace one, Pump No. 2, Drum-II)
+  // while keeping the aliases tied to the full canonical equipment phrase.
+  const numberForms={1:['ONE','FIRST','I','NO 1','NO. 1','UNIT 1'],2:['TWO','SECOND','II','NO 2','NO. 2','UNIT 2'],3:['THREE','THIRD','III','NO 3','NO. 3','UNIT 3']};
+  const numericPositions=[];tokens.forEach((token,i)=>{if(numberForms[token])numericPositions.push(i);});
+  for(const position of numericPositions.slice(0,2))for(const form of numberForms[tokens[position]]){
+    const copy=tokens.slice();copy[position]=form;
+    out.add(copy.join(' '));
+  }
+  return [...out];
+}
+function readEquipmentAliasIndexV81553(){
+  if(equipmentAliasIndexV81553)return equipmentAliasIndexV81553;
+  const entities=new Map(),aliases=new Map();
+  const add=(name,kind='equipment',context='',extraAliases=[])=>{
+    const clean=String(name||'').replace(/^Filename\/folder hint:\s*/i,'').replace(/\s*\(shared with[^)]*\)/ig,'').trim();
+    if(!clean||clean.length<3||/^\d+(?:\.\d+)*$/.test(clean)||/^filename\//i.test(clean))return null;
+    const key=normalizeEquipmentSearchTextV81553(clean);if(!key||key.length<3)return null;
+    let entity=entities.get(key);
+    if(!entity){entity={key,name:clean,kind,contexts:new Set(),extra:new Set()};entities.set(key,entity);}
+    if(context)entity.contexts.add(String(context).trim());
+    for(const a of extraAliases)if(a)entity.extra.add(String(a));
+    return entity;
+  };
+  for(const row of readEquipmentMasterForAliasesV81553()){
+    const entity=add(row['Equipment Name'],'equipment',`${row['Source Area']||''} ${row['Source Location']||''}`.trim(),[]);
+    if(!entity)continue;
+    const id=row['Equipment UID'];if(id&&/[A-Z]/i.test(String(id)))entity.extra.add(id);
+    for(const loc of [row['Source Location'],row['Source Area']])if(loc)entity.extra.add(`${row['Equipment Name']} ${loc}`);
+  }
+  try{
+    const index=readManualItemSearchIndexV81535();
+    for(const item of index.items||[])if(item.equipment&&item.item_number!==4&&item.item_number!==10)
+      add(item.equipment,'equipment',item.source_file||'',item.aliases||[]);
+  }catch(e){console.error('[EQUIPMENT_ALIAS_MANUAL]',e.message);}
+  for(const drawing of DRAWINGS_MASTER?.drawings||[]){
+    const equipment=String(drawing.equipment||'').split(/\s*[|;]\s*/).filter(Boolean);
+    for(const name of equipment)add(name,'equipment');
+    for(const name of [drawing.sub_equipment,drawing.indexed_sub_equipment])
+      for(const part of String(name||'').split(/\s*[|;]\s*/).filter(Boolean))add(part,'sub-equipment');
+  }
+  // Plant shorthand and operator language observed in LMMM maintenance searches.
+  for(const [name,aliases] of [
+    ['Steam Drum 1 Furnace 1',['Drum 1','Drum-1','Drum One','Drum First','Steam Drum-1','Steam Drum 1','Steam Drum One','Steam Drum First','Furnace 1 Steam Drum','Furnace-1 Steam Drum','Furnace 1 Drum','Furnace-1 Drum','F1 Steam Drum','F1 Drum','Steam Drum Furnace 1','Steam Drum F1','SD1 F1','SD-1 F-1','SD 1 Furnace 1','Furnace 1 SD1']],
+    ['DRUM TYPE CROSS TRANSFER 1',['Cross Transfer Drum 1','Cross Transfer Drum Type 1','CT Drum 1','CTD1','Drum Type Cross Transfer 1','Drum Type Cross Transfer No. 1']],
+    ['Bloom Pusher 1',['BP1','BP-1','BP 1','Bloom Pusher-1','Bloom Pusher No 1']],
+    ['Bloom Pusher 2',['BP2','BP-2','BP 2','Bloom Pusher-2','Bloom Pusher No 2']],
+    ['Lever Type Pusher',['LTP','L.T.P.','Liver Type Pusher','Lever Pusher','Lever Pusher Type','Lever Type Pusher']],
+    ['Take Over Device',['TOD','Takeover Device','Bloom Transfer Device']],
+    ['Furnace Approach Roller Table',['FART','F.A.R.T.','Furnace Approach RT','Furnace Approach Roll Table']],
+    ['Bloom Storage Yard Roller Table',['BSY RT','BSY-RT','Bloom Storage Yard RT','BSY Roller Table']],
+    ['Charging Grids',['Charging Grid','Charing Grid','Char. Grid','Charge Grid','Charging Grates','CH Grid','CH Grids','Charging Table']],
+    ['Inclined Elevator',['EV','Elevator','Inclined Lift']]
+  ])add(name,'equipment','',aliases);
+  for(const entity of entities.values()){
+    const allNames=[entity.name,...entity.extra];
+    for(const source of allNames){
+      const sourceNorm=normalizeEquipmentSearchTextV81553(source);
+      if(sourceNorm.length>=3&&!/^\d+$/.test(sourceNorm)){
+        if(!aliases.has(sourceNorm))aliases.set(sourceNorm,new Set());aliases.get(sourceNorm).add(entity.key);
+      }
+      for(const variant of equipmentAliasVariantsV81553(source)){
+        const normalized=normalizeEquipmentSearchTextV81553(variant);
+        if(normalized.length<3||/^\d+$/.test(normalized))continue;
+        if(!aliases.has(normalized))aliases.set(normalized,new Set());aliases.get(normalized).add(entity.key);
+      }
+      // Common compound-name alternatives without the generic equipment suffix.
+      if(/\b(?:SYSTEM|DEVICE|UNIT|ASSEMBLY)\b/.test(sourceNorm)){
+        const compact=sourceNorm.replace(/\b(?:SYSTEM|DEVICE|UNIT|ASSEMBLY)\b/g,' ').replace(/\s+/g,' ').trim();
+        if(compact.length>=5){if(!aliases.has(compact))aliases.set(compact,new Set());aliases.get(compact).add(entity.key);}
+      }
+    }
+  }
+  equipmentAliasIndexV81553={entities,aliases};return equipmentAliasIndexV81553;
+}
+function resolveEquipmentAliasV81553(question){
+  const query=normalizeEquipmentSearchTextV81553(question);if(!query)return null;
+  const tokens=query.split(' '),index=readEquipmentAliasIndexV81553(),matches=[];
+  for(let start=0;start<tokens.length;start++)for(let end=start+1;end<=Math.min(tokens.length,start+12);end++){
+    const phrase=tokens.slice(start,end).join(' '),keys=index.aliases.get(phrase);if(!keys)continue;
+    const candidates=[...keys].map(k=>index.entities.get(k)).filter(Boolean);
+    if(candidates.length)matches.push({start,end,phrase,candidates,length:phrase.replace(/\s/g,'').length});
+  }
+  matches.sort((a,b)=>b.length-a.length||b.candidates.length-a.candidates.length);
+  if(!matches.length&&query.length>=4){
+    // A bare family name such as "BP" or "roller table" should offer the
+    // numbered assets that share that name instead of falling through to a
+    // misleading no-result or a broad text search.
+    const keys=new Set();
+    for(const [alias,entityKeys] of index.aliases){
+      if(alias.startsWith(`${query} `))for(const key of entityKeys)keys.add(key);
+      if(keys.size>=64)break;
+    }
+    if(keys.size)return {phrase:query,start:0,end:tokens.length,
+      candidates:[...keys].map(key=>index.entities.get(key)).filter(Boolean)};
+  }
+  if(!matches.length)return null;
+  const best=matches[0];
+  // Keep all same-length equally specific matches, rather than silently taking one.
+  const equal=matches.filter(x=>x.length===best.length&&x.start===best.start&&x.end===best.end);
+  const candidates=[...new Map(equal.flatMap(x=>x.candidates).map(x=>[x.key,x])).values()];
+  return {phrase:best.phrase,start:best.start,end:best.end,candidates};
+}
+function equipmentAliasQueryV81553(question,resolution){
+  if(!resolution||resolution.candidates.length!==1)return String(question||'');
+  const tokens=normalizeEquipmentSearchTextV81553(question).split(' '),entity=resolution.candidates[0];
+  const before=tokens.slice(0,resolution.start).join(' '),after=tokens.slice(resolution.end).join(' ');
+  return [before,entity.name,after].filter(Boolean).join(' ');
 }
 async function answerManualItemNumberV81535(from,user,question){
   const match=String(question||'').match(/\b(?:(?:equipment|manual|lmmm)\s+)?item(?:\s+(?:number|no\.?))?\s*#?\s*(\d{1,3})\b/i);
@@ -3321,36 +3508,26 @@ async function showMasterEquipmentChoicesV81539(from,user,question,language){
   if(!await hasAuthorityV874(user,'VIEW'))return false;
   const request=universalTermsV81513(question);
   if(!bareAssetQuestionV81515(question,request)||!request.primary||request.exact)return false;
-  if(request.steamDrumFurnace1){
-    const selected='Steam Drum 1 Furnace 1';
-    await saveDocumentSessionV81511(from,'MAINT_SEARCH_FLOW',
-      {query:question,names:[selected],selected,expiresAt:Date.now()+30*60000});
-    await showAssetModulesV81515(from,selected,language);return true;
-  }
-  const needle=archiveTextV81517(request.primary);
-  if(needle.length<4)return false;
-  const matched=readEquipmentArchiveV81517().equipment.filter(x=>
-    archiveMatchesV81517(x['Equipment Name'],needle));
-  if(!matched.length){
+  const resolution=resolveEquipmentAliasV81553(question);
+  if(!resolution||!resolution.candidates.length){
+    const needle=archiveTextV81517(request.primary);
     if(/^MAIN HOIST$/.test(needle)){
       await sendText(from,language==='TE'?'ఏ crane లేదా area లోని main hoist కావాలి? Crane number లేదా location చెప్పండి.':'Which crane or area is the main hoist in? Send the crane number or location.');
       return true;
     }
     return false;
   }
-  const names=[...new Set(matched.map(x=>String(x['Equipment Name']||'').trim()).filter(Boolean))];
+  const names=[...new Set(resolution.candidates.map(x=>x.name).filter(Boolean))].slice(0,8);
   if(names.length===1){
     await saveDocumentSessionV81511(from,'MAINT_SEARCH_FLOW',
       {query:question,names,selected:names[0],expiresAt:Date.now()+30*60000});
     await showAssetModulesV81515(from,names[0],language);return true;
   }
-  const choices=matched.slice(0,8).map(x=>({
-    id:`MAINT_ASSET:${matched.indexOf(x)}`,title:String(x['Equipment Name']||'').slice(0,24),
-    description:`${x['Source Area']||'Area not listed'} · ${x['Source Location']||'Location not listed'}`.slice(0,72)}));
+  const choices=names.map((name,i)=>({id:`MAINT_ASSET:${i}`,title:name.slice(0,60)}));
   await saveDocumentSessionV81511(from,'MAINT_SEARCH_FLOW',
-    {query:question,names:matched.slice(0,8).map(x=>String(x['Equipment Name']||'').trim()),
+    {query:question,names,
       selected:'',expiresAt:Date.now()+30*60000});
-  await sendList(from,`${language==='TE'?'ఈ పేరుతో పలు పరికరాలు ఉన్నాయి. ఏది కావాలి?':'Several equipment records match. Which one do you mean?'}\n${question}${matched.length>8?` (${matched.length} matches; add area to narrow)` :''}`,
+  await sendList(from,`${language==='TE'?'ఏ పరికరం కావాలో ఎంచుకోండి.':'Which equipment do you mean?'}${resolution.candidates.length>8?' Add its area or location if it is not listed.':''}`,
     'Choose',choices,'Equipment');return true;
 }
 async function handleSearchChoiceV81515(from,cmd,user){
@@ -4319,17 +4496,28 @@ async function handleUniversalSearchV81513(from,question,user,options={}){
   if(!(await hasAuthorityV874(user,'VIEW'))){await sendText(from,'Search access is not enabled for your account.');return true;}
   question=normalizeMaintenanceQueryV81524(question);
   if(await answerChargingEquipmentCountV81533(from,question))return true;
-  const module=searchIntentV81524(question,options.module);
+  let module=searchIntentV81524(question,options.module);
+  const language=options.language||await searchLanguageV81515(from,question),te=language==='TE';
+  if(module==='ALL'&&await showMasterEquipmentChoicesV81539(from,user,question,language))return true;
+  const alias=resolveEquipmentAliasV81553(question);
+  if(alias?.candidates?.length>1){
+    const names=[...new Set(alias.candidates.map(x=>x.name).filter(Boolean))].slice(0,8);
+    if(names.length>1){
+      await saveDocumentSessionV81511(from,'MAINT_SEARCH_FLOW',{query:question,names,selected:'',expiresAt:Date.now()+30*60000});
+      await sendList(from,`${te?'ఏ పరికరం కావాలో ఎంచుకోండి.':'Which equipment do you mean?'}${alias.candidates.length>8?' Add its area or location if it is not listed.':''}`,
+        'Choose',names.map((name,i)=>({id:`MAINT_ASSET:${i}`,title:name.slice(0,60)})),'Equipment');return true;
+    }
+  }
+  if(alias?.candidates?.length===1)question=equipmentAliasQueryV81553(question,alias);
+  module=searchIntentV81524(question,options.module);
   // Do not run drawing-catalog lookups for generic queries: equipment codes
   // such as BP1 previously hijacked history, defect, and inspection searches.
   const drawingSearch=module==='DRAWINGS' || (module==='ALL' && looksLikeDrawingRequestV81535(question));
   if(drawingSearch&&await searchJsonDrawingMasterV81535(from,question,user))return true;
   if(drawingSearch&&await searchEcsDrawingsV81521(from,question,user))return true;
   if(drawingSearch&&await searchDrawingCatalogV81522(from,question,user))return true;
-  const language=options.language||await searchLanguageV81515(from,question),te=language==='TE';
   if((!options.module||['JOBS','HISTORY','DEFECTS'].includes(options.module))&&await answerIncidentArchiveV81523(from,user,question,language))return true;
   if(module==='PRODUCTION'&&await answerProductionV81524(from,user,question,language))return true;
-  if(module==='ALL'&&await showMasterEquipmentChoicesV81539(from,user,question,language))return true;
   const {request,rows:allRows,failed,partialFailure,truncated}=await universalSearchV81513(from,user,question,module);
   if(!request.primary){await sendText(from,te?'ఏ equipment, number, part లేదా విషయం గురించి వెతకాలో చెప్పండి.':'Specify an equipment, number, part or subject to search.');return true;}
   let catalog={rows:[],truncated:false},catalogFailed=false;
@@ -5442,4 +5630,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.52 STEAM DRUM ALIAS FIX listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.53 EQUIPMENT ALIASES listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
