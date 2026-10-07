@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.55 ENGLISH DEFAULT REPLIES 2026-10-06
+// LMMM AI Maintenance V8.15.56 SHIFT OVERLAP REVIEW 2026-10-07
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -980,7 +980,7 @@ if((a=text.match(/^AUTH_ADV:(\d+)$/))){await sendList(from,'Advanced Authorities
     if(normWA(from)!==u.whatsapp_number) await sendText(from,`${m[1]} registration removed. Maintenance history preserved.`);
     return true;
   }
-  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.15.55');return true;}
+  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.15.56');return true;}
   return false;
 }
 async function hasAuthorityV874(u, authority){
@@ -4934,7 +4934,9 @@ function shiftContextV81545(date,time,roster,explicit=''){
   if(!candidates)return {error:'Event time must be HH:mm (24-hour clock).'};
   const stated=explicit?canonicalShift(explicit):null,assigned=canonicalShift(roster);
   if(stated&&!['A','B','C','General'].includes(stated))return {error:'Shift must be A, B, C or G.'};
-  const chosen=stated||(['A','B','C','General'].includes(assigned)&&candidates.includes(assigned)?assigned:candidates.length===1?candidates[0]:null);
+  // A user's registered roster is a usual assignment, not proof of the shift
+  // worked on this date. Overlapping windows need an explicit shift.
+  const chosen=stated||(candidates.length===1?candidates[0]:null);
   const resolution=stated?(candidates.includes(stated)?'USER_REPORTED':'OUTSIDE_WINDOW_REPORTED'):
     chosen===assigned?'ROSTER_MATCH':chosen?(assigned&&assigned!==chosen?'TIME_UNAMBIGUOUS_OUTSIDE_ROSTER':'TIME_UNAMBIGUOUS'):'NEEDS_REVIEW';
   return {candidates,shift:chosen,resolution,roster:assigned||null,
@@ -4945,8 +4947,10 @@ function attendanceCurrentV81545(roster,explicit='',instant=new Date()){
   const now=istPartsV81545(instant),base=shiftContextV81545(now.date,now.time,roster,explicit);
   if(base.error)return base;
   if(base.shift&&!['OUTSIDE_WINDOW_REPORTED','TIME_UNAMBIGUOUS_OUTSIDE_ROSTER'].includes(base.resolution))return {...base,date_source:'SUBMISSION_TIME'};
-  // A rostered shift can be reported shortly after it ends; C belongs to the preceding shift date.
-  const assigned=canonicalShift(explicit||roster),end={A:14*60+30,B:22*60+30,C:6*60+30,General:17*60+30}[assigned];
+  // A report shortly after shift end can use that shift only when the user
+  // names it. The registered roster alone cannot distinguish a late report
+  // from someone working the next shift or responding to a breakdown.
+  const assigned=canonicalShift(explicit),end={A:14*60+30,B:22*60+30,C:6*60+30,General:17*60+30}[assigned];
   const t=Number(now.time.slice(0,2))*60+Number(now.time.slice(3));
   const elapsed=end===undefined?Infinity:(t-end+1440)%1440;
   if(elapsed<=90)return {...base,shift:assigned,shift_date:assigned==='C'?previousDateV81545(now.date):now.date,
@@ -5111,7 +5115,8 @@ async function maintenanceWorkflowV81544(from,text,cmd){
   if(kind==='EMP_ATTENDANCE'&&!data.Date){
     const current=attendanceCurrentV81545(user.shift,data.Shift);
     if(!current.date_source||!current.shift){
-      await sendText(from,'Which duty date and shift is this attendance for? Send Date: YYYY-MM-DD and Shift: A/B/C/G with the full entry.');return true;
+      const overlap=current.candidates?.length>1&&!data.Shift;
+      await sendText(from,overlap?`Shifts overlap at this time. Send the full entry with Shift: ${current.candidates.map(x=>x==='General'?'G':x).join('/')} so I can use today's duty date.`:'Which duty date and shift is this attendance for? Send Date: YYYY-MM-DD and Shift: A/B/C/G with the full entry.');return true;
     }
     data.Date=current.shift_date;
     data.Shift=current.shift;
@@ -5138,6 +5143,9 @@ async function maintenanceWorkflowV81544(from,text,cmd){
       resolution:data.Shift?'USER_REPORTED_TIME_UNKNOWN':'NEEDS_EVENT_TIME'};
   }
   if(timing?.error){await sendText(from,timing.error);return true;}
+  if(timing?.candidates?.length>1&&!data.Shift){
+    await sendText(from,`Shifts overlap at ${timing.event_time}. Send the full entry with Shift: ${timing.candidates.map(x=>x==='General'?'G':x).join('/')}.`);return true;
+  }
   if(timing){
     if(kind==='EMP_ATTENDANCE'&&!timing.shift){await sendText(from,'Which duty shift was this? Send Shift: A/B/C/G.');return true;}
     if(timing.shift&&!data.Shift)data.Shift=timing.shift;
@@ -5635,4 +5643,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.55 ENGLISH DEFAULT REPLIES listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.56 SHIFT OVERLAP REVIEW listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
