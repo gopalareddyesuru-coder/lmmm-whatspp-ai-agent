@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.56 SHIFT OVERLAP REVIEW 2026-10-07
+// LMMM AI Maintenance V8.15.57 STRUCTURED ENTRY ROUTING 2026-10-07
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -980,7 +980,7 @@ if((a=text.match(/^AUTH_ADV:(\d+)$/))){await sendList(from,'Advanced Authorities
     if(normWA(from)!==u.whatsapp_number) await sendText(from,`${m[1]} registration removed. Maintenance history preserved.`);
     return true;
   }
-  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.15.56');return true;}
+  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.15.57');return true;}
   return false;
 }
 async function hasAuthorityV874(u, authority){
@@ -5216,6 +5216,28 @@ function maintenanceEntryKindV81547(text){
   if(/\b(?:work order|job done|job completed|maintenance job)\b/i.test(body))return 'JOB';
   return null;
 }
+function structuredWorkflowKindV81557(text){
+  const lines=String(text||'').split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
+  if(lines.length<3)return null;
+  const labels=lines.map(x=>x.match(/^([A-Za-z][A-Za-z /-]{1,35}):\s*\S/)?.[1]?.trim().toLowerCase());
+  if(labels.some(x=>!x))return null;
+  const has=x=>labels.includes(x),dated=has('date')||has('requested date');
+  if(has('attendance')&&has('contractor')&&has('worker id'))return 'LABOUR';
+  if(has('attendance')&&(dated||has('shift')))return 'EMP_ATTENDANCE';
+  if(has('start')&&has('end')&&has('worker id')&&has('job'))return 'HOURS';
+  if(!has('equipment')||!dated)return null;
+  if(has('permit type')&&has('energy sources'))return 'ISOLATION';
+  if(has('motor action')&&has('electrical isolation'))return 'SHUTDOWN';
+  if(has('rotor')&&has('job'))return 'BALANCING';
+  if(has('driver')&&has('driven'))return 'ALIGNMENT';
+  if(has('point')&&(has('measurement type')||has('value')||has('h mm/s')||has('v mm/s')||has('a mm/s')))return 'CBM';
+  if(has('problem'))return 'BREAKDOWN';
+  if(has('defect'))return 'DEFECT';
+  if(has('observation')&&has('action required'))return 'INSPECTION';
+  if(has('observation'))return 'LOGBOOK';
+  if(has('job'))return 'JOB';
+  return null;
+}
 function comparableCbMValueV81547(payload){
   if(!payload)return null;
   const point=String(payload.Point||'').trim().toUpperCase();
@@ -5305,7 +5327,7 @@ async function processMessage(from,text,payload=''){
   if(cmd==='INGEST_STATUS' || /^(check |upload |extraction )?status$/i.test(cmd)){await queuedStatusV895(from);return;}
   try{await pool.query(`CREATE TABLE IF NOT EXISTS ui_sessions(whatsapp_number TEXT NOT NULL,session_key TEXT NOT NULL,session_value JSONB,updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),PRIMARY KEY(whatsapp_number,session_key))`);}catch(e){console.error('[SESSION_SCHEMA]',e.message);}
   if(await maintenanceWorkflowV81544(from,text,cmd))return;
-  const autoKind=!payload&&maintenanceEntryKindV81547(text);
+  const autoKind=!payload&&(structuredWorkflowKindV81557(text)||maintenanceEntryKindV81547(text));
   if(autoKind){
     const entryUser=await byWA(from);
     if(!entryUser||entryUser.approval_status!=='approved'||!entryUser.is_active||!await hasAuthorityV874(entryUser,'ENTRY')){
@@ -5595,8 +5617,8 @@ Shift: ${u.shift||'-'}`,[{id:'REMOVE_ME_CONFIRM',title:'Remove Me'},{id:'ACCOUNT
 }
 
 app.get('/health', async (_req,res)=>{
-  try{await pool.query('SELECT 1');res.json({ok:true,version:'8.15.51',phase:'free-text-equipment-search-fix',db:true});}
-  catch(e){res.status(500).json({ok:false,version:'8.15.51',error:e.message});}
+  try{await pool.query('SELECT 1');res.json({ok:true,version:'8.15.57',phase:'structured-entry-routing',db:true});}
+  catch(e){res.status(500).json({ok:false,version:'8.15.57',error:e.message});}
 });
 app.get('/webhook',(req,res)=>{
   const mode=req.query['hub.mode'], token=req.query['hub.verify_token'], challenge=req.query['hub.challenge'];
@@ -5643,4 +5665,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.56 SHIFT OVERLAP REVIEW listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.57 STRUCTURED ENTRY ROUTING listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
