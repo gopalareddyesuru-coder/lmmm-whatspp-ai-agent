@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.62 MAPPED O&M SEARCH 2026-10-07
+// LMMM AI Maintenance V8.15.63 BP UNIT SEARCH 2026-10-08
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -980,7 +980,7 @@ if((a=text.match(/^AUTH_ADV:(\d+)$/))){await sendList(from,'Advanced Authorities
     if(normWA(from)!==u.whatsapp_number) await sendText(from,`${m[1]} registration removed. Maintenance history preserved.`);
     return true;
   }
-  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.15.62');return true;}
+  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.15.63');return true;}
   return false;
 }
 async function hasAuthorityV874(u, authority){
@@ -3198,9 +3198,11 @@ function rankSearchRowsV81524(rows,request,module){
       const body=row.searchBody;
       if(!/\bBLOOM\s+PUSHER\b/i.test(body)&&!/(?:^|[^a-z0-9])BP[ -]?[12](?:[^a-z0-9]|$)/i.test(body))return false;
       const numbered=body.match(/\b(?:BLOOM\s+PUSHER|BP)[ -]?([12])\b/i)?.[1];
+      // An unnumbered hydraulic record belongs to the Bloom Pusher family,
+      // but its BP-1/BP-2 unit is not established. Keep it out of unit searches.
       if(request.bpNumber&&numbered!==request.bpNumber&&
-        !(numbered==null&&(/hyd cyl history/i.test(String(row.source||''))||
-          module==='MANUALS'&&/1702906388/i.test(String(row.source||''))&&/\bBLOOM\s+PUSHER\b/i.test(body))))return false;
+        !(numbered==null&&module==='MANUALS'&&/1702906388/i.test(String(row.source||''))&&
+          /\bBLOOM\s+PUSHER\b/i.test(body)))return false;
       if(request.furnaceQualifier&&!/\bBLOOM\s+PUSHER\s+IN\s+FRONT\s+OF\s+FURNACE\s*[- ]?[12]\b/i.test(body))return false;
     }
     if(request.date&&row.date&&row.date!==request.date&&!row.searchBody.includes(request.date))return false;
@@ -5796,4 +5798,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.62 MAPPED O&M SEARCH listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.63 BP UNIT SEARCH listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
