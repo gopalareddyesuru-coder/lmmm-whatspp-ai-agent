@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.57 STRUCTURED ENTRY ROUTING 2026-10-07
+// LMMM AI Maintenance V8.15.58 SHIFT CLARIFICATION RETENTION 2026-10-07
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -980,7 +980,7 @@ if((a=text.match(/^AUTH_ADV:(\d+)$/))){await sendList(from,'Advanced Authorities
     if(normWA(from)!==u.whatsapp_number) await sendText(from,`${m[1]} registration removed. Maintenance history preserved.`);
     return true;
   }
-  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.15.57');return true;}
+  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.15.58');return true;}
   return false;
 }
 async function hasAuthorityV874(u, authority){
@@ -4995,9 +4995,10 @@ function workflowErrorV81544(kind,data){
 async function maintenanceWorkflowV81544(from,text,cmd){
   const start=cmd.match(/^WF_NEW:(JOB|SHUTDOWN|ISOLATION|LOGBOOK|INSPECTION|DEFECT|BREAKDOWN|LABOUR|EMP_ATTENDANCE|HOURS|CBM|BALANCING|ALIGNMENT)$/);
   const logAttendance=cmd.match(/^WF_LOG_ATTEND:(\d+)$/);
+  const shiftPick=cmd.match(/^WF_SHIFT:(A|B|C|G)$/i);
   const range=cmd.match(/^(employee attendance|contract attendance|attendance)\s+(?:from\s+)?(\d{4}-\d{2}-\d{2})\s+(?:to|-)\s+(\d{4}-\d{2}-\d{2})$/i);
   const cancelling=cmd==='WF_CANCEL'||/^cancel$/i.test(cmd);
-  const command=cmd==='WF_MENU'||cmd==='WF_MORE'||cmd==='WF_LIST'||cmd==='WF_CONFIRM'||cmd==='WF_EDIT'||cancelling||!!start||!!range||!!logAttendance;
+  const command=cmd==='WF_MENU'||cmd==='WF_MORE'||cmd==='WF_LIST'||cmd==='WF_CONFIRM'||cmd==='WF_EDIT'||cancelling||!!start||!!range||!!logAttendance||!!shiftPick;
   const session=await workflowSessionV81544(from);
   if(!command&&!session)return false;
   const user=await byWA(from);
@@ -5094,7 +5095,16 @@ async function maintenanceWorkflowV81544(from,text,cmd){
     await sendText(from,'Choose Confirm, Edit or Cancel for the pending entry.');return true;
   }
   let data,unknown=[],freeText=false;
-  if(cmd==='WF_CONFIRM'){
+  if(session.awaiting==='SHIFT'){
+    const replyShift=shiftPick?.[1]||String(text).trim().match(/^(?:shift\s*:\s*)?(a|b|c|g|general)(?:\s*shift)?$/i)?.[1];
+    const shift=replyShift?canonicalShift(replyShift):null;
+    if(!shift||!session.pending){
+      const choices=(session.candidates||[]).map(x=>({id:`WF_SHIFT:${x==='General'?'G':x}`,title:`${x==='General'?'G':x} shift`}));
+      await sendButtons(from,`Which shift was working at ${session.eventTime||'that time'}?`,choices.slice(0,3));return true;
+    }
+    data={...session.pending,Shift:shift};
+    text=session.originalText||text;
+  }else if(cmd==='WF_CONFIRM'){
     data=session.preview;
   }else{
     const parsed=parseWorkflowV81544(text,fields);
@@ -5144,7 +5154,9 @@ async function maintenanceWorkflowV81544(from,text,cmd){
   }
   if(timing?.error){await sendText(from,timing.error);return true;}
   if(timing?.candidates?.length>1&&!data.Shift){
-    await sendText(from,`Shifts overlap at ${timing.event_time}. Send the full entry with Shift: ${timing.candidates.map(x=>x==='General'?'G':x).join('/')}.`);return true;
+    await setWorkflowSessionV81544(from,{kind,pending:data,originalText:String(text).slice(0,4000),awaiting:'SHIFT',eventTime:timing.event_time,candidates:timing.candidates,expiresAt:Date.now()+60*60*1000});
+    const choices=timing.candidates.map(x=>({id:`WF_SHIFT:${x==='General'?'G':x}`,title:`${x==='General'?'G':x} shift`}));
+    await sendButtons(from,`Shifts overlap at ${timing.event_time}. Which shift was working?`,choices.slice(0,3));return true;
   }
   if(timing){
     if(kind==='EMP_ATTENDANCE'&&!timing.shift){await sendText(from,'Which duty shift was this? Send Shift: A/B/C/G.');return true;}
@@ -5160,7 +5172,7 @@ async function maintenanceWorkflowV81544(from,text,cmd){
     data['Employee number']=user.employee_number;
   }
   if(cmd!=='WF_CONFIRM'){
-    await setWorkflowSessionV81544(from,{kind,preview:data,originalText:String(text).slice(0,4000),expiresAt:Date.now()+60*60*1000});
+    await setWorkflowSessionV81544(from,{kind,preview:data,originalText:session.awaiting==='SHIFT'?session.originalText:String(text).slice(0,4000),expiresAt:Date.now()+60*60*1000});
     const shown=fields.filter(f=>data[f]).map(f=>`${f}: ${String(data[f]).slice(0,160)}`).join('\n');
     const preview=`Review ${kind}:\n${shown}${data.Equipment?'\n\nEquipment name is recorded as stated; asset link needs verification.':''}`;
     if(preview.length>950)await sendText(from,preview.slice(0,3500));
@@ -5617,8 +5629,8 @@ Shift: ${u.shift||'-'}`,[{id:'REMOVE_ME_CONFIRM',title:'Remove Me'},{id:'ACCOUNT
 }
 
 app.get('/health', async (_req,res)=>{
-  try{await pool.query('SELECT 1');res.json({ok:true,version:'8.15.57',phase:'structured-entry-routing',db:true});}
-  catch(e){res.status(500).json({ok:false,version:'8.15.57',error:e.message});}
+  try{await pool.query('SELECT 1');res.json({ok:true,version:'8.15.58',phase:'shift-clarification-retention',db:true});}
+  catch(e){res.status(500).json({ok:false,version:'8.15.58',error:e.message});}
 });
 app.get('/webhook',(req,res)=>{
   const mode=req.query['hub.mode'], token=req.query['hub.verify_token'], challenge=req.query['hub.challenge'];
@@ -5665,4 +5677,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.57 STRUCTURED ENTRY ROUTING listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.58 SHIFT CLARIFICATION RETENTION listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
