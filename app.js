@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.61 CHARGING GRID MANUAL 2026-10-07
+// LMMM AI Maintenance V8.15.62 MAPPED O&M SEARCH 2026-10-07
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -980,7 +980,7 @@ if((a=text.match(/^AUTH_ADV:(\d+)$/))){await sendList(from,'Advanced Authorities
     if(normWA(from)!==u.whatsapp_number) await sendText(from,`${m[1]} registration removed. Maintenance history preserved.`);
     return true;
   }
-  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.15.61');return true;}
+  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.15.62');return true;}
   return false;
 }
 async function hasAuthorityV874(u, authority){
@@ -3104,6 +3104,36 @@ async function answerManualItemNameV81535(from,user,question){
     `${subject.toUpperCase()} — O&M items:\n${unique.slice(0,12).map(x=>`${x.item_number}. ${x.equipment}`).join('\n')}${unique.length>12?`\n${unique.length-12} more; specify the sub-equipment.`:''}`);
   return true;
 }
+// Route ordinary equipment manual requests through the reviewed O&M item
+// index. A file-name hit alone does not establish an equipment/manual link.
+// Keep ambiguous names as choices instead of choosing the first item.
+function mappedManualItemsV81562(question){
+  const index=readManualItemSearchIndexV81535();
+  const normalized=s=>normalizeEquipmentSearchTextV81553(s).replace(/\s+/g,' ').trim();
+  const subject=normalized(String(question||'').replace(/\b(?:manuals?|smp|sop|procedures?|instructions?|maintenance|operation|working|function|details|show|give|find|please|for|of|the|about|how|to|item)\b/gi,' '));
+  if(subject.length<5)return [];
+  const matches=index.items.filter(item=>item.equipment&&item.source_page&&item.source_file&&
+    [item.equipment,...(item.aliases||[]).filter(a=>!/^\s*(?:equipment|manual|lmmm) item \d+/i.test(a))]
+      .some(alias=>{
+        const name=normalized(alias);
+        return name.length>=5&&(subject===name||subject.startsWith(`${name} `)&&/^\d+(?:\s|$)/.test(subject.slice(name.length+1)));
+      }));
+  return [...new Map(matches.map(item=>[item.item_number,item])).values()];
+}
+async function answerMappedManualV81562(from,user,question,module){
+  if(module!=='MANUALS'||!await hasAuthorityV874(user,'VIEW'))return false;
+  // An O&M item is not proof that a separately approved SMP/SOP exists.
+  if(/\b(?:SMP|SOP)\b/i.test(question)&&!/\bmanual\b/i.test(question))return false;
+  const matches=mappedManualItemsV81562(question);
+  if(!matches.length)return false;
+  if(matches.length>1){
+    await sendText(from,`Which O&M item do you mean?\n${matches.slice(0,12).map(x=>`${x.item_number}. ${x.equipment}`).join('\n')}\nSend "Item number" to view its manual.`.slice(0,1000));
+    return true;
+  }
+  const item=matches[0];
+  await answerManualItemNumberV81535(from,user,`item ${item.item_number}`);
+  return true;
+}
 function chargingAssetV81533(question){
   const q=String(question||'');
   const families=[
@@ -4576,6 +4606,7 @@ async function handleUniversalSearchV81513(from,question,user,options={}){
   let module=searchIntentV81524(question,options.module);
   const language=options.language||await searchLanguageV81515(from,question),te=language==='TE';
   if(await answerChargingGridManualV81561(from,user,question,module))return true;
+  if(await answerMappedManualV81562(from,user,question,module))return true;
   if(module==='ALL'&&await showMasterEquipmentChoicesV81539(from,user,question,language))return true;
   const alias=resolveEquipmentAliasV81553(question);
   if(alias?.candidates?.length>1){
@@ -4589,6 +4620,7 @@ async function handleUniversalSearchV81513(from,question,user,options={}){
   if(alias?.candidates?.length===1)question=equipmentAliasQueryV81553(question,alias);
   module=searchIntentV81524(question,options.module);
   if(await answerBloomPusherManualV81560(from,user,question,module))return true;
+  if(await answerMappedManualV81562(from,user,question,module))return true;
   // Do not run drawing-catalog lookups for generic queries: equipment codes
   // such as BP1 previously hijacked history, defect, and inspection searches.
   const drawingSearch=module==='DRAWINGS' || (module==='ALL' && looksLikeDrawingRequestV81535(question));
@@ -5764,4 +5796,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.61 CHARGING GRID MANUAL listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.62 MAPPED O&M SEARCH listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
