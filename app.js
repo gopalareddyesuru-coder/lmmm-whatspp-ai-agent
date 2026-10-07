@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.58 SHIFT CLARIFICATION RETENTION 2026-10-07
+// LMMM AI Maintenance V8.15.60 BP MANUAL BOTH UNITS DATE ORDER 2026-10-07
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -980,7 +980,7 @@ if((a=text.match(/^AUTH_ADV:(\d+)$/))){await sendList(from,'Advanced Authorities
     if(normWA(from)!==u.whatsapp_number) await sendText(from,`${m[1]} registration removed. Maintenance history preserved.`);
     return true;
   }
-  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.15.58');return true;}
+  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.15.60');return true;}
   return false;
 }
 async function hasAuthorityV874(u, authority){
@@ -2797,6 +2797,11 @@ function searchIntentV81524(question,module){
   if(/\b(?:when|eppudu|replaced|changed|repaired|failed|leaked|happened|incident|breakdown)\b/i.test(q))return 'HISTORY';
   return 'ALL';
 }
+function bothBloomPushersV81560(question){
+  const q=String(question||'');
+  return /\b(?:BP|BLOOM\s+PUSHER)[ -]?1\s*(?:\/|,|&|AND|OR)\s*(?:(?:BP|BLOOM\s+PUSHER)[ -]?)?2\b/i.test(q)||
+    /\b(?:BP|BLOOM\s+PUSHER)[ -]?2\s*(?:\/|,|&|AND|OR)\s*(?:(?:BP|BLOOM\s+PUSHER)[ -]?)?1\b/i.test(q);
+}
 function normalizeMaintenanceQueryV81524(question){
   // Correct a small set of widely used names; retain numbered identities as printed.
   let q=normalizeManualAliasesV81535(String(question||'').replace(/\b(?:bloom|blom|boom|bum)[ -]+(?:pusher|puser|pusr|pushr)\b/gi,'bloom pusher')
@@ -3164,7 +3169,8 @@ function rankSearchRowsV81524(rows,request,module){
       if(!/\bBLOOM\s+PUSHER\b/i.test(body)&&!/(?:^|[^a-z0-9])BP[ -]?[12](?:[^a-z0-9]|$)/i.test(body))return false;
       const numbered=body.match(/\b(?:BLOOM\s+PUSHER|BP)[ -]?([12])\b/i)?.[1];
       if(request.bpNumber&&numbered!==request.bpNumber&&
-        !(numbered==null&&/hyd cyl history/i.test(String(row.source||''))))return false;
+        !(numbered==null&&(/hyd cyl history/i.test(String(row.source||''))||
+          module==='MANUALS'&&/1702906388/i.test(String(row.source||''))&&/\bBLOOM\s+PUSHER\b/i.test(body))))return false;
       if(request.furnaceQualifier&&!/\bBLOOM\s+PUSHER\s+IN\s+FRONT\s+OF\s+FURNACE\s*[- ]?[12]\b/i.test(body))return false;
     }
     if(request.date&&row.date&&row.date!==request.date&&!row.searchBody.includes(request.date))return false;
@@ -3223,6 +3229,11 @@ function archiveSubjectV81517(question,request){
 function archiveMatchesV81517(raw,subject,{candidate=false}={}){
   const words=archiveTextV81517(raw),needle=archiveTextV81517(subject);
   if(!words||!needle)return false;
+  const bp=needle.match(/^(?:BLOOM PUSHER|BP) ([12])$/);
+  if(bp){
+    const unit=words.match(/(?:^| )(?:BP|BLOOM PUSHER) ?([12])(?: |$)/)?.[1];
+    return unit===bp[1]; // Never assign an unnumbered BP record to BP-1 or BP-2.
+  }
   if(needle==='STEAM DRUM 1 FURNACE 1'){
     if(!/(?:^| )STEAM DRUM 1(?: |$)/.test(words))return false;
     const furnace=words.match(/(?:^| )FURNACE ([0-9]{1,2})(?: |$)/)?.[1];
@@ -3244,7 +3255,7 @@ function archiveMatchesV81517(raw,subject,{candidate=false}={}){
 function sourceArchiveRowsV81517(question,request,mode='ALL'){
   const archive=readEquipmentArchiveV81517(),subject=archiveSubjectV81517(question,request);
   if(!subject)return [];
-  const maxRows=['JOBS','HISTORY'].includes(mode)?3000:25;
+  const maxRows=['JOBS','HISTORY','DEFECTS'].includes(mode)?3000:25;
   const rows=[];
   function append(kind,items,match,make){
     for(const record of items){
@@ -3293,6 +3304,14 @@ function sourceArchiveRowsV81517(question,request,mode='ALL'){
     x=>archiveMatchesV81517(x.eq,subject)||archiveMatchesV81517(x.subeq,subject),
     x=>({kind:'Source defect (not a new report)',source:`Defects register ${x._record_id}`,
       content:`Equipment: ${x.eq||'unconfirmed'}; sub-equipment: ${x.subeq||'unconfirmed'}; date: ${x.date||'unconfirmed'}; ${x.description||''}; action: ${x.remarks||'unconfirmed'}`,
+      key:`archive:defect:${x._record_id}`}));
+  // A defect register's completed corrective action is also a job. Keep its
+  // original date and record identity, so the same event can be de-duplicated.
+  if(mode==='JOBS'&&rows.length<maxRows)append('defect actions',archive.defects,
+    x=>(archiveMatchesV81517(x.eq,subject)||archiveMatchesV81517(x.subeq,subject))&&
+      /\b(?:replac\w*|chang\w*|repair\w*|rectif\w*|renew\w*|weld\w*|overhaul\w*|attend\w*)\b/i.test(String(x.remarks||'')),
+    x=>({kind:'Source maintenance history',source:`Defects register ${x._record_id}`,
+      content:`Equipment: ${x.eq||'unconfirmed'}; sub-equipment: ${x.subeq||'unconfirmed'}; date: ${x.date||'unconfirmed'}; ${x.description||''}; action: ${x.remarks||''}`,
       key:`archive:defect:${x._record_id}`}));
   return rows;
 }
@@ -3426,7 +3445,7 @@ async function universalSearchV81513(from,user,question,archiveMode='ALL'){
     try{archived=sourceArchiveRowsV81517(question,request,archiveMode);}catch(e){archiveFailure=true;console.error('[EQUIPMENT_SOURCE_ARCHIVE]',e.message);}
   }
   // Each source has a bounded query. A bound reached means the search may have more rows.
-  const truncated=results.some(x=>x.status==='fulfilled'&&[25,41,51,61,81].includes(x.value.length))||archived.length>=(['JOBS','HISTORY'].includes(archiveMode)?3000:25);
+  const truncated=results.some(x=>x.status==='fulfilled'&&[25,41,51,61,81].includes(x.value.length))||archived.length>=(['JOBS','HISTORY','DEFECTS'].includes(archiveMode)?3000:25);
   return {request,rows:[...relevant,...archived],failed:results.every(x=>x.status==='rejected')&&!archived.length,
     truncated,partialFailure:results.some(x=>x.status==='rejected')||archiveFailure};
 }
@@ -3610,7 +3629,8 @@ function filterSearchRowsV81518(rows,module){
       !/format|template|blank form/i.test(kind);
     if(module==='JOBS')return kind==='job_action'||/recorded (job|balancing|alignment)/.test(kind)||kind.startsWith('source maintenance history')||kind.startsWith('source maintenance event')||
       kind.startsWith('source job reference')&&/\b(?:19|20)\d{2}(?:-\d{2}-\d{2})?\b/.test(String(r.content||''));
-    if(module==='DEFECTS')return kind==='defect'||/recorded (defect|breakdown)/.test(kind)||kind.startsWith('source defect');
+    if(module==='DEFECTS')return kind==='defect'||/recorded (defect|breakdown)/.test(kind)||kind.startsWith('source defect')||
+      String(r.key||'').startsWith('bp-mechanical:');
     if(module==='DRAWINGS')return /drawing/.test(kind)||kind==='verified maintenance file'&&/draw|\.tiff?/i.test(src);
     if(module==='MANUALS')return /manual|smp|sop|procedure/.test(kind)&&
       !/\b(?:JOB\s*CARD|JOBCARDNO)\b/i.test(String(r.content||''));
@@ -3635,16 +3655,14 @@ async function handleSearchExportV81518(from,cmd,user){
   if(!(await hasAuthorityV874(user,'VIEW'))||!(await hasAuthorityV874(user,kind))){await sendText(from,'Export permission is not available for your account.');return true;}
   const state=documentSessionValueV81511(await safeSessionV855(from,'MAINT_EXPORT'));
   if(!state?.question||state.expiresAt<Date.now()){await sendText(from,'These results expired. Please search again.');return true;}
-  const result=await universalSearchV81513(from,user,state.question,state.module);
-  let catalog={rows:[],truncated:false};
-  try{catalog=await searchScopedSourceCatalogV81524(from,user,result.request,state.module);}
-  catch(e){console.error('[SEARCH_EXPORT_SOURCE]',e);await sendText(from,'Cannot confirm the full result right now. Please try again.');return true;}
-  let bpRows=[];
-  try{bpRows=await bpHistoryRowsV81526(from,user,result.request,state.module)}
-  catch(e){console.error('[SEARCH_EXPORT_BP]',e);await sendText(from,'Cannot read BP history right now. Please try again.');return true;}
-  let chargingRows=[];
-  try{chargingRows=await chargingHistoryRowsV81533(from,user,state.question,state.module)}
-  catch(e){console.error('[SEARCH_EXPORT_CHARGING]',e);await sendText(from,'Cannot read charging-side history right now. Please try again.');return true;}
+  const request=universalTermsV81513(state.question);
+  const [result,catalog,bpRows,chargingRows]=await Promise.all([
+    universalSearchV81513(from,user,state.question,state.module),
+    searchScopedSourceCatalogV81524(from,user,request,state.module),
+    bpHistoryRowsV81526(from,user,request,state.module),
+    chargingHistoryRowsV81533(from,user,state.question,state.module)
+  ]).catch(e=>{console.error('[SEARCH_EXPORT_SOURCE]',e);return [];});
+  if(!result||!catalog||!bpRows||!chargingRows){await sendText(from,'Cannot confirm the full result right now. Please try again.');return true;}
   result.request.question=state.question;
   const exportRows=dedupeMaintenanceResultsV81537(filterSearchRowsV81518([...result.rows,...catalog.rows,...bpRows,...chargingRows],state.module),result.request);
   const rows=balanceBpMaintenanceRowsV81532(rankSearchRowsV81524(exportRows,result.request,state.module),result.request,state.module);
@@ -3834,7 +3852,7 @@ async function showSearchPageV81522(from,user,more=false){
   const start=more?state.offset||0:0,items=state.items.slice(start,start+20);
   if(!items.length){await sendText(from,'No more matches.');return true;}
   // WhatsApp text messages have a length limit. Keep every result visible, in several messages if needed.
-  let chunk=`Matches ${start+1}–${start+items.length} of ${state.items.length}:`;
+  let chunk=`${state.heading||'Matches'} ${start+1}–${start+items.length} of ${state.items.length}:`;
   for(let i=0;i<items.length;i++){
     const line=`\n${start+i+1}. ${items[i]}`;
     if(chunk.length+line.length>3000){await sendText(from,chunk);chunk='';}
@@ -4384,7 +4402,7 @@ function bpHistoryDateV81526(value){
   return `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
 }
 async function bpHistoryRowsV81526(from,user,request,module){
-  if(!request.bloomPusher||request.furnaceQualifier||!['JOBS','HISTORY','ALL'].includes(module)||
+  if(!request.bloomPusher||request.furnaceQualifier||!['JOBS','HISTORY','DEFECTS','ALL'].includes(module)||
     !canReadDepartmentArchiveV81540(from,user)||!(await hasAuthorityV874(user,'VIEW')))return [];
   const result=await pool.query(`SELECT source_key,source_file,location,source_text FROM lmmm_source_review
     WHERE source_file='CH SIDE HISTORY(2).numbers' AND content_type='JOB_HISTORY' AND location ~ '^sheet:BP:.*row:[0-9]+$'
@@ -4426,7 +4444,7 @@ async function explainBpMechanicalAlongsideDefectsV81530(from,user,request,modul
 }
 function balanceBpMaintenanceRowsV81532(rows,request,module){
   if(!request.bloomPusher||request.date||request.exact||
-    !['JOBS','HISTORY'].includes(module))return rows;
+    !['JOBS','HISTORY','DEFECTS'].includes(module))return rows;
   const mechanical=rows.filter(r=>String(r.key||'').startsWith('bp-mechanical:'));
   const hydraulic=rows.filter(r=>/hyd cyl history/i.test(String(r.source||'')));
   if(!mechanical.length||!hydraulic.length)return rows;
@@ -4497,9 +4515,40 @@ async function answerProductionV81524(from,user,question,language){
   await sendText(from,`${date} production:\n${lines.join('\n')}${result.rows.length>20?`\n${result.rows.length-20} more entries; specify a shift.`:''}`.slice(0,2800));
   return true;
 }
+async function answerBloomPusherManualV81560(from,user,question,module){
+  if(module!=='MANUALS'||!universalTermsV81513(question).bloomPusher||
+    !canReadDepartmentArchiveV81540(from,user)||!(await hasAuthorityV874(user,'VIEW')))return false;
+  const r=await pool.query(`SELECT location,source_text FROM lmmm_source_review
+    WHERE source_file='1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf'
+      AND location=ANY($1::text[]) AND content_type='GENERAL_SOURCE'`,
+    [['page:110','page:111','page:112','page:114']]);
+  const pages=new Map(r.rows.map(x=>[x.location,String(x.source_text||'')]));
+  if(!/bloom pusher/i.test(pages.get('page:110')||'')||
+     !/carriages/i.test(pages.get('page:111')||'')||
+     !/greas/i.test(pages.get('page:114')||''))return false;
+  const unit=bothBloomPushersV81560(question)?'BP-1 and BP-2':
+    universalTermsV81513(question).bpNumber?`BP-${universalTermsV81513(question).bpNumber}`:'BP-1 and BP-2';
+  await sendText(from,`Bloom Pusher manual (${unit}):\n• Function: Moves blooms from the furnace approach roller table onto the furnace fixed beams.\n• Design: Two carriages driven by hydraulic cylinders.\n• Maintenance: Grease wheels and bearings; check bolts, cylinder seals and hoses. Isolate operating drives before work.\nThe manual describes both units; it does not identify a separate BP-1 or BP-2 SMP.`);
+  return true;
+}
+function sortMaintenanceRowsByDateV81560(rows,module){
+  if(!['JOBS','DEFECTS','HISTORY'].includes(module))return rows;
+  const date=row=>String(row.date||row.content?.match(/\b(?:19|20)\d{2}-\d{2}-\d{2}\b/)?.[0]||'');
+  return rows.map((row,index)=>({row,index})).sort((a,b)=>date(b.row).localeCompare(date(a.row))||a.index-b.index).map(x=>x.row);
+}
 async function handleUniversalSearchV81513(from,question,user,options={}){
   if(!(await hasAuthorityV874(user,'VIEW'))){await sendText(from,'Search access is not enabled for your account.');return true;}
-  question=normalizeMaintenanceQueryV81524(question);
+  const bothBp=bothBloomPushersV81560(question);
+  if(bothBp&&(!options.module||options.module==='ALL')&&
+    searchIntentV81524(question)==='ALL'){
+    await saveDocumentSessionV81511(from,'MAINT_SEARCH_FLOW',
+      {query:'bloom pusher',names:['BP-1','BP-2'],selected:'',expiresAt:Date.now()+30*60000});
+    await sendList(from,'Choose a bloom pusher or search both.','Choose',[
+      {id:'MAINT_ASSET:0',title:'BP-1'},{id:'MAINT_ASSET:1',title:'BP-2'},
+      {id:'MAINT_ASSET:ALL',title:'Both bloom pushers'}],'Equipment');return true;
+  }
+  question=normalizeMaintenanceQueryV81524(bothBp?
+    String(question).replace(/\b(?:BP|BLOOM\s+PUSHER)[ -]?[12]\s*(?:\/|,|&|AND|OR)\s*(?:(?:BP|BLOOM\s+PUSHER)[ -]?)?[12]\b/i,'bloom pusher'):question);
   if(await answerChargingEquipmentCountV81533(from,question))return true;
   let module=searchIntentV81524(question,options.module);
   const language=options.language||await searchLanguageV81515(from,question),te=language==='TE';
@@ -4515,6 +4564,7 @@ async function handleUniversalSearchV81513(from,question,user,options={}){
   }
   if(alias?.candidates?.length===1)question=equipmentAliasQueryV81553(question,alias);
   module=searchIntentV81524(question,options.module);
+  if(await answerBloomPusherManualV81560(from,user,question,module))return true;
   // Do not run drawing-catalog lookups for generic queries: equipment codes
   // such as BP1 previously hijacked history, defect, and inspection searches.
   const drawingSearch=module==='DRAWINGS' || (module==='ALL' && looksLikeDrawingRequestV81535(question));
@@ -4523,24 +4573,35 @@ async function handleUniversalSearchV81513(from,question,user,options={}){
   if(drawingSearch&&await searchDrawingCatalogV81522(from,question,user))return true;
   if((!options.module||['JOBS','HISTORY','DEFECTS'].includes(options.module))&&await answerIncidentArchiveV81523(from,user,question,language))return true;
   if(module==='PRODUCTION'&&await answerProductionV81524(from,user,question,language))return true;
-  const {request,rows:allRows,failed,partialFailure,truncated}=await universalSearchV81513(from,user,question,module);
+  const initialRequest=universalTermsV81513(question);
+  // These lookups are independent. Run them together to avoid stacking
+  // database round trips on every WhatsApp search.
+  const [mainResult,catalogResult,bpResult,chargingResult]=await Promise.allSettled([
+    universalSearchV81513(from,user,question,module),
+    searchScopedSourceCatalogV81524(from,user,initialRequest,module),
+    bpHistoryRowsV81526(from,user,initialRequest,module),
+    chargingHistoryRowsV81533(from,user,question,module)
+  ]);
+  if(mainResult.status==='rejected'){
+    console.error('[UNIVERSAL_SEARCH]',mainResult.reason);
+    await sendText(from,'Search is temporarily unavailable. Please try again.');return true;
+  }
+  const {request,rows:allRows,failed,partialFailure,truncated}=mainResult.value;
   if(!request.primary){await sendText(from,te?'ఏ equipment, number, part లేదా విషయం గురించి వెతకాలో చెప్పండి.':'Specify an equipment, number, part or subject to search.');return true;}
   let catalog={rows:[],truncated:false},catalogFailed=false;
-  try{catalog=await searchScopedSourceCatalogV81524(from,user,request,module)}
-  catch(e){catalogFailed=true;console.error('[SCOPED_SOURCE_CATALOG]',e.message);}
-  let bpRows=[];
-  try{bpRows=await bpHistoryRowsV81526(from,user,request,module)}
-  catch(e){catalogFailed=true;console.error('[BP_HISTORY]',e.message);}
-  let chargingRows=[];
-  try{chargingRows=await chargingHistoryRowsV81533(from,user,question,module)}
-  catch(e){catalogFailed=true;console.error('[CHARGING_HISTORY]',e.message);}
+  if(catalogResult.status==='fulfilled')catalog=catalogResult.value;
+  else{catalogFailed=true;console.error('[SCOPED_SOURCE_CATALOG]',catalogResult.reason);}
+  const bpRows=bpResult.status==='fulfilled'?bpResult.value:[];
+  if(bpResult.status==='rejected'){catalogFailed=true;console.error('[BP_HISTORY]',bpResult.reason);}
+  const chargingRows=chargingResult.status==='fulfilled'?chargingResult.value:[];
+  if(chargingResult.status==='rejected'){catalogFailed=true;console.error('[CHARGING_HISTORY]',chargingResult.reason);}
   request.question=question;
   const scopedRows=dedupeMaintenanceResultsV81537(filterSearchRowsV81518([...allRows,...catalog.rows,...bpRows,...chargingRows],module),request);
-  const rows=balanceBpMaintenanceRowsV81532(rankSearchRowsV81524(scopedRows,request,module).filter(r=>{
+  const rows=sortMaintenanceRowsByDateV81560(balanceBpMaintenanceRowsV81532(rankSearchRowsV81524(scopedRows,request,module).filter(r=>{
     if(module==='JOBS'&&/^Source maintenance history/i.test(r.kind)&&
       !/\b(?:19|20)\d{2}(?:-\d{2}-\d{2})?\b/.test(r.content))return false;
     return true;
-  }),request,module);
+  }),request,module),module);
   const incomplete=partialFailure||catalogFailed;
   // The generic archive lookup is capped at 25 rows. For Bloom Pusher jobs
   // the dedicated dated source catalogue and BP sheet cover the raw records.
@@ -4620,7 +4681,9 @@ async function handleUniversalSearchV81513(from,question,user,options={}){
       const item=readableSearchItemV81522(row,request),key=item.toUpperCase().replace(/[^A-Z0-9]+/g,'');
       if(!key||seen.has(key))continue;seen.add(key);items.push(item);
     }
-    await saveDocumentSessionV81511(from,'MAINT_RESULT_PAGE',{items,offset:0,expiresAt:Date.now()+30*60000});
+    const heading=module==='DEFECTS'&&rows.some(r=>String(r.key||'').startsWith('bp-mechanical:'))?
+      'Defects and related work (guide-wheel causes unrecorded)':'Matches';
+    await saveDocumentSessionV81511(from,'MAINT_RESULT_PAGE',{items,heading,offset:0,expiresAt:Date.now()+30*60000});
     await showSearchPageV81522(from,user);
     if(items.length>20&&!limited&&!incomplete&&await hasAuthorityV874(user,'PDF')){
       const pack={document_type:'SEARCH_RESULTS',simple_search_results:true,extracted_items:items.map((x,i)=>({item_no:i+1,description:x}))};
@@ -5629,8 +5692,8 @@ Shift: ${u.shift||'-'}`,[{id:'REMOVE_ME_CONFIRM',title:'Remove Me'},{id:'ACCOUNT
 }
 
 app.get('/health', async (_req,res)=>{
-  try{await pool.query('SELECT 1');res.json({ok:true,version:'8.15.58',phase:'shift-clarification-retention',db:true});}
-  catch(e){res.status(500).json({ok:false,version:'8.15.58',error:e.message});}
+  try{await pool.query('SELECT 1');res.json({ok:true,version:'8.15.60',phase:'bp-manual-both-units-date-order',db:true});}
+  catch(e){res.status(500).json({ok:false,version:'8.15.60',error:e.message});}
 });
 app.get('/webhook',(req,res)=>{
   const mode=req.query['hub.mode'], token=req.query['hub.verify_token'], challenge=req.query['hub.challenge'];
@@ -5677,4 +5740,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.58 SHIFT CLARIFICATION RETENTION listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.60 BP MANUAL BOTH UNITS DATE ORDER listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
