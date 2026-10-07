@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.60 BP MANUAL BOTH UNITS DATE ORDER 2026-10-07
+// LMMM AI Maintenance V8.15.61 CHARGING GRID MANUAL 2026-10-07
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -980,7 +980,7 @@ if((a=text.match(/^AUTH_ADV:(\d+)$/))){await sendList(from,'Advanced Authorities
     if(normWA(from)!==u.whatsapp_number) await sendText(from,`${m[1]} registration removed. Maintenance history preserved.`);
     return true;
   }
-  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.15.60');return true;}
+  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.15.61');return true;}
   return false;
 }
 async function hasAuthorityV874(u, authority){
@@ -3526,6 +3526,13 @@ async function showMasterEquipmentChoicesV81539(from,user,question,language){
   if(!await hasAuthorityV874(user,'VIEW'))return false;
   const request=universalTermsV81513(question);
   if(!bareAssetQuestionV81515(question,request)||!request.primary||request.exact)return false;
+  const grid=String(question).match(/\b(?:CH(?:ARGING)?|CHAR\.?)\s*[- ]?GRIDS?\s*[- ]?([123])\b/i);
+  if(grid){
+    const selected=`Charging Grid-${grid[1]}`;
+    await saveDocumentSessionV81511(from,'MAINT_SEARCH_FLOW',
+      {query:question,names:[selected],selected,expiresAt:Date.now()+30*60000});
+    await showAssetModulesV81515(from,selected,language);return true;
+  }
   const resolution=resolveEquipmentAliasV81553(question);
   if(!resolution||!resolution.candidates.length){
     const needle=archiveTextV81517(request.primary);
@@ -4531,6 +4538,21 @@ async function answerBloomPusherManualV81560(from,user,question,module){
   await sendText(from,`Bloom Pusher manual (${unit}):\n• Function: Moves blooms from the furnace approach roller table onto the furnace fixed beams.\n• Design: Two carriages driven by hydraulic cylinders.\n• Maintenance: Grease wheels and bearings; check bolts, cylinder seals and hoses. Isolate operating drives before work.\nThe manual describes both units; it does not identify a separate BP-1 or BP-2 SMP.`);
   return true;
 }
+async function answerChargingGridManualV81561(from,user,question,module){
+  if(module!=='MANUALS'||!chargingAssetV81533(question)?.name?.startsWith('Charging grids')||
+    !canReadDepartmentArchiveV81540(from,user)||!(await hasAuthorityV874(user,'VIEW')))return false;
+  const r=await pool.query(`SELECT location,source_text FROM lmmm_source_review
+    WHERE source_file='1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf'
+      AND location=ANY($1::text[]) AND content_type='GENERAL_SOURCE'`,
+    [['page:6','page:7','page:10','page:11']]);
+  const pages=new Map(r.rows.map(x=>[x.location,String(x.source_text||'')]));
+  if(!/three charging grids/i.test(pages.get('page:6')||'')||
+     !/rope transfer trains/i.test(pages.get('page:7')||'')||
+     !/maintenance and lubrication/i.test(pages.get('page:11')||''))return false;
+  const grid=String(question).match(/\b(?:CH(?:ARGING)?|CHAR\.?)\s*[- ]?GRIDS?\s*[- ]?([123])\b/i)?.[1];
+  await sendText(from,`Charging Grid${grid?`-${grid}`:'s'} manual:\n• Function: Stores blooms before furnace charging.\n• Design: Three carrier lanes, three rope transfer trains and a lineshaft with rope drums.\n• Maintenance: Check gear unit oil and folding dog alignment; follow the manual's lubrication and oil-change instructions.\nThis section covers all three grids; it does not identify a separate SMP for Grid-${grid||'1/2/3'}.`);
+  return true;
+}
 function sortMaintenanceRowsByDateV81560(rows,module){
   if(!['JOBS','DEFECTS','HISTORY'].includes(module))return rows;
   const date=row=>String(row.date||row.content?.match(/\b(?:19|20)\d{2}-\d{2}-\d{2}\b/)?.[0]||'');
@@ -4538,6 +4560,7 @@ function sortMaintenanceRowsByDateV81560(rows,module){
 }
 async function handleUniversalSearchV81513(from,question,user,options={}){
   if(!(await hasAuthorityV874(user,'VIEW'))){await sendText(from,'Search access is not enabled for your account.');return true;}
+  if(await answerChargingGridManualV81561(from,user,question,searchIntentV81524(question,options.module)))return true;
   const bothBp=bothBloomPushersV81560(question);
   if(bothBp&&(!options.module||options.module==='ALL')&&
     searchIntentV81524(question)==='ALL'){
@@ -4552,6 +4575,7 @@ async function handleUniversalSearchV81513(from,question,user,options={}){
   if(await answerChargingEquipmentCountV81533(from,question))return true;
   let module=searchIntentV81524(question,options.module);
   const language=options.language||await searchLanguageV81515(from,question),te=language==='TE';
+  if(await answerChargingGridManualV81561(from,user,question,module))return true;
   if(module==='ALL'&&await showMasterEquipmentChoicesV81539(from,user,question,language))return true;
   const alias=resolveEquipmentAliasV81553(question);
   if(alias?.candidates?.length>1){
@@ -5692,8 +5716,8 @@ Shift: ${u.shift||'-'}`,[{id:'REMOVE_ME_CONFIRM',title:'Remove Me'},{id:'ACCOUNT
 }
 
 app.get('/health', async (_req,res)=>{
-  try{await pool.query('SELECT 1');res.json({ok:true,version:'8.15.60',phase:'bp-manual-both-units-date-order',db:true});}
-  catch(e){res.status(500).json({ok:false,version:'8.15.60',error:e.message});}
+  try{await pool.query('SELECT 1');res.json({ok:true,version:'8.15.61',phase:'charging-grid-manual',db:true});}
+  catch(e){res.status(500).json({ok:false,version:'8.15.61',error:e.message});}
 });
 app.get('/webhook',(req,res)=>{
   const mode=req.query['hub.mode'], token=req.query['hub.verify_token'], challenge=req.query['hub.challenge'];
@@ -5740,4 +5764,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.60 BP MANUAL BOTH UNITS DATE ORDER listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.61 CHARGING GRID MANUAL listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
