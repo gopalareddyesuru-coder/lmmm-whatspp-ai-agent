@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.68 SEARCH ACTION ROUTING 2026-10-08
+// LMMM AI Maintenance V8.15.69 BP REFERENCE RETRIEVAL 2026-10-08
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -980,7 +980,7 @@ if((a=text.match(/^AUTH_ADV:(\d+)$/))){await sendList(from,'Advanced Authorities
     if(normWA(from)!==u.whatsapp_number) await sendText(from,`${m[1]} registration removed. Maintenance history preserved.`);
     return true;
   }
-  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.15.68');return true;}
+  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.15.69');return true;}
   return false;
 }
 async function hasAuthorityV874(u, authority){
@@ -4650,6 +4650,59 @@ function datedMaintenanceJobV81564(row,module){
   if(module!=='JOBS'||!/^Source maintenance history/i.test(String(row.kind||'')))return true;
   return /\b(?:19|20)\d{2}-\d{2}-\d{2}\b/.test(String(row.date||'')+' '+String(row.content||''));
 }
+async function answerBloomPusherReferencesV81569(from,user,question,module){
+  if(!['PARTS','SPARES','FORMATS'].includes(module)||
+    !/\b(?:BLOOM\s+PUSHER|BP)[ -]?[12]?\b/i.test(question)||
+    !canReadDepartmentArchiveV81540(from,user)||!(await hasAuthorityV874(user,'VIEW')))return false;
+  const unit=String(question).match(/\b(?:BLOOM\s+PUSHER|BP)[ -]?([12])\b/i)?.[1];
+  const name=unit?`Bloom Pusher ${unit}`:'Bloom Pushers';
+  if(module==='FORMATS'){
+    const result=await pool.query(`SELECT source_text FROM lmmm_source_review
+      WHERE source_file='BDM FORMATS(2).numbers' AND content_type='GENERAL_SOURCE'
+        AND location ~ '^sheet:CH SIDE INSP:.*row:(48|49|50|51|52|53|54)$'
+      ORDER BY (substring(location from 'row:([0-9]+)'))::int`);
+    if(!result.rows.some(x=>/BLOOM PUSHER.*PUSHER 1.*PUSHER 2/i.test(x.source_text)))return false;
+    const checks=result.rows.map(x=>String(x.source_text||'').split('|')[1]?.trim())
+      .filter(x=>/^CHECK FOR|^ANY OTHER POINTS/i.test(x));
+    if(!checks.length)return false;
+    await sendText(from,`*${name} · Inspection check sheet*\n`+
+      `Separate columns: Pusher 1 / Pusher 2, Car 1 / Car 2.\n\n`+
+      checks.map((x,i)=>`${i+1}. ${x.replace(/^CHECK FOR\s+/i,'').replace(/\s*\(12 NOS\)/i,' (12 nos.)')}`).join('\n')+
+      `\n\nBlank check sheet; no inspection result is recorded here.`);
+    return true;
+  }
+  const result=await pool.query(`SELECT location,source_text FROM lmmm_source_review
+    WHERE source_file='BDM SPARES(2).numbers' AND content_type='SPARES_PARTS'
+      AND source_text ILIKE '%BLOOM%PUSHER%'
+      AND location ~ '^sheet:(FAST MOVING|LMMM SPARES|BEARINGS|BOLTS|CH SIDE FASTNERS|SAP LMMM SPARES):'
+    ORDER BY CASE WHEN location ~ '^sheet:FAST MOVING:' THEN 0
+      WHEN location ~ '^sheet:LMMM SPARES:' THEN 1
+      WHEN location ~ '^sheet:BOLTS:' THEN 2 ELSE 3 END,location LIMIT 80`);
+  const items=[],seen=new Set();
+  for(const row of result.rows){
+    const cells=String(row.source_text||'').split('|').map(x=>x.trim());
+    const loc=String(row.location||'');let description='',code='';
+    if(/sheet:FAST MOVING:/.test(loc)){description=cells[2]||'';code=cells[3]||'';}
+    else if(/sheet:LMMM SPARES:/.test(loc)){description=cells[1]||'';code=cells[2]||'';}
+    else if(/sheet:BOLTS:|sheet:CH SIDE FASTNERS:/.test(loc))description=[cells[2],cells[3],cells[4]].filter(Boolean).join(' · ');
+    else if(/sheet:BEARINGS:/.test(loc))description=[cells[3],'bearing'].filter(Boolean).join(' ');
+    else if(/sheet:SAP LMMM SPARES:/.test(loc))description=cells[3]||'';
+    description=description.replace(/\bFOR BLOOM PUSHER(?:S)?\b/gi,'').replace(/\bBLOOM PUSHER\b/gi,'')
+      .replace(/\s+/g,' ').replace(/^[,;\s]+|[,;\s]+$/g,'').slice(0,135);
+    code=/^\d{8,}(?:\.0)?$/.test(code)?code.replace(/\.0$/,''):'';
+    if(!description||description.length<5)continue;
+    const signature=description.toUpperCase().replace(/[^A-Z0-9]/g,'');
+    if(seen.has(signature))continue;seen.add(signature);
+    items.push(`${description}${code?` · Code ${code}`:''}`);
+  }
+  if(!items.length)return false;
+  const shown=items.slice(0,20);
+  await sendText(from,`*${name} · ${module==='SPARES'?'Spare references':'Parts'}*\n`+
+    `These references name the Bloom Pusher family; BP-${unit||'1/2'} assignment and current stock are not confirmed.\n\n`+
+    shown.map((x,i)=>`${i+1}. ${x}`).join('\n')+
+    (items.length>shown.length?`\n\n${items.length-shown.length} more references; specify the part name.`:''));
+  return true;
+}
 async function handleUniversalSearchV81513(from,question,user,options={}){
   if(!(await hasAuthorityV874(user,'VIEW'))){await sendText(from,'Search access is not enabled for your account.');return true;}
   if(await answerChargingGridManualV81561(from,user,question,searchIntentV81524(question,options.module)))return true;
@@ -4667,6 +4720,7 @@ async function handleUniversalSearchV81513(from,question,user,options={}){
   if(await answerChargingEquipmentCountV81533(from,question))return true;
   let module=searchIntentV81524(question,options.module);
   const language=options.language||await searchLanguageV81515(from,question),te=language==='TE';
+  if(await answerBloomPusherReferencesV81569(from,user,question,module))return true;
   if(await answerChargingGridManualV81561(from,user,question,module))return true;
   if(await answerMappedManualV81562(from,user,question,module))return true;
   if(module==='ALL'&&await showMasterEquipmentChoicesV81539(from,user,question,language))return true;
@@ -4727,6 +4781,8 @@ async function handleUniversalSearchV81513(from,question,user,options={}){
   if(!rows.length){if(module==='JOBS'&&await datedJobReferencesV81538(from,user,request,language))return true;
     if(module==='DRAWINGS'&&await showUnlinkedDrawingRefsV81516(from,request.exact||request.primary,user))return true;
     if(module==='ALL'&&await proposeSearchCorrectionV81515(from,question,user))return true;
+    if(module==='PERMITS'&&request.bloomPusher){await sendText(from,
+      `No recorded isolation permit for ${request.bpNumber?`BP-${request.bpNumber}`:'the Bloom Pushers'} is available in your accessible records. Obtain the approved equipment-specific permit before work.`);return true;}
     await sendText(from,te?`${request.primary}: అందుబాటులో ఉన్న, మీకు అనుమతి ఉన్న డేటాలో ఆధారం దొరకలేదు. నిర్ధారించలేను.`:
     `${request.primary}: No matching ${module==='JOBS'?'dated job record':module==='ALL'?'record':module.toLowerCase()+' record'} in data you can access.`);return true;}
   if(module==='ALL'&&bareAssetQuestionV81515(question,request)){
@@ -5857,4 +5913,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.68 SEARCH ACTION ROUTING listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.69 BP REFERENCE RETRIEVAL listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
