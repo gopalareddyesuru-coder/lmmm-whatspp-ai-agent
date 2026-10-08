@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.67 READABLE RESULTS 2026-10-08
+// LMMM AI Maintenance V8.15.68 SEARCH ACTION ROUTING 2026-10-08
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -980,7 +980,7 @@ if((a=text.match(/^AUTH_ADV:(\d+)$/))){await sendList(from,'Advanced Authorities
     if(normWA(from)!==u.whatsapp_number) await sendText(from,`${m[1]} registration removed. Maintenance history preserved.`);
     return true;
   }
-  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.15.67');return true;}
+  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.15.68');return true;}
   return false;
 }
 async function hasAuthorityV874(u, authority){
@@ -2136,7 +2136,8 @@ function tablePdfV880(pack,source){
   const weights=cols.map(k=>k==='item_no'?0.45:k==='event_date'?1.15:
     k==='equipment'?2.35:k==='identifier'?2.0:/description|action|remarks/.test(k)?3.6:1.2);
   const total=weights.reduce((a,b)=>a+b,0),cw=weights.map(x=>usable*x/total);
-  const charCaps=cw.map(w=>Math.max(5,Math.floor((w-14)/(fontSize*0.53))));
+  // Helvetica uppercase technical text is wider than mixed-case prose.
+  const charCaps=cw.map(w=>Math.max(5,Math.floor((w-18)/(fontSize*0.63))));
   const headerH=30,titleH=86,footerH=34,maxBody=H-margin-titleH-headerH-footerH;
   const pages=[];let current=[],used=0;
   const body=rows.length?rows:[{description:pack.document_summary||pack.full_text||'No structured rows'}];
@@ -4889,7 +4890,7 @@ async function handleDocumentQuestionV81511(from,text,cmd,user){
     await sendText(from,`📐 ${d.drawing_number||d.filename} — ${drawingShortDescriptionV81536(d)}\nImage temporarily unavailable.\n🔗 ${d.drive_url||''}`.slice(0,1000));return;
   }
   if(/^MAINT_EXPORT:(PDF|EXCEL)$/.test(cmd)){await handleSearchExportV81518(from,cmd,user);return;}
-  if(/^MAINT_(?:DRAW_MORE|RESULT_MORE|ASSET:(?:ALL|[0-7])|MOD:(?:HISTORY|JOBS|DEFECTS|DRAWINGS|PARTS|SPARES|MANUALS|INSPECTION|CBM|FORMATS|PERMITS|MORE|ALL)|SUGGEST:(?:SHOW|CANCEL))$/.test(cmd)){
+  if(/^MAINT_(?:DRAW_MORE|RESULT_MORE|ASSET:(?:ALL|[0-7])|MOD:(?:HISTORY|JOBS|DEFECTS|VIBRATIONS|LOADS|DRAWINGS|PARTS|SPARES|MANUALS|INSPECTION|CBM|FORMATS|PERMITS|MORE|ALL)|SUGGEST:(?:SHOW|CANCEL))$/.test(cmd)){
     await handleSearchChoiceV81515(from,cmd,user);return;
   }
   if(cmd==='MENU_SEARCH'){await saveDocumentSessionV81511(from,'DOC_QA_CONTEXT',{mode:true,expiresAt:Date.now()+30*60000});await sendText(from,'Ask about equipment, jobs, history, inspection, condition monitoring, parts, spares, drawings, manuals, formats or permits.');return;}
@@ -5542,7 +5543,7 @@ async function processMessage(from,text,payload=''){
   // Ask a document question before the employee-name directory catches natural phrases.
   const qaContext=documentSessionValueV81511(await safeSessionV855(from,'DOC_QA_CONTEXT'));
   const qaSelection=/^DOC_QA_SELECT:(stored|pending):\d+$/.test(cmd)||/^DRAWING_(?:MEDIA:\d+|PAGE:\d+|RESULTS:(?:WHATSAPP|EXCEL))$/.test(cmd)||/^MAINT_EXPORT:(PDF|EXCEL)$/.test(cmd)||
-    /^MAINT_(?:DRAW_MORE|RESULT_MORE|ASSET:(?:ALL|[0-7])|MOD:(?:HISTORY|JOBS|DEFECTS|DRAWINGS|PARTS|SPARES|MANUALS|INSPECTION|CBM|FORMATS|PERMITS|MORE|ALL)|SUGGEST:(?:SHOW|CANCEL))$/.test(cmd);
+    /^MAINT_(?:DRAW_MORE|RESULT_MORE|ASSET:(?:ALL|[0-7])|MOD:(?:HISTORY|JOBS|DEFECTS|VIBRATIONS|LOADS|DRAWINGS|PARTS|SPARES|MANUALS|INSPECTION|CBM|FORMATS|PERMITS|MORE|ALL)|SUGGEST:(?:SHOW|CANCEL))$/.test(cmd);
   const qaFreeText=!payload&&(looksLikeDrawingRequestV81535(text)||drawingNameIntentV81535(text)||documentQuestionIntentV81511(text)||
     (qaContext?.mode && qaContext.expiresAt>Date.now() && !/^(hi|hello|hey|start|back|search|version|menu|add entry|store data|check status|retry extraction|my account|my details|contact details|profile|remove me|exit|quit)$/i.test(cmd) && (!/^\d{6}$/.test(cmd)) && !/^[A-Z][a-z.'-]+(?: [A-Z][a-z.'-]+){1,2}$/.test(cmd)));
   // A bare equipment/part name can look exactly like an employee's name.
@@ -5856,4 +5857,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.67 READABLE RESULTS listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.68 SEARCH ACTION ROUTING listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
