@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.63 BP UNIT SEARCH 2026-10-08
+// LMMM AI Maintenance V8.15.65 BP FAMILY HYDRAULICS 2026-10-08
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -980,7 +980,7 @@ if((a=text.match(/^AUTH_ADV:(\d+)$/))){await sendList(from,'Advanced Authorities
     if(normWA(from)!==u.whatsapp_number) await sendText(from,`${m[1]} registration removed. Maintenance history preserved.`);
     return true;
   }
-  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.15.63');return true;}
+  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.15.65');return true;}
   return false;
 }
 async function hasAuthorityV874(u, authority){
@@ -3198,10 +3198,11 @@ function rankSearchRowsV81524(rows,request,module){
       const body=row.searchBody;
       if(!/\bBLOOM\s+PUSHER\b/i.test(body)&&!/(?:^|[^a-z0-9])BP[ -]?[12](?:[^a-z0-9]|$)/i.test(body))return false;
       const numbered=body.match(/\b(?:BLOOM\s+PUSHER|BP)[ -]?([12])\b/i)?.[1];
-      // An unnumbered hydraulic record belongs to the Bloom Pusher family,
-      // but its BP-1/BP-2 unit is not established. Keep it out of unit searches.
+      // Include family-level hydraulic history, clearly labelled at display,
+      // without asserting that an unnumbered source belongs to this BP unit.
       if(request.bpNumber&&numbered!==request.bpNumber&&
-        !(numbered==null&&module==='MANUALS'&&/1702906388/i.test(String(row.source||''))&&
+        !(numbered==null&&(/hyd cyl history/i.test(String(row.source||''))||
+          module==='MANUALS'&&/1702906388/i.test(String(row.source||'')))&&
           /\bBLOOM\s+PUSHER\b/i.test(body)))return false;
       if(request.furnaceQualifier&&!/\bBLOOM\s+PUSHER\s+IN\s+FRONT\s+OF\s+FURNACE\s*[- ]?[12]\b/i.test(body))return false;
     }
@@ -3704,7 +3705,9 @@ async function handleSearchExportV81518(from,cmd,user){
   if(!result||!catalog||!bpRows||!chargingRows){await sendText(from,'Cannot confirm the full result right now. Please try again.');return true;}
   result.request.question=state.question;
   const exportRows=dedupeMaintenanceResultsV81537(filterSearchRowsV81518([...result.rows,...catalog.rows,...bpRows,...chargingRows],state.module),result.request);
-  const rows=balanceBpMaintenanceRowsV81532(rankSearchRowsV81524(exportRows,result.request,state.module),result.request,state.module);
+  const rows=sortMaintenanceRowsByDateV81560(balanceBpMaintenanceRowsV81532(
+    rankSearchRowsV81524(exportRows,result.request,state.module)
+      .filter(r=>datedMaintenanceJobV81564(r,state.module)),result.request,state.module),state.module);
   const scopedBpArchive=canReadDepartmentArchiveV81540(from,user)&&result.request.bloomPusher&&!result.request.furnaceQualifier&&
     ['ALL','JOBS','HISTORY','DEFECTS'].includes(state.module);
   if(result.failed||result.partialFailure||(!scopedBpArchive&&result.truncated)||catalog.truncated||!rows.length||rows.length>1000){
@@ -4498,12 +4501,11 @@ function balanceBpMaintenanceRowsV81532(rows,request,module){
 function correctKnownBpLocationV81549(row,request={}){
   const content=String(row?.content||'');
   const hasBp1=/\b(?:BP\s*[- ]?1|BLOOM\s+PUSHER\s+(?:BP\s*[- ]?1|1))\b/i.test(`${content} ${row?.title||''} ${row?.source||''}`);
-  const requestedBp1=request.bloomPusher&&request.bpNumber==='1';
   const hasBp2=/\b(?:BP\s*[- ]?2|BLOOM\s+PUSHER\s+(?:BP\s*[- ]?2|2))\b/i.test(`${content} ${row?.title||''} ${row?.source||''}`);
   // The approved equipment mapping is BP-1 → Cellar-1. Apply it only to BP-1
-  // results (or an explicitly scoped BP-1 search), and only to the display/search copy.
-  const relatedBp=/\bBLOOM\s+PUSHER\b/i.test(`${content} ${row?.title||''} ${row?.source||''}`);
-  if(!(hasBp1||(requestedBp1&&relatedBp))||hasBp2||!/\bCELLAR\s*(?:[:=]\s*)?[- ]?5\b/i.test(content))return row;
+  // results, and only to the display/search copy. Unassigned family records
+  // cannot inherit BP-1's location merely because the user searched BP-1.
+  if(!hasBp1||hasBp2||!/\bCELLAR\s*(?:[:=]\s*)?[- ]?5\b/i.test(content))return row;
   return {...row,content:content.replace(/\b(CELLAR\s*[:=]\s*)[- ]?5\b/gi,(_,prefix)=>`${prefix}1`)
     .replace(/\bCELLAR\s*[- ]?5\b/gi,'Cellar-1')};
 }
@@ -4590,6 +4592,10 @@ function sortMaintenanceRowsByDateV81560(rows,module){
   const date=row=>String(row.date||row.content?.match(/\b(?:19|20)\d{2}-\d{2}-\d{2}\b/)?.[0]||'');
   return rows.map((row,index)=>({row,index})).sort((a,b)=>date(b.row).localeCompare(date(a.row))||a.index-b.index).map(x=>x.row);
 }
+function datedMaintenanceJobV81564(row,module){
+  if(module!=='JOBS'||!/^Source maintenance history/i.test(String(row.kind||'')))return true;
+  return /\b(?:19|20)\d{2}-\d{2}-\d{2}\b/.test(String(row.date||'')+' '+String(row.content||''));
+}
 async function handleUniversalSearchV81513(from,question,user,options={}){
   if(!(await hasAuthorityV874(user,'VIEW'))){await sendText(from,'Search access is not enabled for your account.');return true;}
   if(await answerChargingGridManualV81561(from,user,question,searchIntentV81524(question,options.module)))return true;
@@ -4655,11 +4661,8 @@ async function handleUniversalSearchV81513(from,question,user,options={}){
   if(chargingResult.status==='rejected'){catalogFailed=true;console.error('[CHARGING_HISTORY]',chargingResult.reason);}
   request.question=question;
   const scopedRows=dedupeMaintenanceResultsV81537(filterSearchRowsV81518([...allRows,...catalog.rows,...bpRows,...chargingRows],module),request);
-  const rows=sortMaintenanceRowsByDateV81560(balanceBpMaintenanceRowsV81532(rankSearchRowsV81524(scopedRows,request,module).filter(r=>{
-    if(module==='JOBS'&&/^Source maintenance history/i.test(r.kind)&&
-      !/\b(?:19|20)\d{2}(?:-\d{2}-\d{2})?\b/.test(r.content))return false;
-    return true;
-  }),request,module),module);
+  const rows=sortMaintenanceRowsByDateV81560(balanceBpMaintenanceRowsV81532(rankSearchRowsV81524(scopedRows,request,module)
+    .filter(r=>datedMaintenanceJobV81564(r,module)),request,module),module);
   const incomplete=partialFailure||catalogFailed;
   // The generic archive lookup is capped at 25 rows. For Bloom Pusher jobs
   // the dedicated dated source catalogue and BP sheet cover the raw records.
@@ -4732,14 +4735,16 @@ async function handleUniversalSearchV81513(from,question,user,options={}){
     }catch(e){console.error('[MANUAL_SEARCH_BRIEF]',e.message);}
     await sendText(from,`${request.primary}: Relevant manual excerpts were found, but a reliable summary is temporarily unavailable.`);return true;
   }
-  if(!strong&&rows.length>8){
+  if(!strong&&(rows.length>8||module==='JOBS'&&request.bpNumber&&request.bloomPusher)){
     const items=[],seen=new Set();
     for(const row of rows){
       if(/source line|source reference \(mapping unconfirmed\)|equipment master/i.test(row.kind)&&module==='JOBS')continue;
       const item=readableSearchItemV81522(row,request),key=item.toUpperCase().replace(/[^A-Z0-9]+/g,'');
       if(!key||seen.has(key))continue;seen.add(key);items.push(item);
     }
-    const heading=module==='DEFECTS'&&rows.some(r=>String(r.key||'').startsWith('bp-mechanical:'))?
+    const heading=module==='JOBS'&&request.bpNumber&&request.bloomPusher?
+      `BP-${request.bpNumber} jobs (hydraulic records marked “BP unit unconfirmed” are Bloom Pusher family only)`:
+      module==='DEFECTS'&&rows.some(r=>String(r.key||'').startsWith('bp-mechanical:'))?
       'Defects and related work (guide-wheel causes unrecorded)':'Matches';
     await saveDocumentSessionV81511(from,'MAINT_RESULT_PAGE',{items,heading,offset:0,expiresAt:Date.now()+30*60000});
     await showSearchPageV81522(from,user);
@@ -5798,4 +5803,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.63 BP UNIT SEARCH listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.65 BP FAMILY HYDRAULICS listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
