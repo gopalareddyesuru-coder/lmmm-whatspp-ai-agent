@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.71 FLEET SEARCH ROUTING 2026-10-08
+// LMMM AI Maintenance V8.15.72 GRID PARTS AND EXPORT 2026-10-08
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -980,7 +980,7 @@ if((a=text.match(/^AUTH_ADV:(\d+)$/))){await sendList(from,'Advanced Authorities
     if(normWA(from)!==u.whatsapp_number) await sendText(from,`${m[1]} registration removed. Maintenance history preserved.`);
     return true;
   }
-  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.15.71');return true;}
+  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.15.72');return true;}
   return false;
 }
 async function hasAuthorityV874(u, authority){
@@ -2864,8 +2864,12 @@ function bothBloomPushersV81560(question){
 }
 function normalizeMaintenanceQueryV81524(question){
   // Correct a small set of widely used names; retain numbered identities as printed.
-  let q=normalizeManualAliasesV81535(String(question||'').replace(/\b(?:bloom|blom|boom|bum)[ -]+(?:pusher|puser|pusr|pushr)\b/gi,'bloom pusher')
-    .replace(/\bBP[ -]?([12])\b/gi,(_,n)=>`bloom pusher ${n}`).replace(/\bBP\b/gi,'bloom pusher'));
+  const supplied=String(question||'').replace(/\b(?:bloom|blom|boom|bum)[ -]+(?:pusher|puser|pusr|pushr)\b/gi,'bloom pusher')
+    .replace(/\bBP[ -]?([12])\b/gi,(_,n)=>`bloom pusher ${n}`).replace(/\bBP\b/gi,'bloom pusher');
+  // The manual index has a broad "Charing grids" heading. It must not erase a
+  // unit selected by the user (including Grid1/Grod1) before parts search.
+  let q=/\bCHARGING GRID [123]\b/.test(normalizeEquipmentSearchTextV81553(supplied))?
+    supplied:normalizeManualAliasesV81535(supplied);
   q=normalizeEquipmentSearchTextV81553(q);
   // In this plant, "Drum 1" means Steam Drum-1 on Furnace-1. Keep explicit
   // cross-transfer searches untouched so the two assets cannot be conflated.
@@ -3795,6 +3799,15 @@ async function handleSearchExportV81518(from,cmd,user){
   if(!(await hasAuthorityV874(user,'VIEW'))||!(await hasAuthorityV874(user,kind))){await sendText(from,'Export permission is not available for your account.');return true;}
   const state=documentSessionValueV81511(await safeSessionV855(from,'MAINT_EXPORT'));
   if(!state?.question||state.expiresAt<Date.now()){await sendText(from,'These results expired. Please search again.');return true;}
+  if(state.verified_items?.length&&state.export_kind==='CHARGING_GRID_FAMILY_PARTS'){
+    const items=state.verified_items.slice(0,100).map((description,i)=>({item_no:i+1,description}));
+    const pack={document_type:'SEARCH_RESULTS',simple_search_results:true,extracted_items:items};
+    const file=kind==='PDF'?'lmmm_charging_grid_parts.pdf':'lmmm_charging_grid_parts.xlsx';
+    const bytes=kind==='PDF'?tablePdfV880(pack,'Charging-grid family references; unit fitment and current stock unconfirmed'):
+      nativeXlsxV882(pack,'Charging-grid family references; unit fitment and current stock unconfirmed');
+    await sendGeneratedDocumentV878(from,bytes,file,kind==='PDF'?'application/pdf':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    return true;
+  }
   const request=universalTermsV81513(state.question);
   const [result,catalog,bpRows,chargingRows]=await Promise.all([
     universalSearchV81513(from,user,state.question,state.module),
@@ -4772,6 +4785,14 @@ async function answerChargingGridPartsV81570(from,user,question,module){
     `These are charging-grid family references. Grid-${unit} fitment and current stock are not confirmed.\n\n`+
     items.slice(0,20).map((x,i)=>`${i+1}. ${x}`).join('\n')+
     (items.length>20?`\n\n${items.length-20} more references; specify a part.`:''));
+  const buttons=[];
+  if(await hasAuthorityV874(user,'PDF'))buttons.push({id:'MAINT_EXPORT:PDF',title:'PDF'});
+  if(await hasAuthorityV874(user,'EXCEL'))buttons.push({id:'MAINT_EXPORT:EXCEL',title:'Excel'});
+  if(buttons.length){
+    await saveDocumentSessionV81511(from,'MAINT_EXPORT',{question,export_kind:'CHARGING_GRID_FAMILY_PARTS',
+      verified_items:items,expiresAt:Date.now()+10*60000});
+    await sendButtons(from,'Download this parts list:',buttons);
+  }
   return true;
 }
 async function handleUniversalSearchV81513(from,question,user,options={}){
@@ -5985,4 +6006,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.71 FLEET SEARCH ROUTING listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.72 GRID PARTS AND EXPORT listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
