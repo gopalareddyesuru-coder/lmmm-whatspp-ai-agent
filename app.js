@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.69 BP REFERENCE RETRIEVAL 2026-10-08
+// LMMM AI Maintenance V8.15.70 GRID IDENTITY AND PARTS 2026-10-08
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -980,7 +980,7 @@ if((a=text.match(/^AUTH_ADV:(\d+)$/))){await sendList(from,'Advanced Authorities
     if(normWA(from)!==u.whatsapp_number) await sendText(from,`${m[1]} registration removed. Maintenance history preserved.`);
     return true;
   }
-  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.15.69');return true;}
+  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.15.70');return true;}
   return false;
 }
 async function hasAuthorityV874(u, authority){
@@ -2917,6 +2917,8 @@ function readEquipmentMasterForAliasesV81553(){
 }
 function normalizeEquipmentSearchTextV81553(value){
   return String(value||'').normalize('NFKC').toUpperCase()
+    .replace(/\bCHARGING\s*[- ]?GRID\s*[- ]?([123])\b/g,'CHARGING GRID $1')
+    .replace(/(?<!CHARGING )\b(?:GROD|GRDI|GRD|GRID)\s*[- ]?([123])\b/g,'CHARGING GRID $1')
     .replace(/\b(?:LIVER|LEVER)\s+TYPE\s+PUSH(?:ER|R)\b/g,'LEVER TYPE PUSHER')
     .replace(/\b(?:FURNANCE|FURNACE)\b/g,'FURNACE')
     .replace(/\b(?:CHARING|CHARGNG|CHARGING)\b/g,'CHARGING')
@@ -4703,6 +4705,33 @@ async function answerBloomPusherReferencesV81569(from,user,question,module){
     (items.length>shown.length?`\n\n${items.length-shown.length} more references; specify the part name.`:''));
   return true;
 }
+async function answerChargingGridPartsV81570(from,user,question,module){
+  if(!['PARTS','SPARES'].includes(module)||
+    !/\bCHARGING\s+GRID[ -]?[123]\b/i.test(question)||
+    !canReadDepartmentArchiveV81540(from,user)||!(await hasAuthorityV874(user,'VIEW')))return false;
+  const unit=question.match(/\bCHARGING\s+GRID[ -]?([123])\b/i)?.[1];
+  if(!unit)return false;
+  const result=await pool.query(`SELECT source_text FROM lmmm_source_review
+    WHERE source_file='Bar mill history(2).zip' AND content_type='SPARES_PARTS'
+      AND location ~ '^sheet:ALL:row:[0-9]+$'
+      AND source_text ~* '(F/CHARGING GRID|CHARGING GRID)'
+    ORDER BY location LIMIT 100`);
+  const seen=new Set(),items=[];
+  for(const row of result.rows){
+    const cells=String(row.source_text||'').split('|').map(x=>x.trim());
+    if(!/^Mechanical$/i.test(cells[0])||!/^LMMM$/i.test(cells[1]))continue;
+    const item=cells[2],material=cells[3],description=cells[4];
+    if(!/^\d{6,}$/.test(material)||!description||!/\bCHARGING GRID\b/i.test(description))continue;
+    const key=material+':'+description.toUpperCase();if(seen.has(key))continue;seen.add(key);
+    items.push(`${description.replace(/,?F\/CHARGING GRID\b/i,'').replace(/\s+CHARGING GRID\b/i,'').trim()} · Material ${material}${/^\d+$/.test(item)?` · Item ${item}`:''}`);
+  }
+  if(!items.length)return false;
+  await sendText(from,`*Charging Grid-${unit} · ${module==='SPARES'?'Spare references':'Parts'}*\n`+
+    `These are charging-grid family references. Grid-${unit} fitment and current stock are not confirmed.\n\n`+
+    items.slice(0,20).map((x,i)=>`${i+1}. ${x}`).join('\n')+
+    (items.length>20?`\n\n${items.length-20} more references; specify a part.`:''));
+  return true;
+}
 async function handleUniversalSearchV81513(from,question,user,options={}){
   if(!(await hasAuthorityV874(user,'VIEW'))){await sendText(from,'Search access is not enabled for your account.');return true;}
   if(await answerChargingGridManualV81561(from,user,question,searchIntentV81524(question,options.module)))return true;
@@ -4721,6 +4750,7 @@ async function handleUniversalSearchV81513(from,question,user,options={}){
   let module=searchIntentV81524(question,options.module);
   const language=options.language||await searchLanguageV81515(from,question),te=language==='TE';
   if(await answerBloomPusherReferencesV81569(from,user,question,module))return true;
+  if(await answerChargingGridPartsV81570(from,user,question,module))return true;
   if(await answerChargingGridManualV81561(from,user,question,module))return true;
   if(await answerMappedManualV81562(from,user,question,module))return true;
   if(module==='ALL'&&await showMasterEquipmentChoicesV81539(from,user,question,language))return true;
@@ -5913,4 +5943,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.69 BP REFERENCE RETRIEVAL listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.70 GRID IDENTITY AND PARTS listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
