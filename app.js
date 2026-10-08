@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.70 GRID IDENTITY AND PARTS 2026-10-08
+// LMMM AI Maintenance V8.15.71 FLEET SEARCH ROUTING 2026-10-08
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -980,7 +980,7 @@ if((a=text.match(/^AUTH_ADV:(\d+)$/))){await sendList(from,'Advanced Authorities
     if(normWA(from)!==u.whatsapp_number) await sendText(from,`${m[1]} registration removed. Maintenance history preserved.`);
     return true;
   }
-  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.15.70');return true;}
+  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.15.71');return true;}
   return false;
 }
 async function hasAuthorityV874(u, authority){
@@ -2834,6 +2834,10 @@ function universalTermsV81513(question){
 function searchIntentV81524(question,module){
   if(module&&module!=='ALL')return module;
   const q=String(question||'');
+  // A selected asset may itself contain words such as DRAWING or INSPECTION.
+  // The user's final requested topic takes precedence over its name.
+  const finalTopic=q.match(/\b(jobs?|history|defects?|drawings?|parts?|spares?|manuals?|permits?|inspection|vibrations?|loads?)\s*$/i)?.[1]?.toLowerCase();
+  if(finalTopic){const topics={job:'JOBS',jobs:'JOBS',history:'HISTORY',defect:'DEFECTS',defects:'DEFECTS',drawing:'DRAWINGS',drawings:'DRAWINGS',part:'PARTS',parts:'PARTS',spare:'SPARES',spares:'SPARES',manual:'MANUALS',manuals:'MANUALS',permit:'PERMITS',permits:'PERMITS',inspection:'INSPECTION',vibration:'VIBRATIONS',vibrations:'VIBRATIONS',load:'LOADS',loads:'LOADS'};return topics[finalTopic];}
   if(/\b(drawings?|drg|tracing|tids|pd drawing)\b/i.test(q))return 'DRAWINGS';
   if(/\b(formats?|templates?|check\s*sheets?|checklists?)\b/i.test(q))return 'FORMATS';
   if(/\b(permits?|isolation certificates?|work clearances?)\b/i.test(q))return 'PERMITS';
@@ -2930,7 +2934,7 @@ function normalizeEquipmentSearchTextV81553(value){
     .replace(/\b(?:PUSHR|PUSER|PUSR|PUSHR)\b/g,'PUSHER')
     .replace(/\b(?:TABL|TABEL)\b/g,'TABLE')
     .replace(/\b(?:GEAR BOX)\b/g,'GEARBOX')
-    .replace(/\b(?:NO\.?|NUMBER|UNIT|#)\s*([0-9]+)\b/g,' $1 ')
+    .replace(/\b(?:NO\.?|NUMBER|UNIT|#)\s*([0-9]{1,2})\b/g,' $1 ')
     // Number words are only normalized next to equipment nouns. This avoids
     // changing ordinary request text such as "one defect" or "I need history".
     .replace(/\b(FURNACE|DRUM|PUSHER|PUMP|MOTOR|ELEVATOR|TABLE|ROLLER|CAR|BOILER|FAN|BEARING|GEARBOX|DOOR)\s+(?:(?:NO\.?|NUMBER|UNIT)\s*)?(?:FIRST|ONE|I|1ST)\b/g,'$1 1')
@@ -2948,7 +2952,8 @@ function normalizeEquipmentSearchTextV81553(value){
     .replace(/\bEV\s*[- ]?([12])\b/g,'ELEVATOR $1').replace(/\bEV\b/g,'ELEVATOR')
     .replace(/\bRT\s*[- ]?([0-9]+)\b/g,'ROLLER TABLE $1')
     .replace(/\bRT\b/g,'ROLLER TABLE')
-    .replace(/[&+]/g,' AND ').replace(/[^A-Z0-9]+/g,' ').replace(/\s+/g,' ').trim();
+    .replace(/[&+]/g,' AND ').replace(/[^A-Z0-9]+/g,' ').replace(/\s+/g,' ')
+    .replace(/\bCHARGING CHARGING GRID\b/g,'CHARGING GRID').trim();
 }
 function equipmentAliasVariantsV81553(value){
   const base=normalizeEquipmentSearchTextV81553(value).replace(/\bSHARED WITH\b.*$/,'').trim();
@@ -3568,14 +3573,48 @@ function typoCandidateV81515(question){
   }
   return a[target.length]<=4?{term:'bloom pusher',warning:'Spelling suggestion; equipment identity is not confirmed.'}:null;
 }
-async function proposeSearchCorrectionV81515(from,question,user){
-  const suggestion=typoCandidateV81515(question);
+// Suggest a catalogued asset when one word was mistyped. Keep identifiers and
+// unit numbers exact; a fuzzy match is never silently saved as a new alias.
+function catalogTypoCandidateV81571(question){
+  const raw=String(question||'').trim();
+  if(!raw||/\b\d{5,}\b|[./]/.test(raw))return null;
+  const stripped=raw.replace(/\b(?:jobs?|history|defects?|drawings?|manuals?|smp|spares?|parts?|formats?|permits?|inspection|vibrations?|loads?|show|give|find|search|please|for|of|the)\b/gi,' ');
+  const query=normalizeEquipmentSearchTextV81553(stripped);
+  if(query.length<5||query.length>60)return null;
+  const words=query.split(' '),digits=words.filter(x=>/^\d+$/.test(x)).join(':');
+  const edit=(a,b)=>{
+    if(Math.abs(a.length-b.length)>1)return 3;
+    let previous=Array.from({length:b.length+1},(_,i)=>i);
+    for(let i=1;i<=a.length;i++){
+      const next=[i];for(let j=1;j<=b.length;j++)next[j]=Math.min(next[j-1]+1,previous[j]+1,previous[j-1]+Number(a[i-1]!==b[j-1]));
+      previous=next;
+    }
+    return previous[b.length];
+  };
+  const found=new Map();
+  for(const entity of readEquipmentAliasIndexV81553().entities.values()){
+    const candidate=entity.key.split(' ');
+    if(candidate.length!==words.length||candidate.filter(x=>/^\d+$/.test(x)).join(':')!==digits)continue;
+    let changes=0;
+    for(let i=0;i<words.length;i++){
+      if(/^\d+$/.test(words[i])||/^\d+$/.test(candidate[i])){if(words[i]!==candidate[i]){changes=3;break;}continue;}
+      const distance=edit(words[i],candidate[i]);
+      if(distance>1){changes=3;break;}changes+=distance;
+    }
+    if(changes===1)found.set(entity.key,entity);
+    if(found.size>8)break;
+  }
+  if(found.size!==1)return null;
+  return {term:[...found.values()][0].name,warning:'Possible spelling correction. Confirm the equipment before viewing its records.'};
+}
+async function proposeSearchCorrectionV81515(from,question,user,module='ALL'){
+  const suggestion=typoCandidateV81515(question)||catalogTypoCandidateV81571(question);
   if(!suggestion||suggestion.term.toLowerCase()===String(question).toLowerCase())return false;
   const found=await universalSearchV81513(from,user,suggestion.term);
   if(!found.rows.length||found.failed||found.partialFailure)return false;
-  await saveDocumentSessionV81511(from,'MAINT_SEARCH_FLOW',{query:suggestion.term,names:[],selected:'',warning:suggestion.warning,expiresAt:Date.now()+30*60000});
+  await saveDocumentSessionV81511(from,'MAINT_SEARCH_FLOW',{query:suggestion.term,names:[],selected:'',module,warning:suggestion.warning,expiresAt:Date.now()+30*60000});
   await sendList(from,`No exact source match for "${question}". Possible source name: ${suggestion.term}.${suggestion.warning?`\n${suggestion.warning}`:''}`.slice(0,900),
-    'Choose',[{id:'MAINT_SUGGEST:SHOW',title:`Search ${suggestion.term}`},{id:'MAINT_SUGGEST:CANCEL',title:'Type another name'}],'Possible match');
+    'Choose',[{id:'MAINT_SUGGEST:SHOW',title:'Use suggested name'},{id:'MAINT_SUGGEST:CANCEL',title:'Type another name'}],'Possible match');
   return true;
 }
 async function showAssetModulesV81515(from,term,language,warning=''){
@@ -3656,6 +3695,9 @@ async function handleSearchChoiceV81515(from,cmd,user){
   const language=await searchLanguageV81515(from,state.query),asset=cmd.match(/^MAINT_ASSET:(ALL|[0-7])$/),module=cmd.match(/^MAINT_MOD:(HISTORY|JOBS|DEFECTS|VIBRATIONS|LOADS|DRAWINGS|PARTS|SPARES|MANUALS|INSPECTION|CBM|FORMATS|PERMITS|MORE|ALL)$/);
   if(cmd==='MAINT_SUGGEST:CANCEL'){await sendText(from,'Send the equipment name or exact ID to search.');return true;}
   if(cmd==='MAINT_SUGGEST:SHOW'){
+    if(state.module&&state.module!=='ALL'){
+      await handleUniversalSearchV81513(from,`${state.query} ${state.module.toLowerCase()}`,user,{module:state.module,language});return true;
+    }
     const found=await universalSearchV81513(from,user,state.query);
     if(!found.rows.length){await sendText(from,'This suggested name is no longer available in accessible sources.');return true;}
     await showAssetChoicesV81515(from,state.query,found.rows,language,state.warning);return true;
@@ -4810,7 +4852,7 @@ async function handleUniversalSearchV81513(from,question,user,options={}){
   if((failed&&!catalog.rows.length&&!chargingRows.length)||(incomplete&&!rows.length)){await sendText(from,'Some data sources are temporarily unavailable. Please try again; I cannot confirm a complete search.');return true;}
   if(!rows.length){if(module==='JOBS'&&await datedJobReferencesV81538(from,user,request,language))return true;
     if(module==='DRAWINGS'&&await showUnlinkedDrawingRefsV81516(from,request.exact||request.primary,user))return true;
-    if(module==='ALL'&&await proposeSearchCorrectionV81515(from,question,user))return true;
+    if(await proposeSearchCorrectionV81515(from,question,user,module))return true;
     if(module==='PERMITS'&&request.bloomPusher){await sendText(from,
       `No recorded isolation permit for ${request.bpNumber?`BP-${request.bpNumber}`:'the Bloom Pushers'} is available in your accessible records. Obtain the approved equipment-specific permit before work.`);return true;}
     await sendText(from,te?`${request.primary}: అందుబాటులో ఉన్న, మీకు అనుమతి ఉన్న డేటాలో ఆధారం దొరకలేదు. నిర్ధారించలేను.`:
@@ -5943,4 +5985,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.70 GRID IDENTITY AND PARTS listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.71 FLEET SEARCH ROUTING listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
