@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.65 BP FAMILY HYDRAULICS 2026-10-08
+// LMMM AI Maintenance V8.15.67 READABLE RESULTS 2026-10-08
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -980,7 +980,7 @@ if((a=text.match(/^AUTH_ADV:(\d+)$/))){await sendList(from,'Advanced Authorities
     if(normWA(from)!==u.whatsapp_number) await sendText(from,`${m[1]} registration removed. Maintenance history preserved.`);
     return true;
   }
-  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.15.65');return true;}
+  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.15.67');return true;}
   return false;
 }
 async function hasAuthorityV874(u, authority){
@@ -2032,7 +2032,10 @@ async function sendAdaptiveExtractionPreviewV881(from,p){
 //   even without PDF_REPORT authority, because it is only a private pre-storage verification aid.
 // - Any PDF/report generated from stored/retrieved data for any user remains governed by that user's normal authorities/scope.
 async function sendFullExtractionV878(from,p){ return sendAdaptiveExtractionPreviewV881(from,p); }
-function escPdfV879(v){return String(v??'').replace(/\\/g,'\\\\').replace(/\(/g,'\\(').replace(/\)/g,'\\)').replace(/[^\x20-\x7E]/g,'?');}
+function escPdfV879(v){return String(v??'').replace(/[–—−]/g,'-').replace(/[·•]/g,'|')
+  .replace(/[“”]/g,'"').replace(/[‘’]/g,"'")
+  .replace(/\\/g,'\\\\').replace(/\(/g,'\\(').replace(/\)/g,'\\)')
+  .replace(/[^\x20-\x7E]/g,'?');}
 function drawingOverviewV8159(pack){
   const d=pack?.drawing_details||{};
   const title=(d.title_block||[]).map(x=>sourceValueV8157(x.title)).find(Boolean);
@@ -2087,58 +2090,105 @@ function reportColumnsV880(rows){
   const preferred=['item_no','identifier','module','area','equipment','sub_equipment','event_date','event_time','shift','description','quantity','unit','action_taken','status','remarks','confidence'];
   return [...preferred.filter(k=>keys.includes(k)),...keys.filter(k=>!preferred.includes(k))].slice(0,18);
 }
+function presentationRowsV81566(pack){
+  const rows=reportRowsV880(pack);
+  if(!pack.simple_search_results&&!pack.simple_drawing_list)return rows;
+  return rows.map(row=>{
+    const description=String(row.description||'').replace(/\s+/g,' ').trim();
+    if(pack.simple_drawing_list){
+      const match=description.match(/^(.{2,45}?)\s+[—-]\s+(.+)$/);
+      return {item_no:row.item_no||'',identifier:match?.[1]||'',description:match?.[2]||description};
+    }
+    const date=description.match(/^((?:19|20)\d{2}-\d{2}-\d{2})\s*[·-]\s*/);
+    const rest=date?description.slice(date[0].length):description;
+    const divider=rest.indexOf(' — ');
+    const equipment=divider>=0?rest.slice(0,divider):'';
+    const work=divider>=0?rest.slice(divider+3):rest;
+    return {item_no:row.item_no||'',event_date:date?.[1]||'',equipment,
+      description:work, ...(row.remarks?{remarks:row.remarks}:{})};
+  });
+}
+function presentationColumnsV81566(pack,rows){
+  if(pack.simple_drawing_list)return ['item_no','identifier','description'];
+  if(pack.simple_search_results)return rows.some(x=>x.remarks)?['item_no','event_date','equipment','description','remarks']:
+    ['item_no','event_date','equipment','description'];
+  return reportColumnsV880(rows);
+}
+function reportLabelV81566(key,pack){
+  return ({item_no:'NO.',event_date:'DATE',equipment:'EQUIPMENT / LOCATION',
+    identifier:'DRAWING NO.',description:pack.simple_search_results?'WORK / DETAILS':'DESCRIPTION'}[key]||
+    String(key).replace(/_/g,' ').toUpperCase());
+}
 function wrapCellV880(v,n){
-  const t=String(v??'').replace(/\s+/g,' ').trim(); if(!t)return [''];
-  const out=[]; for(let i=0;i<t.length;i+=n)out.push(t.slice(i,i+n)); return out.slice(0,4);
+  const t=String(v??'').replace(/\s+/g,' ').trim();if(!t)return [''];
+  const out=[];let line='';
+  for(const word of t.split(' ')){
+    if(word.length>n){if(line){out.push(line);line='';}
+      for(let i=0;i<word.length;i+=n)out.push(word.slice(i,i+n));continue;}
+    if(line.length+word.length+1>n){out.push(line);line=word;}else line+=(line?' ':'')+word;
+  }
+  if(line)out.push(line);return out;
 }
 function tablePdfV880(pack,source){
-  const rows=reportRowsV880(pack),cols=reportColumnsV880(rows);
-  const landscape=cols.length>7;
-  const W=landscape?792:612,H=landscape?612:792;
-  const margin=28, usable=W-margin*2, fontSize=landscape?6.5:7.5, lineH=fontSize+3;
-  const widths=cols.map(k=>{
-    const k0=String(k).toLowerCase();
-    if(/description|remarks|action|^name$/.test(k0))return 2.3;
-    if(/equipment|identifier|sub_equipment/.test(k0))return 1.5;
-    return 1;
-  });
-  const total=widths.reduce((a,b)=>a+b,0), cw=widths.map(x=>usable*x/total);
-  const charCaps=cw.map(w=>Math.max(7,Math.floor(w/(fontSize*0.55))));
-  const pages=[]; let current=[];
-  const headerH=lineH*2.2, titleH=52, footerH=24;
-  let used=titleH+headerH;
-  for(const row of rows.length?rows:[{description:pack.document_summary||pack.full_text||'No structured rows'}]){
+  const rows=presentationRowsV81566(pack),cols=presentationColumnsV81566(pack,rows);
+  const landscape=cols.length>6,W=landscape?842:595,H=landscape?595:842;
+  const margin=32,usable=W-margin*2,fontSize=landscape?8:9,lineH=fontSize+4;
+  const weights=cols.map(k=>k==='item_no'?0.45:k==='event_date'?1.15:
+    k==='equipment'?2.35:k==='identifier'?2.0:/description|action|remarks/.test(k)?3.6:1.2);
+  const total=weights.reduce((a,b)=>a+b,0),cw=weights.map(x=>usable*x/total);
+  const charCaps=cw.map(w=>Math.max(5,Math.floor((w-14)/(fontSize*0.53))));
+  const headerH=30,titleH=86,footerH=34,maxBody=H-margin-titleH-headerH-footerH;
+  const pages=[];let current=[],used=0;
+  const body=rows.length?rows:[{description:pack.document_summary||pack.full_text||'No structured rows'}];
+  for(const row of body){
     const wrapped=cols.map((c,i)=>wrapCellV880(row[c],charCaps[i]));
-    const rh=Math.max(lineH*1.5,Math.max(...wrapped.map(x=>x.length))*lineH+5);
-    if(used+rh+footerH>H-margin){pages.push(current);current=[];used=titleH+headerH;}
-    current.push({row,wrapped,rh});used+=rh;
+    let position=0,maxLines=Math.max(...wrapped.map(x=>x.length));
+    while(position<maxLines){
+      const available=Math.max(1,Math.floor((maxBody-used-12)/lineH));
+      if(available<2&&current.length){pages.push(current);current=[];used=0;continue;}
+      const count=Math.min(maxLines-position,Math.max(1,available));
+      const segment=wrapped.map(lines=>lines.slice(position,position+count));
+      const rh=Math.max(24,count*lineH+12);
+      current.push({wrapped:segment,rh,alternate:pages.reduce((n,p)=>n+p.length,0)+current.length});
+      used+=rh;position+=count;
+      if(position<maxLines){pages.push(current);current=[];used=0;}
+    }
   }
   if(current.length||!pages.length)pages.push(current);
   const objs=[null],add=x=>(objs.push(x),objs.length-1),catalog=add(''),pagesId=add(''),font=add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
+  const bold=add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>');
   const pageIds=[];
   pages.forEach((pg,pi)=>{
     const cleanReport=pack.simple_drawing_list||pack.simple_search_results;
-    let stream=`BT /F1 11 Tf 1 0 0 1 ${margin} ${H-28} Tm (${escPdfV879(pack.simple_drawing_list?'Drawing list':pack.simple_search_results?'Maintenance results':'LMMM AI Maintenance - Extracted Data')}) Tj /F1 7 Tf 1 0 0 1 ${margin} ${H-42} Tm (${escPdfV879(cleanReport?`Page ${pi+1}/${pages.length}`:`Source: ${source} | Type: ${pack.document_type||'OTHER'} | Page ${pi+1}/${pages.length}`)}) Tj ET `;
+    const title=pack.simple_drawing_list?'Drawing List':pack.simple_search_results?'Maintenance Results':'Maintenance Data';
+    let stream=`0.043 0.224 0.329 rg 0 ${H-72} ${W} 72 re f `+
+      `0.09 0.67 0.68 rg 0 ${H-76} ${W} 4 re f `+
+      `1 1 1 rg BT /F2 18 Tf 1 0 0 1 ${margin} ${H-35} Tm (${escPdfV879(title)}) Tj ET `+
+      `0.77 0.88 0.91 rg BT /F1 8 Tf 1 0 0 1 ${margin} ${H-53} Tm (${escPdfV879(`${rows.length} records  |  LMMM AI Maintenance`)}) Tj ET `;
     let y=H-titleH;
-    // header
+    stream+=`0.043 0.224 0.329 rg ${margin} ${y-headerH} ${usable} ${headerH} re f `;
     let x=margin;
     cols.forEach((c,i)=>{
-      stream+=`${x} ${y-headerH} ${cw[i]} ${headerH} re S BT /F1 ${fontSize} Tf 1 0 0 1 ${x+2} ${y-lineH} Tm (${escPdfV879(String(c).replace(/_/g,' ').toUpperCase())}) Tj ET `;
+      const label=reportLabelV81566(c,pack);
+      stream+=`1 1 1 rg BT /F2 8 Tf 1 0 0 1 ${x+7} ${y-19} Tm (${escPdfV879(label)}) Tj ET `;
       x+=cw[i];
     });
     y-=headerH;
-    pg.forEach(({wrapped,rh})=>{
+    pg.forEach(({wrapped,rh,alternate})=>{
+      stream+=alternate%2?'0.92 0.97 0.97':'1 1 1';
+      stream+=` rg ${margin} ${y-rh} ${usable} ${rh} re f `;
       x=margin;
       cols.forEach((c,i)=>{
-        stream+=`${x} ${y-rh} ${cw[i]} ${rh} re S `;
-        wrapped[i].forEach((ln,j)=>{stream+=`BT /F1 ${fontSize} Tf 1 0 0 1 ${x+2} ${y-lineH*(j+1)} Tm (${escPdfV879(ln)}) Tj ET `;});
+        stream+=`0.81 0.87 0.89 RG 0.4 w ${x} ${y-rh} ${cw[i]} ${rh} re S `;
+        wrapped[i].forEach((ln,j)=>{stream+=`0.09 0.20 0.25 rg BT /F1 ${fontSize} Tf 1 0 0 1 ${x+7} ${y-13-lineH*j} Tm (${escPdfV879(ln)}) Tj ET `;});
         x+=cw[i];
       });
       y-=rh;
     });
-    stream+=`BT /F1 7 Tf 1 0 0 1 ${margin} 14 Tm (${escPdfV879(cleanReport?'':landscape?'Landscape - print ready':'Portrait - print ready')}) Tj ET`;
+    stream+=`0.043 0.224 0.329 rg BT /F1 8 Tf 1 0 0 1 ${margin} 21 Tm (${escPdfV879('LMMM AI Maintenance')}) Tj ET `+
+      `BT /F1 8 Tf 1 0 0 1 ${W-margin-64} 21 Tm (${escPdfV879(`${pi+1} / ${pages.length}`)}) Tj ET`;
     const content=add(`<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream`);
-    const pid=add(`<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 ${W} ${H}] /Resources << /Font << /F1 ${font} 0 R >> >> /Contents ${content} 0 R >>`);
+    const pid=add(`<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 ${W} ${H}] /Resources << /Font << /F1 ${font} 0 R /F2 ${bold} 0 R >> >> /Contents ${content} 0 R >>`);
     pageIds.push(pid);
   });
   objs[catalog]=`<< /Type /Catalog /Pages ${pagesId} 0 R >>`;
@@ -2163,8 +2213,7 @@ function excelHtmlV879(pack,source){
 }
 function xmlEscV882(v){return String(v??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&apos;');}
 function maintenanceXlsxStylesV81543(){
-  // Body, header, alternate body, linked cell.
-  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="3"><font><sz val="10"/><name val="Aptos"/><color rgb="FF17333B"/></font><font><b/><sz val="10"/><name val="Aptos"/><color rgb="FFFFFFFF"/></font><font><u/><sz val="10"/><name val="Aptos"/><color rgb="FF075985"/></font></fonts><fills count="4"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF0B3954"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFEAF6F8"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="2"><border/><border><bottom style="hair"><color rgb="FFD7E3EA"/></bottom></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="4"><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyAlignment="1"><alignment horizontal="left" vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="2" fillId="3" borderId="1" xfId="0" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="4"><font><sz val="10"/><name val="Aptos"/><color rgb="FF17333B"/></font><font><b/><sz val="10"/><name val="Aptos"/><color rgb="FFFFFFFF"/></font><font><b/><sz val="16"/><name val="Aptos Display"/><color rgb="FFFFFFFF"/></font><font><sz val="10"/><name val="Aptos"/><color rgb="FF0B3954"/></font></fonts><fills count="5"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF0B3954"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFEAF6F8"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFD8F0F0"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="2"><border/><border><bottom style="hair"><color rgb="FFD7E3EA"/></bottom></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="6"><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyAlignment="1"><alignment horizontal="left" vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="2" fillId="2" borderId="0" xfId="0" applyAlignment="1"><alignment vertical="center"/></xf><xf numFmtId="0" fontId="3" fillId="4" borderId="0" xfId="0" applyAlignment="1"><alignment vertical="center"/></xf></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
 }
 function colNameV882(n){let x=n+1,r='';while(x){x--;r=String.fromCharCode(65+(x%26))+r;x=Math.floor(x/26);}return r;}
 function crc32V882(buf){
@@ -2186,19 +2235,25 @@ function zipStoreV882(files){
   return Buffer.concat([local,central,end]);
 }
 function nativeXlsxV882(pack,source){
-  const rows=reportRowsV880(pack),cols=reportColumnsV880(rows),landscape=cols.length>7;
+  const rows=presentationRowsV81566(pack),cols=presentationColumnsV81566(pack,rows),landscape=cols.length>6;
   const body=rows.length?rows:[{description:pack.document_summary||pack.full_text||''}];
-  const all=[cols.map(k=>String(k).replace(/_/g,' ').toUpperCase()),...body.map(r=>cols.map(k=>r?.[k]??''))];
-  const maxWidths=cols.map((_,i)=>Math.min(45,Math.max(10,...all.slice(0,300).map(r=>String(r[i]??'').length+2))));
+  const all=[cols.map(k=>reportLabelV81566(k,pack)),...body.map(r=>cols.map(k=>r?.[k]??''))];
+  const maxWidths=cols.map((k,i)=>k==='item_no'?7:k==='event_date'?15:
+    k==='equipment'?38:k==='description'?75:k==='remarks'?42:
+    Math.min(50,Math.max(12,...all.slice(0,300).map(r=>String(r[i]??'').length+2))));
   const cell=(v,ref,style=0)=>{
     if(typeof v==='number'&&Number.isFinite(v))return `<c r="${ref}" s="${style}"><v>${v}</v></c>`;
     return `<c r="${ref}" t="inlineStr" s="${style}"><is><t xml:space="preserve">${xmlEscV882(v)}</t></is></c>`;
   };
-  let sheetRows='';
-  all.forEach((r,ri)=>{sheetRows+=`<row r="${ri+1}" ht="${ri===0?32:27}" customHeight="1">${r.map((v,ci)=>cell(v,`${colNameV882(ci)}${ri+1}`,ri===0?1:ri%2===0?2:0)).join('')}</row>`;});
+  const title=pack.simple_drawing_list?'Drawing List':pack.simple_search_results?'Maintenance Results':'Maintenance Data';
+  let sheetRows=`<row r="1" ht="38" customHeight="1">${cell(title,'A1',4)}</row>`+
+    `<row r="2" ht="24" customHeight="1">${cell(`${body.length} records | LMMM AI Maintenance`,'A2',5)}</row>`;
+  all.forEach((r,ri)=>{const excelRow=ri+3;
+    const rowHeight=ri===0?32:Math.min(210,Math.max(30,16*Math.max(1,...r.map((v,i)=>Math.ceil(String(v??'').length/Math.max(8,maxWidths[i]-3))))));
+    sheetRows+=`<row r="${excelRow}" ht="${rowHeight}" customHeight="1">${r.map((v,ci)=>cell(v,`${colNameV882(ci)}${excelRow}`,ri===0?1:ri%2===0?2:0)).join('')}</row>`;});
   const lastCol=colNameV882(Math.max(0,cols.length-1));
   const colsXml=maxWidths.map((w,i)=>`<col min="${i+1}" max="${i+1}" width="${w}" customWidth="1"/>`).join('');
-  const sheet=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><dimension ref="A1:${lastCol}${Math.max(1,all.length)}"/><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><cols>${colsXml}</cols><sheetData>${sheetRows}</sheetData><autoFilter ref="A1:${lastCol}${Math.max(1,all.length)}"/><pageMargins left="0.3" right="0.3" top="0.5" bottom="0.5" header="0.2" footer="0.2"/><pageSetup orientation="${landscape?'landscape':'portrait'}" fitToWidth="1" fitToHeight="0" paperSize="9"/><headerFooter><oddHeader>&amp;CLMMM AI Maintenance</oddHeader><oddFooter>&amp;CPage &amp;P of &amp;N</oddFooter></headerFooter></worksheet>`;
+  const sheet=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><dimension ref="A1:${lastCol}${all.length+2}"/><sheetViews><sheetView workbookViewId="0"><pane ySplit="3" topLeftCell="A4" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><cols>${colsXml}</cols><sheetData>${sheetRows}</sheetData><mergeCells count="2"><mergeCell ref="A1:${lastCol}1"/><mergeCell ref="A2:${lastCol}2"/></mergeCells><autoFilter ref="A3:${lastCol}${all.length+2}"/><pageMargins left="0.3" right="0.3" top="0.5" bottom="0.5" header="0.2" footer="0.2"/><pageSetup orientation="${landscape?'landscape':'portrait'}" fitToWidth="1" fitToHeight="0" paperSize="9"/><headerFooter><oddHeader>&amp;CLMMM AI Maintenance</oddHeader><oddFooter>&amp;CPage &amp;P of &amp;N</oddFooter></headerFooter></worksheet>`;
   const styles=maintenanceXlsxStylesV81543();
   const files=[
     ['[Content_Types].xml',`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/><Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/></Types>`],
@@ -3716,12 +3771,7 @@ async function handleSearchExportV81518(from,cmd,user){
   // Exports contain source references exactly as searched; they do not create verified equipment mappings.
   const showSource=isOwner(from)&&explicitSourceRequestV81541(state.question);
   const items=rows.map((r,i)=>({item_no:i+1,description:readableSearchItemV81522(r,result.request),...(showSource?{remarks:`${r.kind} | ${r.source||'source'}${r.page?` | page ${r.page}`:''}`}:{})}));
-  // The existing PDF table caps cells at four lines; split text into continuation rows so evidence is preserved.
-  const pdfItems=items.flatMap(r=>{
-    const chunks=String(r.description).match(/[\s\S]{1,110}/g)||[''];
-    return chunks.map((description,i)=>({item_no:i?`${r.item_no} continued`:r.item_no,description,...(showSource?{remarks:r.remarks}:{})}));
-  });
-  const pack={document_type:'SEARCH_RESULTS',simple_search_results:!showSource,extracted_items:kind==='PDF'?pdfItems:items};
+  const pack={document_type:'SEARCH_RESULTS',simple_search_results:true,extracted_items:items};
   const file=kind==='PDF'?'lmmm_search_results.pdf':'lmmm_search_results.xlsx';
   const bytes=kind==='PDF'?tablePdfV880(pack,showSource?'Search results; source links as labelled':''):nativeXlsxV882(pack,showSource?'Search results; source links as labelled':'');
   await sendGeneratedDocumentV878(from,bytes,file,kind==='PDF'?'application/pdf':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
@@ -3894,15 +3944,18 @@ async function showSearchPageV81522(from,user,more=false){
   const start=more?state.offset||0:0,items=state.items.slice(start,start+20);
   if(!items.length){await sendText(from,'No more matches.');return true;}
   // WhatsApp text messages have a length limit. Keep every result visible, in several messages if needed.
-  let chunk=`${state.heading||'Matches'} ${start+1}–${start+items.length} of ${state.items.length}:`;
+  let chunk=`*${state.heading||'Results'}*  ·  ${start+1}–${start+items.length} of ${state.items.length}`;
   for(let i=0;i<items.length;i++){
-    const line=`\n${start+i+1}. ${items[i]}`;
-    if(chunk.length+line.length>3000){await sendText(from,chunk);chunk='';}
+    const row=presentationRowsV81566({simple_search_results:true,extracted_items:[{item_no:start+i+1,description:items[i]}]})[0];
+    const date=row.event_date?`${row.event_date}  ·  `:'';
+    const line=row.equipment?`\n\n*${start+i+1}. ${date}${row.equipment}*\n${row.description}`:
+      `\n\n*${start+i+1}. ${date}${row.description}*`;
+    if(chunk.length+line.length>3000){await sendText(from,chunk);chunk=`*${state.heading||'Results'}*  ·  continued`;}
     chunk+=line;
   }
   if(chunk)await sendText(from,chunk);
   state.offset=start+items.length;await saveDocumentSessionV81511(from,'MAINT_RESULT_PAGE',state);
-  if(state.offset<state.items.length)await sendButtons(from,'More results?', [{id:'MAINT_RESULT_MORE',title:'More results'}]);
+  if(state.offset<state.items.length)await sendButtons(from,`${state.items.length-state.offset} more results`, [{id:'MAINT_RESULT_MORE',title:'More results'}]);
   return true;
 }
 async function sendFullDrawingPdfV81522(from,user,state){
@@ -5803,4 +5856,4 @@ setTimeout(async()=>{
   }catch(e){ console.error('[V8120_LEGACY_SOURCE_CLEANUP_FAIL]',e.message); }
 },30000);
 
-app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.65 BP FAMILY HYDRAULICS listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`[LMMM] V8.15.67 READABLE RESULTS listening on ${PORT}; workers=${INGEST_WORKERS_V8156}`));
