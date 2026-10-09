@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.74 PRACTICAL UNITS EXPLANATIONS 2026-10-09
+// LMMM AI Maintenance V8.15.75 OWNER MANUAL EXPLANATION PDF 2026-10-09
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -4698,6 +4698,80 @@ async function answerChargingGridManualV81561(from,user,question,module){
   await sendText(from,`Charging Grid${grid?`-${grid}`:'s'} manual:\n• Function: Stores blooms before furnace charging.\n• Design: Three carrier lanes, three rope transfer trains and a lineshaft with rope drums.\n• Maintenance: Check gear unit oil and folding dog alignment; follow the manual's lubrication and oil-change instructions.\nThis section covers all three grids; it does not identify a separate SMP for Grid-${grid||'1/2/3'}.`);
   return true;
 }
+// An owner-only teaching sheet assembled from the approved O&M page text.
+// The schematic is original and illustrative; it is never a drawing or an as-built.
+function practicalManualPdfV81575(title,report){
+  const W=595,H=842,objs=[null],add=x=>(objs.push(x),objs.length-1);
+  const catalog=add(''),pages=add(''),font=add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'),bold=add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>');
+  let s='0.043 0.224 0.329 rg 0 762 595 80 re f 0.09 0.67 0.68 rg 0 758 595 4 re f ';
+  const t=(v,x,y,size=10,b=false,color='0.09 0.20 0.25')=>{s+=`${color} rg BT /F${b?2:1} ${size} Tf 1 0 0 1 ${x} ${y} Tm (${escPdfV879(v)}) Tj ET `;};
+  const rect=(x,y,w,h,color)=>{s+=`${color} rg ${x} ${y} ${w} ${h} re f `;};
+  t('LMMM | PRACTICAL MANUAL EXPLANATION',30,808,16,true,'1 1 1');
+  t(title.slice(0,82),30,783,11,false,'0.79 0.91 0.94');
+  t('Illustrative schematic - not an OEM / as-built drawing',30,742,9,false);
+  const labels=(Array.isArray(report.diagram)?report.diagram:[]).slice(0,3);
+  if(labels.length===3){labels.forEach((label,i)=>{const x=30+i*183;rect(x,674,158,51,i===1?'0.84 0.94 0.92':'0.89 0.95 0.97');
+    wrapCellV880(label,22).slice(0,2).forEach((line,j)=>t(line,x+9,704-j*14,10,true));
+    if(i<2){s+='0.08 0.52 0.55 RG 2 w '+(x+159)+' 699 m '+(x+180)+' 699 l S ';t('>',x+169,695,12,true);}});}
+  let y=645;
+  const sections=[['RECORDED SPECIFICATION',report.recorded],['SYMBOLS AND UNITS',report.units],
+    ['WHAT IT MEANS ON THE MACHINE',report.practical],['FIELD CHECK',report.check],['SOURCE / LIMIT',report.source]];
+  for(const [heading,value] of sections){
+    const lines=wrapCellV880(value||'Not established by the available excerpt.',94).slice(0,5),height=34+lines.length*14;
+    if(y-height<49)break;
+    rect(30,y-height,535,height,heading==='RECORDED SPECIFICATION'?'0.91 0.96 0.97':'0.96 0.98 0.98');
+    t(heading,40,y-18,10,true,'0.043 0.224 0.329');lines.forEach((line,i)=>t(line,40,y-37-i*14,9));y-=height+9;
+  }
+  t('Values are source-backed only; verify against current OEM revision before work.',30,28,8);
+  const content=add(`<< /Length ${Buffer.byteLength(s)} >>\nstream\n${s}\nendstream`);
+  const page=add(`<< /Type /Page /Parent ${pages} 0 R /MediaBox [0 0 ${W} ${H}] /Resources << /Font << /F1 ${font} 0 R /F2 ${bold} 0 R >> >> /Contents ${content} 0 R >>`);
+  objs[catalog]=`<< /Type /Catalog /Pages ${pages} 0 R >>`;objs[pages]=`<< /Type /Pages /Kids [${page} 0 R] /Count 1 >>`;
+  let out='%PDF-1.4\n',offs=[0];for(let i=1;i<objs.length;i++){offs[i]=Buffer.byteLength(out);out+=`${i} 0 obj\n${objs[i]}\nendobj\n`;}
+  const pos=Buffer.byteLength(out);out+=`xref\n0 ${objs.length}\n0000000000 65535 f \n`;
+  for(let i=1;i<objs.length;i++)out+=`${String(offs[i]).padStart(10,'0')} 00000 n \n`;
+  out+=`trailer\n<< /Size ${objs.length} /Root ${catalog} 0 R >>\nstartxref\n${pos}\n%%EOF`;
+  return Buffer.from(out,'binary');
+}
+async function answerPracticalManualPdfV81575(from,user,question,module){
+  if(module!=='MANUALS'||!isOwner(from)||!canReadDepartmentArchiveV81540(from,user)||
+     !(await hasAuthorityV874(user,'PDF'))||!pool)return false;
+  const grid=chargingAssetV81533(question)?.name==='Charging grids';
+  const itemNumber=String(question).match(/\bitem\s*(\d{1,3})\b/i)?.[1];
+  let matches=itemNumber?[readManualItemSearchIndexV81535().items[Number(itemNumber)-1]].filter(Boolean):mappedManualItemsV81562(question);
+  if(!grid&&!matches.length){
+    const q=normalizeEquipmentSearchTextV81553(question);
+    matches=readManualItemSearchIndexV81535().items.filter(x=>x.equipment&&x.source_page&&
+      [x.equipment,...(x.aliases||[])].some(alias=>{const name=normalizeEquipmentSearchTextV81553(alias);
+        return name.length>=7&&` ${q} `.includes(` ${name} `);}));
+    matches=[...new Map(matches.map(x=>[x.item_number,x])).values()];
+  }
+  if(!grid&&matches.length!==1)return false;
+  const item=grid?null:matches[0];
+  const source=item?.source_file||'1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf';
+  const start=item?.source_page||6,next=item?readManualItemSearchIndexV81535().items.find(x=>x.item_number>item.item_number&&x.source_file===source&&x.source_page>start)?.source_page:12;
+  const end=Math.min(start+39,(next||start+40)-1);
+  const pages=(await pool.query(`SELECT location,source_text FROM lmmm_source_review WHERE source_file=$1 AND location=ANY($2::text[]) ORDER BY (substring(location from 'page:([0-9]+)'))::int`,
+    [source,Array.from({length:end-start+1},(_,i)=>`page:${start+i}`)])).rows;
+  if(!pages.length)return false;
+  const subject=String(question).replace(/\b(?:explain|from|its|manual|specification|specs|details|of|the)\b/gi,' ').trim();
+  const terms=subject.toLowerCase().split(/[^a-z0-9]+/).filter(x=>x.length>3&&!/charging|grid|equipment/.test(x));
+  const ranked=pages.map(p=>({p,score:terms.reduce((n,term)=>n+(String(p.source_text||'').toLowerCase().includes(term)?1:0),0)})).sort((a,b)=>b.score-a.score);
+  const selected=ranked.slice(0,Math.min(8,pages.length)).sort((a,b)=>Number(a.p.location.split(':')[1])-Number(b.p.location.split(':')[1]));
+  const evidence=selected.map(x=>`${x.p.location}: ${String(x.p.source_text||'').slice(0,3800)}`).join('\n').slice(0,21000);
+  const prompt=`Create an ORIGINAL practical explanation of the precise requested topic from ONLY these authorized O&M excerpts. Return JSON with keys recorded, units, practical, check, diagram (exactly three short labels), source. The source field names the excerpt page(s) and distinguishes shared equipment coverage. Preserve exact numeric values and units as printed; an absent or OCR-uncertain motor rating, speed or ratio MUST be stated 'Not confirmed in the retrieved pages'. Never substitute a remembered specification. Diagram labels are an illustrative functional flow, not an OEM drawing. The practical text must explain how the recorded specification affects this machine in clear maintenance language. Do not give isolation or operating instructions beyond the source. Do not copy textbook prose or images. Short plain English, each field <=220 characters. If the requested component has no specific evidence, say that explicitly in recorded and provide only grounded functional context. QUESTION: ${question.slice(0,500)}\nEVIDENCE:\n${evidence}`;
+  try{const gx=await geminiGenerateWithFallbackV892({contents:[{parts:[{text:prompt}]}],generationConfig:{responseMimeType:'application/json',maxOutputTokens:850}},45000);
+    const data=await gx.response.json(),raw=(data.candidates?.[0]?.content?.parts||[]).map(x=>x.text||'').join('');
+    const report=safeJsonV874(raw);if(!report||!Array.isArray(report.diagram))throw Error('Invalid explanation');
+    // Any displayed plant specification must be visible in the selected
+    // source pages. Generated illustrative calculations belong elsewhere.
+    const reportedNumbers=String(report.recorded||'').match(/\b\d+(?:[.,]\d+)?\b/g)||[];
+    if(reportedNumbers.some(n=>!new RegExp(`(?<!\\d)${n.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}(?!\\d)`).test(evidence)))
+      report.recorded='Requested specification is not confirmed in the retrieved manual pages.';
+    const title=`${grid?'Charging Grids':item.equipment} | ${subject.slice(0,45)}`;
+    await sendText(from,`${title}\n${String(report.recorded||'').slice(0,240)}\n${String(report.practical||'').slice(0,300)}\n\nPractical explanation PDF follows.`.slice(0,850));
+    await sendGeneratedDocumentV878(from,practicalManualPdfV81575(title,report),'LMMM_Practical_Manual_Explanation.pdf','application/pdf');return true;
+  }catch(e){console.error('[PRACTICAL_MANUAL_PDF]',e);await sendText(from,'Manual explanation PDF is temporarily unavailable. Please try again.');return true;}
+}
 function sortMaintenanceRowsByDateV81560(rows,module){
   if(!['JOBS','DEFECTS','HISTORY'].includes(module))return rows;
   const date=row=>String(row.date||row.content?.match(/\b(?:19|20)\d{2}-\d{2}-\d{2}\b/)?.[0]||'');
@@ -4797,6 +4871,7 @@ async function answerChargingGridPartsV81570(from,user,question,module){
 }
 async function handleUniversalSearchV81513(from,question,user,options={}){
   if(!(await hasAuthorityV874(user,'VIEW'))){await sendText(from,'Search access is not enabled for your account.');return true;}
+  if(await answerPracticalManualPdfV81575(from,user,question,searchIntentV81524(question,options.module)))return true;
   if(await answerChargingGridManualV81561(from,user,question,searchIntentV81524(question,options.module)))return true;
   const bothBp=bothBloomPushersV81560(question);
   if(bothBp&&(!options.module||options.module==='ALL')&&
