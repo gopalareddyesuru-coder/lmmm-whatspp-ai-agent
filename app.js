@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.78 EQUIPMENT ARRANGEMENT PDF 2026-10-10
+// LMMM AI Maintenance V8.15.79 READABLE ARRANGEMENT PDF 2026-10-10
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -4722,28 +4722,38 @@ function practicalManualPdfV81575(title,report){
   t(title.slice(0,82),30,783,11,false,'0.79 0.91 0.94');
   t('Illustrative schematic - not an OEM / as-built drawing',30,742,9,false);
   const labels=(Array.isArray(report.diagram)?report.diagram:[]).slice(0,6);
+  let diagramPage='';
   if(report.gridLayout){
-    rect(30,572,535,151,'0.96 0.98 0.98');
-    t('CHARGING GRID | FUNCTIONAL ARRANGEMENT',42,706,10,true,'0.043 0.224 0.329');
-    t('Bloom storage / transfer lanes',42,690,8);
-    for(let i=0;i<3;i++){const yy=675-i*24;
-      rect(55,yy-7,330,17,i%2?'0.86 0.94 0.91':'0.88 0.94 0.97');
-      t(`Lane ${i+1}`,62,yy-3,8,true);for(let j=0;j<4;j++)rect(126+j*40,yy-3,29,9,'0.96 0.70 0.33');
-      line(385,yy+1,416,yy+1);t('>',406,yy-3,10,true);
+    rect(30,254,535,466,'0.96 0.98 0.98');
+    t('CHARGING GRID | FUNCTIONAL ARRANGEMENT',45,688,13,true,'0.043 0.224 0.329');
+    t('Top view: three transfer lanes (conceptual)',45,666,10);
+    for(let i=0;i<3;i++){const yy=622-i*76;
+      rect(50,yy-21,390,47,i%2?'0.83 0.94 0.91':'0.85 0.93 0.98');
+      t(`LANE ${i+1}`,59,yy-3,10,true);
+      for(let j=0;j<4;j++){rect(141+j*57,yy-9,39,22,'0.95 0.68 0.27');t('BLOOM',144+j*57,yy-2,6,true);}
+      line(440,yy+2,465,yy+2);t('>',453,yy-3,12,true);
     }
-    rect(424,619,119,66,'0.82 0.91 0.96');t('To roller',437,652,9,true);t('table',437,638,9,true);
-    line(53,596,500,596);t('Rope / lineshaft drive',53,600,8,true);
-    icon('AC motor',45,561);t('AC motor',87,582,8,true);
-    icon('gear unit',187,561);t('gear unit',229,582,8,true);
-    icon('rope drums',338,561);t('rope drums',380,582,8,true);
-    line(132,585,182,585);t('>',160,580,10,true);line(283,585,333,585);t('>',308,580,10,true);
-    t('Three rope transfer trains; folding dogs engage the bloom groups.',42,548,8);
+    rect(475,448,73,215,'0.73 0.87 0.95');
+    t('ROLLER',484,561,9,true);t('TABLE',486,543,9,true);
+    t('Bloom groups move from storage lanes toward the roller table.',49,375,10);
+    const drive=[['AC motor',54],['Gear unit',210],['Rope drums',366]];
+    for(const [part,x] of drive){rect(x,288,135,66,'0.82 0.92 0.96');icon(part,x+12,298);t(part,x+58,319,10,true);}
+    line(190,319,207,319);t('>',195,315,10,true);
+    line(346,319,363,319);t('>',351,315,10,true);
+    t('Motor drives the lineshaft and three rope transfer trains.',49,270,9);
+    t('Folding dogs engage bloom groups. Sizes and installation positions are illustrative.',49,235,9);
+    t('SOURCE: Charging Equipment Description, Item 1, pages 4-7.',49,205,9,true);
+    t('Use the approved OEM drawing for construction and clearances.',49,187,9);
+    diagramPage=s;
+    s='0.043 0.224 0.329 rg 0 762 595 80 re f 0.09 0.67 0.68 rg 0 758 595 4 re f ';
+    t('LMMM | MANUAL SPECIFICATIONS',30,808,16,true,'1 1 1');
+    t(title.slice(0,82),30,783,11,false,'0.79 0.91 0.94');
   }else if(labels.length>=3){labels.forEach((label,i)=>{const col=i%3,row=Math.floor(i/3),x=30+(row?2-col:col)*183,boxY=675-row*71;
     rect(x,boxY,158,51,(i%2)?'0.84 0.94 0.92':'0.89 0.95 0.97');
     icon(label,x+6,boxY);wrapCellV880(label,16).slice(0,2).forEach((line,j)=>t(line,x+50,boxY+30-j*14,9,true));
     if(col<2&&i<labels.length-1){const right=row?x-25:x+159;s+=`0.08 0.52 0.55 RG 2 w ${right} ${boxY+25} m ${right+21} ${boxY+25} l S `;t(row?'<':'>',right+10,boxY+21,12,true);}
     if(i===2&&labels.length>3){s+=`0.08 0.52 0.55 RG 2 w ${x+79} ${boxY-2} m ${x+79} ${boxY-18} l S `;t('v',x+75,boxY-26,12,true);}});}
-  let y=report.gridLayout?529:labels.length>3?568:645;
+  let y=report.gridLayout?728:labels.length>3?568:645;
   const sections=[['RECORDED SPECIFICATION',report.recorded],['SYMBOLS AND UNITS',report.units],
     ['WHAT IT MEANS ON THE MACHINE',report.practical],['WORKED EXAMPLE / LIMIT',report.example],
     ['FIELD CHECK',report.check],['SOURCE / LIMIT',report.source]];
@@ -4754,9 +4764,10 @@ function practicalManualPdfV81575(title,report){
     t(heading,40,y-18,10,true,'0.043 0.224 0.329');lines.forEach((line,i)=>t(line,40,y-37-i*14,9));y-=height+9;
   }
   t('Values are source-backed only; verify against current OEM revision before work.',30,28,8);
-  const content=add(`<< /Length ${Buffer.byteLength(s)} >>\nstream\n${s}\nendstream`);
-  const page=add(`<< /Type /Page /Parent ${pages} 0 R /MediaBox [0 0 ${W} ${H}] /Resources << /Font << /F1 ${font} 0 R /F2 ${bold} 0 R >> >> /Contents ${content} 0 R >>`);
-  objs[catalog]=`<< /Type /Catalog /Pages ${pages} 0 R >>`;objs[pages]=`<< /Type /Pages /Kids [${page} 0 R] /Count 1 >>`;
+  const streams=diagramPage?[diagramPage,s]:[s],pageIds=[];
+  for(const stream of streams){const content=add(`<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream`);
+    pageIds.push(add(`<< /Type /Page /Parent ${pages} 0 R /MediaBox [0 0 ${W} ${H}] /Resources << /Font << /F1 ${font} 0 R /F2 ${bold} 0 R >> >> /Contents ${content} 0 R >>`));}
+  objs[catalog]=`<< /Type /Catalog /Pages ${pages} 0 R >>`;objs[pages]=`<< /Type /Pages /Kids [${pageIds.map(id=>`${id} 0 R`).join(' ')}] /Count ${pageIds.length} >>`;
   let out='%PDF-1.4\n',offs=[0];for(let i=1;i<objs.length;i++){offs[i]=Buffer.byteLength(out);out+=`${i} 0 obj\n${objs[i]}\nendobj\n`;}
   const pos=Buffer.byteLength(out);out+=`xref\n0 ${objs.length}\n0000000000 65535 f \n`;
   for(let i=1;i<objs.length;i++)out+=`${String(offs[i]).padStart(10,'0')} 00000 n \n`;
