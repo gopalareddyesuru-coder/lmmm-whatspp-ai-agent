@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.77 ILLUSTRATED MANUAL PDF 2026-10-10
+// LMMM AI Maintenance V8.15.78 EQUIPMENT ARRANGEMENT PDF 2026-10-10
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -4722,12 +4722,28 @@ function practicalManualPdfV81575(title,report){
   t(title.slice(0,82),30,783,11,false,'0.79 0.91 0.94');
   t('Illustrative schematic - not an OEM / as-built drawing',30,742,9,false);
   const labels=(Array.isArray(report.diagram)?report.diagram:[]).slice(0,6);
-  if(labels.length>=3){labels.forEach((label,i)=>{const col=i%3,row=Math.floor(i/3),x=30+(row?2-col:col)*183,boxY=675-row*71;
+  if(report.gridLayout){
+    rect(30,572,535,151,'0.96 0.98 0.98');
+    t('CHARGING GRID | FUNCTIONAL ARRANGEMENT',42,706,10,true,'0.043 0.224 0.329');
+    t('Bloom storage / transfer lanes',42,690,8);
+    for(let i=0;i<3;i++){const yy=675-i*24;
+      rect(55,yy-7,330,17,i%2?'0.86 0.94 0.91':'0.88 0.94 0.97');
+      t(`Lane ${i+1}`,62,yy-3,8,true);for(let j=0;j<4;j++)rect(126+j*40,yy-3,29,9,'0.96 0.70 0.33');
+      line(385,yy+1,416,yy+1);t('>',406,yy-3,10,true);
+    }
+    rect(424,619,119,66,'0.82 0.91 0.96');t('To roller',437,652,9,true);t('table',437,638,9,true);
+    line(53,596,500,596);t('Rope / lineshaft drive',53,600,8,true);
+    icon('AC motor',45,561);t('AC motor',87,582,8,true);
+    icon('gear unit',187,561);t('gear unit',229,582,8,true);
+    icon('rope drums',338,561);t('rope drums',380,582,8,true);
+    line(132,585,182,585);t('>',160,580,10,true);line(283,585,333,585);t('>',308,580,10,true);
+    t('Three rope transfer trains; folding dogs engage the bloom groups.',42,548,8);
+  }else if(labels.length>=3){labels.forEach((label,i)=>{const col=i%3,row=Math.floor(i/3),x=30+(row?2-col:col)*183,boxY=675-row*71;
     rect(x,boxY,158,51,(i%2)?'0.84 0.94 0.92':'0.89 0.95 0.97');
     icon(label,x+6,boxY);wrapCellV880(label,16).slice(0,2).forEach((line,j)=>t(line,x+50,boxY+30-j*14,9,true));
     if(col<2&&i<labels.length-1){const right=row?x-25:x+159;s+=`0.08 0.52 0.55 RG 2 w ${right} ${boxY+25} m ${right+21} ${boxY+25} l S `;t(row?'<':'>',right+10,boxY+21,12,true);}
     if(i===2&&labels.length>3){s+=`0.08 0.52 0.55 RG 2 w ${x+79} ${boxY-2} m ${x+79} ${boxY-18} l S `;t('v',x+75,boxY-26,12,true);}});}
-  let y=labels.length>3?568:645;
+  let y=report.gridLayout?529:labels.length>3?568:645;
   const sections=[['RECORDED SPECIFICATION',report.recorded],['SYMBOLS AND UNITS',report.units],
     ['WHAT IT MEANS ON THE MACHINE',report.practical],['WORKED EXAMPLE / LIMIT',report.example],
     ['FIELD CHECK',report.check],['SOURCE / LIMIT',report.source]];
@@ -4778,6 +4794,7 @@ async function answerPracticalManualPdfV81575(from,user,question,module){
   try{const gx=await geminiGenerateWithFallbackV892({contents:[{parts:[{text:prompt}]}],generationConfig:{responseMimeType:'application/json',maxOutputTokens:850}},45000);
     const data=await gx.response.json(),raw=(data.candidates?.[0]?.content?.parts||[]).map(x=>x.text||'').join('');
     const report=safeJsonV874(raw);if(!report||!Array.isArray(report.diagram))throw Error('Invalid explanation');
+    report.gridLayout=grid&&/three charging grids/i.test(pages.map(p=>p.source_text).join(' '))&&/rope transfer trains/i.test(pages.map(p=>p.source_text).join(' '));
     // This particular scanned ratio line reads "80 2 1". The same approved
     // drawing labels the gear j=80; make the interpretation explicit instead
     // of reproducing corrupted OCR as a specification.
