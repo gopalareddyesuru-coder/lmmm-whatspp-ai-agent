@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.75 OWNER MANUAL EXPLANATION PDF 2026-10-09
+// LMMM AI Maintenance V8.15.76 MANUAL TECHNICAL DATA PDF 2026-10-09
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -4709,13 +4709,16 @@ function practicalManualPdfV81575(title,report){
   t('LMMM | PRACTICAL MANUAL EXPLANATION',30,808,16,true,'1 1 1');
   t(title.slice(0,82),30,783,11,false,'0.79 0.91 0.94');
   t('Illustrative schematic - not an OEM / as-built drawing',30,742,9,false);
-  const labels=(Array.isArray(report.diagram)?report.diagram:[]).slice(0,3);
-  if(labels.length===3){labels.forEach((label,i)=>{const x=30+i*183;rect(x,674,158,51,i===1?'0.84 0.94 0.92':'0.89 0.95 0.97');
-    wrapCellV880(label,22).slice(0,2).forEach((line,j)=>t(line,x+9,704-j*14,10,true));
-    if(i<2){s+='0.08 0.52 0.55 RG 2 w '+(x+159)+' 699 m '+(x+180)+' 699 l S ';t('>',x+169,695,12,true);}});}
-  let y=645;
+  const labels=(Array.isArray(report.diagram)?report.diagram:[]).slice(0,6);
+  if(labels.length>=3){labels.forEach((label,i)=>{const col=i%3,row=Math.floor(i/3),x=30+(row?2-col:col)*183,boxY=675-row*71;
+    rect(x,boxY,158,51,(i%2)?'0.84 0.94 0.92':'0.89 0.95 0.97');
+    wrapCellV880(label,22).slice(0,2).forEach((line,j)=>t(line,x+9,boxY+30-j*14,10,true));
+    if(col<2&&i<labels.length-1){const right=row?x-25:x+159;s+=`0.08 0.52 0.55 RG 2 w ${right} ${boxY+25} m ${right+21} ${boxY+25} l S `;t(row?'<':'>',right+10,boxY+21,12,true);}
+    if(i===2&&labels.length>3){s+=`0.08 0.52 0.55 RG 2 w ${x+79} ${boxY-2} m ${x+79} ${boxY-18} l S `;t('v',x+75,boxY-26,12,true);}});}
+  let y=labels.length>3?568:645;
   const sections=[['RECORDED SPECIFICATION',report.recorded],['SYMBOLS AND UNITS',report.units],
-    ['WHAT IT MEANS ON THE MACHINE',report.practical],['FIELD CHECK',report.check],['SOURCE / LIMIT',report.source]];
+    ['WHAT IT MEANS ON THE MACHINE',report.practical],['WORKED EXAMPLE / LIMIT',report.example],
+    ['FIELD CHECK',report.check],['SOURCE / LIMIT',report.source]];
   for(const [heading,value] of sections){
     const lines=wrapCellV880(value||'Not established by the available excerpt.',94).slice(0,5),height=34+lines.length*14;
     if(y-height<49)break;
@@ -4748,7 +4751,7 @@ async function answerPracticalManualPdfV81575(from,user,question,module){
   if(!grid&&matches.length!==1)return false;
   const item=grid?null:matches[0];
   const source=item?.source_file||'1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf';
-  const start=item?.source_page||6,next=item?readManualItemSearchIndexV81535().items.find(x=>x.item_number>item.item_number&&x.source_file===source&&x.source_page>start)?.source_page:12;
+  const start=item?.source_page||3,next=item?readManualItemSearchIndexV81535().items.find(x=>x.item_number>item.item_number&&x.source_file===source&&x.source_page>start)?.source_page:12;
   const end=Math.min(start+39,(next||start+40)-1);
   const pages=(await pool.query(`SELECT location,source_text FROM lmmm_source_review WHERE source_file=$1 AND location=ANY($2::text[]) ORDER BY (substring(location from 'page:([0-9]+)'))::int`,
     [source,Array.from({length:end-start+1},(_,i)=>`page:${start+i}`)])).rows;
@@ -4758,7 +4761,7 @@ async function answerPracticalManualPdfV81575(from,user,question,module){
   const ranked=pages.map(p=>({p,score:terms.reduce((n,term)=>n+(String(p.source_text||'').toLowerCase().includes(term)?1:0),0)})).sort((a,b)=>b.score-a.score);
   const selected=ranked.slice(0,Math.min(8,pages.length)).sort((a,b)=>Number(a.p.location.split(':')[1])-Number(b.p.location.split(':')[1]));
   const evidence=selected.map(x=>`${x.p.location}: ${String(x.p.source_text||'').slice(0,3800)}`).join('\n').slice(0,21000);
-  const prompt=`Create an ORIGINAL practical explanation of the precise requested topic from ONLY these authorized O&M excerpts. Return JSON with keys recorded, units, practical, check, diagram (exactly three short labels), source. The source field names the excerpt page(s) and distinguishes shared equipment coverage. Preserve exact numeric values and units as printed; an absent or OCR-uncertain motor rating, speed or ratio MUST be stated 'Not confirmed in the retrieved pages'. Never substitute a remembered specification. Diagram labels are an illustrative functional flow, not an OEM drawing. The practical text must explain how the recorded specification affects this machine in clear maintenance language. Do not give isolation or operating instructions beyond the source. Do not copy textbook prose or images. Short plain English, each field <=220 characters. If the requested component has no specific evidence, say that explicitly in recorded and provide only grounded functional context. QUESTION: ${question.slice(0,500)}\nEVIDENCE:\n${evidence}`;
+  const prompt=`Create an ORIGINAL practical explanation of the precise requested topic from ONLY these authorized O&M excerpts. Return JSON with keys recorded, units, practical, example, check, diagram (six short functional labels if supported), source. In recorded list ALL relevant source-backed specifications for the requested component, with original units. In units explain kW as power and rpm as rotational speed where those symbols occur. In example show one short dimensional calculation ONLY when the necessary inputs are documented and the engineering assumption is labelled; otherwise explain how a technician would compare the specification with an actual reading without inventing one. The source field names the excerpt page(s) and distinguishes shared equipment coverage. Preserve exact numeric values and units as printed; an absent or OCR-uncertain rating, speed or ratio MUST be stated 'Not confirmed in the retrieved pages'. Never substitute a remembered specification. Diagram labels are an illustrative functional flow, not an OEM drawing. The practical text must explain how the recorded specification affects this machine in clear maintenance language. Do not give isolation or operating instructions beyond the source. Do not copy textbook prose or images. Short plain English, each field <=300 characters. If the requested component has no specific evidence, say that explicitly in recorded and provide only grounded functional context. QUESTION: ${question.slice(0,500)}\nEVIDENCE:\n${evidence}`;
   try{const gx=await geminiGenerateWithFallbackV892({contents:[{parts:[{text:prompt}]}],generationConfig:{responseMimeType:'application/json',maxOutputTokens:850}},45000);
     const data=await gx.response.json(),raw=(data.candidates?.[0]?.content?.parts||[]).map(x=>x.text||'').join('');
     const report=safeJsonV874(raw);if(!report||!Array.isArray(report.diagram))throw Error('Invalid explanation');
