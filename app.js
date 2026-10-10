@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.79 READABLE ARRANGEMENT PDF 2026-10-10
+// LMMM AI Maintenance V8.15.80 DRAWING INTENT AND CELLAR SCOPE 2026-10-10
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -4064,15 +4064,18 @@ function drawingQueryV81535(question=''){
   return cleaned||raw;
 }
 function looksLikeDrawingRequestV81535(question=''){
-  const q=String(question||'');
+  const q=String(question||'').trim();
   if(/\b(?:drawings?|drg)\b/i.test(q))return true;
   // A bare equipment name/code (for example BP1 → "bloom pusher 1") is
   // an asset lookup, not evidence that the user wants the drawing catalogue.
   const assetOnly=drawingNormV81535(q);
   if(/^(?:BP|BLOOMPUSHER)[12]?$/.test(assetOnly))return false;
   // Identifier-like values containing both letters and digits, or common LMMM drawing-series numbers.
+  // Never turn a natural-language equipment question such as "Tell me about
+  // cellar 10" into a drawing number by deleting spaces and punctuation.
+  if(/\s/.test(q))return /\b170\d{3,7}(?:[-/]\d+)?\b/i.test(q);
   const compact=drawingNormV81535(q);
-  return /[A-Z]/.test(compact)&&/\d/.test(compact)&&compact.length>=6 || /\b170\d{3,7}(?:[-/]\d+)?\b/i.test(q);
+  return /^[A-Z]*\d[A-Z0-9./-]{5,}$/i.test(q)&&compact.length>=6 || /^170\d{3,7}(?:[-/]\d+)?$/i.test(q);
 }
 function drawingNameIntentV81535(question=''){
   const q=String(question||'').trim().toLowerCase();
@@ -4103,9 +4106,13 @@ function searchDrawingsMasterV81535(question='',user=null){
   const words=(qLower.match(/[a-z0-9]{2,}/g)||[]).filter(w=>!['drawing','drawings','drg','show','open','find','search'].includes(w));
   const areaHint=drawingAreaHintV81535(question,user), areaKey=String(areaHint||'').toUpperCase();
   const results=[];
+  const cellarNumber=String(question).match(/\bCELLAR\s*[- ]?\s*(\d{1,2})\b/i)?.[1];
   for(const d of (DRAWINGS_MASTER?.drawings||[])){
     const no=drawingFieldV81535(d,'drawing_number','drawing_no'), noNorm=drawingNormV81535(no||d.drawing_number_normalized||'');
     const text=drawingTextV81535(d), dArea=String(d.area||'').toUpperCase(); let score=0, exact=false;
+    // A cellar number is an asset/location qualifier. Matching the isolated
+    // digit in an unrelated drawing number or page is insufficient.
+    if(cellarNumber&&!new RegExp(`\\bCELLAR\\s*[- ]?\\s*0?${Number(cellarNumber)}\\b`,'i').test(text))continue;
     if(steamDrumFurnace1&&(!/\bFURNACE[- ]?1\b/i.test(text)||/\bFURNACE[- ]?2\b/i.test(text)))continue;
     const fileStem=String(d.filename||'').replace(/\.(?:tiff?|pdf|jpe?g|png|dwg|dxf)$/i,'').replace(/\s+(?:SHEET|SH)\s*\d+(?:\s*OF\s*\d+)?$/i,'');
     const exactIds=[no,d.drawing_number_normalized,fileStem,...(Array.isArray(d.aliases)?d.aliases:[])]
@@ -4990,7 +4997,11 @@ async function handleUniversalSearchV81513(from,question,user,options={}){
   const chargingRows=chargingResult.status==='fulfilled'?chargingResult.value:[];
   if(chargingResult.status==='rejected'){catalogFailed=true;console.error('[CHARGING_HISTORY]',chargingResult.reason);}
   request.question=question;
-  const scopedRows=dedupeMaintenanceResultsV81537(filterSearchRowsV81518([...allRows,...catalog.rows,...bpRows,...chargingRows],module),request);
+  const cellarUnit=String(question).match(/\bCELLAR\s*[- ]?\s*(\d{1,2})\b/i)?.[1];
+  const cellarExact=cellarUnit?new RegExp(`\\bCELLAR\\s*[- ]?\\s*0?${Number(cellarUnit)}\\b`,'i'):null;
+  const unitRows=[...allRows,...catalog.rows,...bpRows,...chargingRows].filter(r=>!cellarExact||
+    cellarExact.test([r.title,r.content,r.source].filter(Boolean).join(' ')));
+  const scopedRows=dedupeMaintenanceResultsV81537(filterSearchRowsV81518(unitRows,module),request);
   const rows=sortMaintenanceRowsByDateV81560(balanceBpMaintenanceRowsV81532(rankSearchRowsV81524(scopedRows,request,module)
     .filter(r=>datedMaintenanceJobV81564(r,module)),request,module),module);
   const incomplete=partialFailure||catalogFailed;
