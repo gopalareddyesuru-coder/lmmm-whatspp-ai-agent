@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.76 MANUAL TECHNICAL DATA PDF 2026-10-09
+// LMMM AI Maintenance V8.15.77 ILLUSTRATED MANUAL PDF 2026-10-10
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -4706,13 +4706,25 @@ function practicalManualPdfV81575(title,report){
   let s='0.043 0.224 0.329 rg 0 762 595 80 re f 0.09 0.67 0.68 rg 0 758 595 4 re f ';
   const t=(v,x,y,size=10,b=false,color='0.09 0.20 0.25')=>{s+=`${color} rg BT /F${b?2:1} ${size} Tf 1 0 0 1 ${x} ${y} Tm (${escPdfV879(v)}) Tj ET `;};
   const rect=(x,y,w,h,color)=>{s+=`${color} rg ${x} ${y} ${w} ${h} re f `;};
+  const line=(x,y,X,Y)=>{s+=`0.08 0.35 0.43 RG 1.7 w ${x} ${y} m ${X} ${Y} l S `;};
+  const circle=(x,y,r)=>{s+=`0.08 0.35 0.43 RG 1.7 w ${x+r} ${y} m ${x+r} ${y+r*.5523} ${x+r*.5523} ${y+r} ${x} ${y+r} c ${x-r*.5523} ${y+r} ${x-r} ${y+r*.5523} ${x-r} ${y} c ${x-r} ${y-r*.5523} ${x-r*.5523} ${y-r} ${x} ${y-r} c ${x+r*.5523} ${y-r} ${x+r} ${y-r*.5523} ${x+r} ${y} c S `;};
+  // Original symbolic illustrations. These identify a component, never its geometry.
+  const icon=(name,x,y)=>{const n=String(name).toLowerCase(),cx=x+22,cy=y+25;
+    if(/motor|pump|fan/.test(n)){circle(cx,cy,15);t(/pump/.test(n)?'P':/fan/.test(n)?'F':'M',cx-5,cy-5,14,true);line(cx+15,cy,cx+23,cy);}
+    else if(/gear/.test(n)){circle(cx,cy,15);circle(cx,cy,5);for(let i=0;i<8;i++){const a=i*Math.PI/4;line(cx+16*Math.cos(a),cy+16*Math.sin(a),cx+20*Math.cos(a),cy+20*Math.sin(a));}}
+    else if(/drum|reel|roll/.test(n)){circle(cx-9,cy,13);circle(cx+9,cy,13);line(cx-9,cy+13,cx+9,cy+13);line(cx-9,cy-13,cx+9,cy-13);}
+    else if(/coupling/.test(n)){circle(cx-10,cy,10);circle(cx+10,cy,10);line(cx-18,cy,cx+18,cy);}
+    else if(/shaft|rope|chain|belt/.test(n)){line(cx-21,cy,cx+21,cy);line(cx-21,cy+5,cx+21,cy+5);circle(cx-18,cy+2,4);circle(cx+18,cy+2,4);}
+    else if(/cylinder|hydraulic/.test(n)){s+=`0.08 0.35 0.43 RG 1.7 w ${cx-20} ${cy-9} 28 18 re S `;line(cx+8,cy,cx+24,cy);}
+    else {circle(cx,cy,14);t('i',cx-2,cy-5,14,true);}
+  };
   t('LMMM | PRACTICAL MANUAL EXPLANATION',30,808,16,true,'1 1 1');
   t(title.slice(0,82),30,783,11,false,'0.79 0.91 0.94');
   t('Illustrative schematic - not an OEM / as-built drawing',30,742,9,false);
   const labels=(Array.isArray(report.diagram)?report.diagram:[]).slice(0,6);
   if(labels.length>=3){labels.forEach((label,i)=>{const col=i%3,row=Math.floor(i/3),x=30+(row?2-col:col)*183,boxY=675-row*71;
     rect(x,boxY,158,51,(i%2)?'0.84 0.94 0.92':'0.89 0.95 0.97');
-    wrapCellV880(label,22).slice(0,2).forEach((line,j)=>t(line,x+9,boxY+30-j*14,10,true));
+    icon(label,x+6,boxY);wrapCellV880(label,16).slice(0,2).forEach((line,j)=>t(line,x+50,boxY+30-j*14,9,true));
     if(col<2&&i<labels.length-1){const right=row?x-25:x+159;s+=`0.08 0.52 0.55 RG 2 w ${right} ${boxY+25} m ${right+21} ${boxY+25} l S `;t(row?'<':'>',right+10,boxY+21,12,true);}
     if(i===2&&labels.length>3){s+=`0.08 0.52 0.55 RG 2 w ${x+79} ${boxY-2} m ${x+79} ${boxY-18} l S `;t('v',x+75,boxY-26,12,true);}});}
   let y=labels.length>3?568:645;
@@ -4761,14 +4773,25 @@ async function answerPracticalManualPdfV81575(from,user,question,module){
   const ranked=pages.map(p=>({p,score:terms.reduce((n,term)=>n+(String(p.source_text||'').toLowerCase().includes(term)?1:0),0)})).sort((a,b)=>b.score-a.score);
   const selected=ranked.slice(0,Math.min(8,pages.length)).sort((a,b)=>Number(a.p.location.split(':')[1])-Number(b.p.location.split(':')[1]));
   const evidence=selected.map(x=>`${x.p.location}: ${String(x.p.source_text||'').slice(0,3800)}`).join('\n').slice(0,21000);
-  const prompt=`Create an ORIGINAL practical explanation of the precise requested topic from ONLY these authorized O&M excerpts. Return JSON with keys recorded, units, practical, example, check, diagram (six short functional labels if supported), source. In recorded list ALL relevant source-backed specifications for the requested component, with original units. In units explain kW as power and rpm as rotational speed where those symbols occur. In example show one short dimensional calculation ONLY when the necessary inputs are documented and the engineering assumption is labelled; otherwise explain how a technician would compare the specification with an actual reading without inventing one. The source field names the excerpt page(s) and distinguishes shared equipment coverage. Preserve exact numeric values and units as printed; an absent or OCR-uncertain rating, speed or ratio MUST be stated 'Not confirmed in the retrieved pages'. Never substitute a remembered specification. Diagram labels are an illustrative functional flow, not an OEM drawing. The practical text must explain how the recorded specification affects this machine in clear maintenance language. Do not give isolation or operating instructions beyond the source. Do not copy textbook prose or images. Short plain English, each field <=300 characters. If the requested component has no specific evidence, say that explicitly in recorded and provide only grounded functional context. QUESTION: ${question.slice(0,500)}\nEVIDENCE:\n${evidence}`;
+  const gridRatioConfirmed=grid&&/\bmotor\b/i.test(question)&&pages.some(p=>/\b(?:getriebe|gear(?:\s+unit)?)\b/i.test(p.source_text||'')&&/\bj\s*[=:]\s*80\b/i.test(p.source_text||''));
+  const prompt=`Create an ORIGINAL practical explanation of the precise requested topic from ONLY these authorized O&M excerpts. Return JSON with keys recorded, units, practical, example, check, diagram (up to six short names of actual functional components supported by excerpts), source. In recorded list ALL relevant source-backed specifications for the requested component, with original units. In units explain kW as power and rpm as rotational speed where those symbols occur. In example show one short dimensional calculation ONLY when the necessary inputs are documented and the engineering assumption is labelled; otherwise explain how a technician would compare the specification with an actual reading without inventing one. The source field names the excerpt page(s) and distinguishes shared equipment coverage. Preserve exact numeric values and units as printed; an absent or OCR-uncertain rating, speed or ratio MUST be stated 'Not confirmed in the retrieved pages'. Never substitute a remembered specification. Diagram labels are an illustrative functional flow, not an OEM drawing. The practical text must explain how the recorded specification affects this machine in clear maintenance language. Do not give isolation or operating instructions beyond the source. Do not copy textbook prose or images. Short plain English, each field <=300 characters. If the requested component has no specific evidence, say that explicitly in recorded and provide only grounded functional context. QUESTION: ${question.slice(0,500)}\nEVIDENCE:\n${evidence}`;
   try{const gx=await geminiGenerateWithFallbackV892({contents:[{parts:[{text:prompt}]}],generationConfig:{responseMimeType:'application/json',maxOutputTokens:850}},45000);
     const data=await gx.response.json(),raw=(data.candidates?.[0]?.content?.parts||[]).map(x=>x.text||'').join('');
     const report=safeJsonV874(raw);if(!report||!Array.isArray(report.diagram))throw Error('Invalid explanation');
+    // This particular scanned ratio line reads "80 2 1". The same approved
+    // drawing labels the gear j=80; make the interpretation explicit instead
+    // of reproducing corrupted OCR as a specification.
+    if(grid&&/\bmotor\b/i.test(question)){
+      report.recorded=String(report.recorded||'').replace(/(?:G\.?R\.?|gear\s+ratio)\s*[:.]?\s*80\s*[2:]\s*1\b/ig,'').replace(/[,;]\s*$/,'').trim();
+      if(gridRatioConfirmed){report.recorded+=`${report.recorded?'; ':''}Gear reduction indicated as 80:1 (drawing j=80; scanned ratio line unclear)`;
+        report.source=`${String(report.source||'')}; drive drawing page 5 (j=80)`;}
+      else if(/\b80\b/.test(String(report.recorded)))report.recorded=report.recorded.replace(/\b(?:G\.?R\.?|gear\s+ratio)[^;,.]*/ig,'Gear ratio not confirmed from scan');
+    }
+    for(const key of ['practical','example','check','units'])report[key]=String(report[key]||'').replace(/(?:G\.?R\.?|gear\s+ratio)\s*[:.]?\s*80\s*[2:]\s*1\b/ig,gridRatioConfirmed?'indicated gear reduction 80:1':'gear ratio not confirmed from scan');
     // Any displayed plant specification must be visible in the selected
     // source pages. Generated illustrative calculations belong elsewhere.
     const reportedNumbers=String(report.recorded||'').match(/\b\d+(?:[.,]\d+)?\b/g)||[];
-    if(reportedNumbers.some(n=>!new RegExp(`(?<!\\d)${n.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}(?!\\d)`).test(evidence)))
+    if(reportedNumbers.some(n=>!new RegExp(`(?<!\\d)${n.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}(?!\\d)`).test(evidence)&&!(gridRatioConfirmed&&(n==='80'||n==='1'))))
       report.recorded='Requested specification is not confirmed in the retrieved manual pages.';
     const title=`${grid?'Charging Grids':item.equipment} | ${subject.slice(0,45)}`;
     await sendText(from,`${title}\n${String(report.recorded||'').slice(0,240)}\n${String(report.practical||'').slice(0,300)}\n\nPractical explanation PDF follows.`.slice(0,850));
