@@ -4734,7 +4734,23 @@ function practicalManualPdfV81575(title,report){
   t('Illustrative schematic - not an OEM / as-built drawing',30,742,9,false);
   const labels=(Array.isArray(report.diagram)?report.diagram:[]).slice(0,6);
   let diagramPage='';
-  if(report.gridLayout){
+  if(report.cellarLayout){
+    rect(30,252,535,468,'0.96 0.98 0.98');
+    t('CELLAR | SYSTEMS RECORDED IN THIS LOCATION',45,688,13,true,'0.043 0.224 0.329');
+    t('Conceptual inventory map; relative positions and pipework are not documented.',45,665,9);
+    labels.forEach((label,i)=>{
+      const x=47+(i%2)*259,y=560-Math.floor(i/2)*104;
+      rect(x,y,240,83,i%2?'0.83 0.94 0.91':'0.85 0.93 0.98');
+      icon(label,x+8,y+12);
+      wrapCellV880(label,26).slice(0,3).forEach((ln,j)=>t(ln,x+64,y+53-j*15,10,j===0));
+    });
+    t('Each tile is a listed system; connecting arrows would imply an unverified relationship.',45,221,9);
+    t('Consult the approved system drawings for actual equipment, connections and dimensions.',45,202,9);
+    diagramPage=s;
+    s='0.043 0.224 0.329 rg 0 762 595 80 re f 0.09 0.67 0.68 rg 0 758 595 4 re f ';
+    t('LMMM | MANUAL EVIDENCE AND LIMITS',30,808,16,true,'1 1 1');
+    t(title.slice(0,82),30,783,11,false,'0.79 0.91 0.94');
+  }else if(report.gridLayout){
     rect(30,254,535,466,'0.96 0.98 0.98');
     t('CHARGING GRID | FUNCTIONAL ARRANGEMENT',45,688,13,true,'0.043 0.224 0.329');
     t('Top view: three transfer lanes (conceptual)',45,666,10);
@@ -4973,11 +4989,14 @@ async function answerCellarOverviewV81581(from,user,question,module){
         try{
           const systems=answer.split('\n').map(s=>s.match(/^\s*(?:[-*•]|\d+[.)])\s+(.+)$/)?.[1]?.trim()).filter(Boolean).slice(0,12);
           const source=rows[0];
-          const items=(systems.length?systems:[answer.replace(/\s+/g,' ').slice(0,300)]).map((description,i)=>({
-            item_no:i+1,description,remarks:`Erection manual | ${source.location||'page not recorded'}`
-          }));
-          const pack={document_type:'SEARCH_RESULTS',simple_search_results:true,extracted_items:items};
-          await sendGeneratedDocumentV878(from,tablePdfV880(pack,`Cellar ${number} overview | ${source.source_file} | ${source.location||'page not recorded'}`),
+          const report={cellarLayout:true,diagram:systems,
+            recorded:systems.join('; ')||'The indexed page identifies this cellar, but its systems need manual review.',
+            units:'The overview page does not confirm individual ratings, capacities, pressures, flows or dimensions. Request a named system for its technical specifications.',
+            practical:`Cellar ${number} is a location containing the listed systems. This diagram groups them by location; it does not show their actual layout or connections.`,
+            example:'For a specific system, compare its approved manual specification with the equipment nameplate and recorded readings. No numerical example is possible from this overview alone.',
+            check:'Confirm the equipment tag and latest approved system drawing before using a specification for maintenance.',
+            source:`${source.source_file}, ${source.location||'page not recorded'}; system names from the indexed erection-manual excerpt.`};
+          await sendGeneratedDocumentV878(from,practicalManualPdfV81575(`Cellar ${number} | Equipment and systems`,report),
             `LMMM_Cellar_${number}_Overview.pdf`,'application/pdf');
         }catch(pdfError){
           console.error('[CELLAR_OVERVIEW_PDF]',pdfError);
