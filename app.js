@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.86 SHARED ASSET ROUTING 2026-10-10
+// LMMM AI Maintenance V8.15.87 MANUAL DRAWING EVIDENCE 2026-10-11
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -4744,7 +4744,7 @@ async function answerMappedEquipmentOverviewV81585(from,user,question,module){
   if(matches.length!==1)return false;
   const item=matches[0];
   if(isOwner(from)&&await hasAuthorityV874(user,'PDF')){
-    return await answerPracticalManualPdfV81575(from,user,`item ${item.item_number} ${item.equipment} specification`,'MANUALS');
+    return await answerPracticalManualPdfV81575(from,user,`item ${item.item_number} ${question} specification`,'MANUALS');
   }
   await answerManualItemNumberV81535(from,user,`item ${item.item_number}`);
   return true;
@@ -4754,6 +4754,27 @@ async function answerMappedEquipmentOverviewV81585(from,user,question,module){
 function isEquipmentOverviewV81586(question){
   const q=String(question||'').trim();
   return q.length<=220&&/^(?:tell me about|describe|overview(?: of)?|information about|details of|what is)\s+(?:the\s+)?\S.{1,}$/i.test(q);
+}
+// A catalog keyword hit cannot prove fitment. Only a drawing number printed
+// in the selected O&M item's drawing-list section can enter this report.
+function manualLinkedDrawingsV81587(pages){
+  const cited=new Set();
+  for(const page of pages){
+    const body=String(page.source_text||'');
+    for(const heading of body.matchAll(/\b(?:list of drawings|drawing list|list of (?:sms|mecon) drawings)\b/gi)){
+      const excerpt=body.slice(heading.index,heading.index+4500).split(/\n\s*(?:\d+\.\s*)?(?:maintenance|lubrication|technical data|functional description)\b/i)[0];
+      for(const number of excerpt.match(/\b(?:\d{7,12}|PD[-\s/]*LMMM[-\s/]*\d{4,6})\b/gi)||[])cited.add(drawingNormV81535(number));
+    }
+  }
+  if(!cited.size)return [];
+  const found=[];
+  for(const d of DRAWINGS_MASTER?.drawings||[]){
+    if(!/\.(?:tiff?|pdf|jpe?g|png)$/i.test(String(d.filename||'')))continue;
+    const number=drawingNumberV81540(d),key=drawingNormV81535(number);
+    if(key&&cited.has(key))found.push({number,description:drawingNameV81540(d),drawing:d,
+      verified:!!d.title_block_verified});
+  }
+  return found.slice(0,20);
 }
 async function answerChargingGridManualV81561(from,user,question,module){
   if(module!=='MANUALS'||!chargingAssetV81533(question)?.name?.startsWith('Charging grids')||
@@ -4772,6 +4793,21 @@ async function answerChargingGridManualV81561(from,user,question,module){
 }
 // An owner-only teaching sheet assembled from the approved O&M page text.
 // The schematic is original and illustrative; it is never a drawing or an as-built.
+function jpegDimensionsV81587(bytes){
+  if(!Buffer.isBuffer(bytes)||bytes.length<8||bytes[0]!==0xff||bytes[1]!==0xd8)return null;
+  for(let i=2;i+9<bytes.length;){
+    if(bytes[i]!==0xff){i++;continue;}
+    const marker=bytes[i+1];if(marker===0xd9||marker===0xda)break;
+    if(marker===0xff){i++;continue;}
+    const length=bytes.readUInt16BE(i+2);if(length<2||i+2+length>bytes.length)break;
+    if([0xc0,0xc1,0xc2,0xc3].includes(marker)){
+      const height=bytes.readUInt16BE(i+5),width=bytes.readUInt16BE(i+7),components=bytes[i+9];
+      return width>0&&height>0&&[1,3].includes(components)?{width,height,components}:null;
+    }
+    i+=2+length;
+  }
+  return null;
+}
 function practicalManualPdfV81575(title,report){
   const W=595,H=842,objs=[null],add=x=>(objs.push(x),objs.length-1);
   const catalog=add(''),pages=add(''),font=add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'),bold=add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>');
@@ -4797,8 +4833,8 @@ function practicalManualPdfV81575(title,report){
   let diagramPage='';
   if(report.cellarLayout){
     rect(30,252,535,468,'0.96 0.98 0.98');
-    t('CELLAR | SYSTEMS RECORDED IN THIS LOCATION',45,688,13,true,'0.043 0.224 0.329');
-    t('Conceptual inventory map; relative positions and pipework are not documented.',45,665,9);
+    t(String(report.layoutTitle||'EQUIPMENT | DOCUMENTED COMPONENTS').slice(0,65),45,688,13,true,'0.043 0.224 0.329');
+    t('Source-backed component inventory; placement and connections are not implied.',45,665,9);
     labels.forEach((label,i)=>{
       const x=47+(i%2)*259,y=560-Math.floor(i/2)*104;
       rect(x,y,240,83,i%2?'0.83 0.94 0.91':'0.85 0.93 0.98');
@@ -4855,9 +4891,38 @@ function practicalManualPdfV81575(title,report){
   const streams=diagramPage?[diagramPage,s]:[s],pageIds=[];
   for(const stream of streams){const content=add(`<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream`);
     pageIds.push(add(`<< /Type /Page /Parent ${pages} 0 R /MediaBox [0 0 ${W} ${H}] /Resources << /Font << /F1 ${font} 0 R /F2 ${bold} 0 R >> >> /Contents ${content} 0 R >>`));}
+  const preview=report.drawingPreview,dimension=jpegDimensionsV81587(preview?.bytes);
+  if(dimension&&preview.bytes.length<=5*1024*1024){
+    const im=add(`<< /Type /XObject /Subtype /Image /Width ${dimension.width} /Height ${dimension.height} /ColorSpace /${dimension.components===1?'DeviceGray':'DeviceRGB'} /BitsPerComponent 8 /Filter /DCTDecode /Length ${preview.bytes.length} >>\nstream\n${preview.bytes.toString('latin1')}\nendstream`);
+    const ratio=dimension.width/dimension.height,w=Math.min(525,600*ratio),h=Math.min(600,525/ratio),x=(W-w)/2,y=130+(600-h)/2;
+    const caption=escPdfV879(`${preview.number||'Drawing'} - ${preview.description||'Manual-cited drawing'}`.slice(0,95));
+    const provenance=escPdfV879(preview.verified?'Title block verified in catalog':'Manual-cited number; catalog title block unverified');
+    const content=`0.043 0.224 0.329 rg 0 762 595 80 re f 1 1 1 rg BT /F2 16 Tf 1 0 0 1 30 808 Tm (LMMM | SOURCE DRAWING PREVIEW) Tj ET 0.09 0.20 0.25 rg BT /F2 10 Tf 1 0 0 1 30 736 Tm (${caption}) Tj ET BT /F1 9 Tf 1 0 0 1 30 718 Tm (${provenance}) Tj ET q ${w.toFixed(2)} 0 0 ${h.toFixed(2)} ${x.toFixed(2)} ${y.toFixed(2)} cm /Im0 Do Q BT /F1 8 Tf 1 0 0 1 30 90 Tm (Inspect the full approved drawing and revision before using dimensions or fitment.) Tj ET`;
+    const stream=add(`<< /Length ${Buffer.byteLength(content)} >>\nstream\n${content}\nendstream`);
+    pageIds.push(add(`<< /Type /Page /Parent ${pages} 0 R /MediaBox [0 0 ${W} ${H}] /Resources << /Font << /F1 ${font} 0 R /F2 ${bold} 0 R >> /XObject << /Im0 ${im} 0 R >> >> /Contents ${stream} 0 R >>`));
+  }
+  if(Array.isArray(report.specificationRows)&&report.specificationRows.length>=3){
+    let spec='0.043 0.224 0.329 rg 0 762 595 80 re f 0.09 0.67 0.68 rg 0 758 595 4 re f ';
+    const st=(value,x,y,size=9,boldText=false)=>{spec+=`0.09 0.20 0.25 rg BT /F${boldText?2:1} ${size} Tf 1 0 0 1 ${x} ${y} Tm (${escPdfV879(value)}) Tj ET `;};
+    spec+='1 1 1 rg BT /F2 16 Tf 1 0 0 1 30 808 Tm (LMMM | TECHNICAL SOURCE EXCERPTS) Tj ET ';
+    st('Recorded lines with units; OCR and asset fitment require source review.',30,731,9);
+    let y=702;
+    for(const row of report.specificationRows.slice(0,19)){
+      const lines=wrapCellV880(String(row.text||''),88).slice(0,2),height=23+lines.length*13;
+      if(y-height<55)break;
+      spec+=`${Math.round(y)%2?'0.91 0.96 0.97':'0.96 0.98 0.98'} rg 30 ${y-height} 535 ${height-4} re f `;
+      st(`PAGE ${row.page||'?'} | SOURCE TEXT`,40,y-17,8,true);
+      lines.forEach((line,i)=>st(line,40,y-32-i*13,8));y-=height+5;
+    }
+    st('These are excerpts, not validated nameplate or as-built values.',30,28,8);
+    const stream=add(`<< /Length ${Buffer.byteLength(spec)} >>\nstream\n${spec}\nendstream`);
+    pageIds.push(add(`<< /Type /Page /Parent ${pages} 0 R /MediaBox [0 0 ${W} ${H}] /Resources << /Font << /F1 ${font} 0 R /F2 ${bold} 0 R >> >> /Contents ${stream} 0 R >>`));
+  }
   objs[catalog]=`<< /Type /Catalog /Pages ${pages} 0 R >>`;objs[pages]=`<< /Type /Pages /Kids [${pageIds.map(id=>`${id} 0 R`).join(' ')}] /Count ${pageIds.length} >>`;
-  let out='%PDF-1.4\n',offs=[0];for(let i=1;i<objs.length;i++){offs[i]=Buffer.byteLength(out);out+=`${i} 0 obj\n${objs[i]}\nendobj\n`;}
-  const pos=Buffer.byteLength(out);out+=`xref\n0 ${objs.length}\n0000000000 65535 f \n`;
+  // The optional JPEG stream is stored as Latin-1 bytes. PDF xref offsets
+  // must count those bytes, not the UTF-8 expansion of high-bit characters.
+  let out='%PDF-1.4\n',offs=[0];for(let i=1;i<objs.length;i++){offs[i]=Buffer.byteLength(out,'latin1');out+=`${i} 0 obj\n${objs[i]}\nendobj\n`;}
+  const pos=Buffer.byteLength(out,'latin1');out+=`xref\n0 ${objs.length}\n0000000000 65535 f \n`;
   for(let i=1;i<objs.length;i++)out+=`${String(offs[i]).padStart(10,'0')} 00000 n \n`;
   out+=`trailer\n<< /Size ${objs.length} /Root ${catalog} 0 R >>\nstartxref\n${pos}\n%%EOF`;
   return Buffer.from(out,'binary');
@@ -4886,13 +4951,31 @@ async function answerPracticalManualPdfV81575(from,user,question,module){
   const subject=String(question).replace(/\b(?:explain|from|its|manual|specification|specs|details|of|the)\b/gi,' ').trim();
   const terms=subject.toLowerCase().split(/[^a-z0-9]+/).filter(x=>x.length>3&&!/charging|grid|equipment/.test(x));
   const ranked=pages.map(p=>({p,score:terms.reduce((n,term)=>n+(String(p.source_text||'').toLowerCase().includes(term)?1:0),0)})).sort((a,b)=>b.score-a.score);
-  const selected=ranked.slice(0,Math.min(8,pages.length)).sort((a,b)=>Number(a.p.location.split(':')[1])-Number(b.p.location.split(':')[1]));
-  const evidence=selected.map(x=>`${x.p.location}: ${String(x.p.source_text||'').slice(0,3800)}`).join('\n').slice(0,21000);
+  const selected=[...new Map([ranked[0],...ranked.slice(0,Math.min(10,pages.length)),
+    ...pages.filter(p=>/\b(?:list of drawings|technical data|specifications?)\b/i.test(p.source_text||'')).slice(0,3).map(p=>({p}))]
+    .filter(Boolean).map(x=>[x.p.location,x])).values()].sort((a,b)=>Number(a.p.location.split(':')[1])-Number(b.p.location.split(':')[1]));
+  const evidence=selected.map(x=>`${x.p.location}: ${String(x.p.source_text||'').slice(0,3400)}`).join('\n').slice(0,27000);
   const gridRatioConfirmed=grid&&/\bmotor\b/i.test(question)&&pages.some(p=>/\b(?:getriebe|gear(?:\s+unit)?)\b/i.test(p.source_text||'')&&/\bj\s*[=:]\s*80\b/i.test(p.source_text||''));
-  const prompt=`Create an ORIGINAL practical explanation of the precise requested topic from ONLY these authorized O&M excerpts. Return JSON with keys recorded, units, practical, example, check, diagram (up to six short names of actual functional components supported by excerpts), source. In recorded list ALL relevant source-backed specifications for the requested component, with original units. In units explain kW as power and rpm as rotational speed where those symbols occur. In example show one short dimensional calculation ONLY when the necessary inputs are documented and the engineering assumption is labelled; otherwise explain how a technician would compare the specification with an actual reading without inventing one. The source field names the excerpt page(s) and distinguishes shared equipment coverage. Preserve exact numeric values and units as printed; an absent or OCR-uncertain rating, speed or ratio MUST be stated 'Not confirmed in the retrieved pages'. Never substitute a remembered specification. Diagram labels are an illustrative functional flow, not an OEM drawing. The practical text must explain how the recorded specification affects this machine in clear maintenance language. Do not give isolation or operating instructions beyond the source. Do not copy textbook prose or images. Short plain English, each field <=300 characters. If the requested component has no specific evidence, say that explicitly in recorded and provide only grounded functional context. QUESTION: ${question.slice(0,500)}\nEVIDENCE:\n${evidence}`;
+  const prompt=`Create an ORIGINAL practical explanation of the precise requested topic from ONLY these authorized O&M excerpts. Return JSON with keys recorded, units, practical, example, check, diagram (up to six short names of actual functional components supported by excerpts), source. In recorded list ALL relevant source-backed specifications for the requested component, with original units. If a numbered unit is requested but the manual covers a family, label values as shared and never assert unit-specific fitment. In units explain kW as power and rpm as rotational speed where those symbols occur. In example show one short dimensional calculation ONLY when the necessary inputs are documented and the engineering assumption is labelled; otherwise explain how a technician would compare the specification with an actual reading without inventing one. The source field names the excerpt page(s) and distinguishes shared equipment coverage. Preserve exact numeric values and units as printed; an absent or OCR-uncertain rating, speed or ratio MUST be stated 'Not confirmed in the retrieved pages'. Never substitute a remembered specification. Diagram labels identify named components, not a physical arrangement or OEM drawing. The practical text must explain how the recorded specification affects this machine in clear maintenance language. Do not give isolation or operating instructions beyond the source. Do not copy textbook prose or images. Short plain English, each field <=300 characters. If the requested component has no specific evidence, say that explicitly in recorded and provide only grounded functional context. QUESTION: ${question.slice(0,500)}\nEVIDENCE:\n${evidence}`;
   try{const gx=await geminiGenerateWithFallbackV892({contents:[{parts:[{text:prompt}]}],generationConfig:{responseMimeType:'application/json',maxOutputTokens:850}},45000);
     const data=await gx.response.json(),raw=(data.candidates?.[0]?.content?.parts||[]).map(x=>x.text||'').join('');
     const report=safeJsonV874(raw);if(!report||!Array.isArray(report.diagram))throw Error('Invalid explanation');
+    if(!grid){report.cellarLayout=true;report.layoutTitle='EQUIPMENT | DOCUMENTED COMPONENTS';}
+    const requestedBp=String(question).match(/\b(?:BP|BLOOM\s+PUSHER)[ -]?([12])\b/i)?.[1];
+    if(item?.item_number===10&&requestedBp){
+      report.source=`Shared Bloom Pusher O&M item 10; BP-${requestedBp} fitment and ratings are not separated in these pages. ${String(report.source||'')}`.slice(0,295);
+      report.units=`The shared manual does not verify BP-${requestedBp} unit-specific ratings. ${String(report.units||'')}`.slice(0,295);
+    }
+    const subjectComponent=String(question).match(/\b(?:motor|gear(?:box| unit)?|pump|shaft|drum|coupling|cylinder|valve|bearing|roller|carriage)\b/i)?.[0];
+    const specSeen=new Set(),specRows=[];
+    for(const page of pages)for(const rawLine of String(page.source_text||'').split(/\n/)){
+      const line=rawLine.replace(/\s+/g,' ').trim();
+      if(line.length<12||line.length>170||!/(?<!\w)\d+(?:[.,]\d+)?\s*(?:kW|rpm|bar|MPa|mm|cm|m\b|kg|tonnes?|t\/h|m3\/h|°?C)\b/i.test(line))continue;
+      if(subjectComponent&&!new RegExp(subjectComponent,'i').test(line))continue;
+      const key=line.toUpperCase();if(specSeen.has(key))continue;specSeen.add(key);
+      specRows.push({page:String(page.location||'').replace(/^page:/,''),text:line});
+    }
+    report.specificationRows=specRows.slice(0,19);
     report.gridLayout=grid&&/three charging grids/i.test(pages.map(p=>p.source_text).join(' '))&&/rope transfer trains/i.test(pages.map(p=>p.source_text).join(' '));
     // This particular scanned ratio line reads "80 2 1". The same approved
     // drawing labels the gear j=80; make the interpretation explicit instead
@@ -4909,6 +4992,20 @@ async function answerPracticalManualPdfV81575(from,user,question,module){
     const reportedNumbers=String(report.recorded||'').match(/\b\d+(?:[.,]\d+)?\b/g)||[];
     if(reportedNumbers.some(n=>!new RegExp(`(?<!\\d)${n.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}(?!\\d)`).test(evidence)&&!(gridRatioConfirmed&&(n==='80'||n==='1'))))
       report.recorded='Requested specification is not confirmed in the retrieved manual pages.';
+    const linked=manualLinkedDrawingsV81587(pages);
+    if(linked.length){
+      const display=[...new Map(linked.map(x=>[drawingNormV81535(x.number),x])).values()];
+      report.source=`${String(report.source||'').slice(0,150)}; O&M drawing list: ${display.slice(0,3).map(x=>x.number).join(', ')}${display.length>3?` (+${display.length-3} more)`:''}`.slice(0,295);
+      const component=String(question).match(/\b(?:motor|gear(?:box| unit)?|pump|shaft|drum|coupling|cylinder|valve|bearing|roller|carriage)\b/i)?.[0];
+      const compatible=linked.filter(x=>!component||new RegExp(component.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'i').test(x.description));
+      const drawing=(compatible.find(x=>x.verified)||compatible.find(x=>/arrangement|assembly|general/i.test(x.description)))?.drawing;
+      if(drawing){
+        try{const preview=await drawingDrivePreviewV81536(drawing);
+          if(preview?.mime==='image/jpeg'&&jpegDimensionsV81587(preview.bytes))report.drawingPreview={...preview,
+            number:drawingNumberV81540(drawing),description:drawingNameV81540(drawing),verified:!!drawing.title_block_verified};
+        }catch(e){console.warn('[MANUAL_DRAWING_PREVIEW]',String(e?.message||e).slice(0,160));}
+      }
+    }
     const title=`${grid?'Charging Grids':item.equipment} | ${subject.slice(0,45)}`;
     await sendText(from,`${title}\n${String(report.recorded||'').slice(0,240)}\n${String(report.practical||'').slice(0,300)}\n\nPractical explanation PDF follows.`.slice(0,850));
     await sendGeneratedDocumentV878(from,practicalManualPdfV81575(title,report),'LMMM_Practical_Manual_Explanation.pdf','application/pdf');return true;
@@ -5074,7 +5171,7 @@ async function answerCellarOverviewV81581(from,user,question,module){
         try{
           const systems=answer.split('\n').map(s=>s.match(/^\s*(?:[-*•]|\d+[.)])\s+(.+)$/)?.[1]?.trim()).filter(Boolean).slice(0,12);
           const source=rows[0];
-          const report={cellarLayout:true,diagram:systems,
+          const report={cellarLayout:true,layoutTitle:'CELLAR | DOCUMENTED SYSTEMS',diagram:systems,
             recorded:systems.join('; ')||'The indexed page identifies this cellar, but its systems need manual review.',
             units:'The overview page does not confirm individual ratings, capacities, pressures, flows or dimensions. Request a named system for its technical specifications.',
             practical:`Cellar ${number} is a location containing the listed systems. This diagram groups them by location; it does not show their actual layout or connections.`,
@@ -5166,8 +5263,8 @@ async function handleUniversalSearchV81513(from,question,user,options={}){
   let module=searchIntentV81524(question,options.module);
   const language=options.language||await searchLanguageV81515(from,question),te=language==='TE';
   if(await answerCellarOverviewV81581(from,user,question,module))return true;
-  if(await answerBloomPusherOverviewV81585(from,user,question,module))return true;
   if(await answerMappedEquipmentOverviewV81585(from,user,question,module))return true;
+  if(await answerBloomPusherOverviewV81585(from,user,question,module))return true;
   if(await answerBloomPusherReferencesV81569(from,user,question,module))return true;
   if(await answerChargingGridPartsV81570(from,user,question,module))return true;
   if(await answerChargingGridManualV81561(from,user,question,module))return true;
