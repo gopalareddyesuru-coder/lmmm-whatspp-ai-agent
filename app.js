@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.91 NAMED LOCATION O&M 2026-10-14
+// LMMM AI Maintenance V8.15.92 SUBJECT CHOICES AND COMPACT EVIDENCE 2026-10-14
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -981,7 +981,7 @@ if((a=text.match(/^AUTH_ADV:(\d+)$/))){await sendList(from,'Advanced Authorities
     if(normWA(from)!==u.whatsapp_number) await sendText(from,`${m[1]} registration removed. Maintenance history preserved.`);
     return true;
   }
-  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.15.91');return true;}
+  if(/^version$/i.test(text)){await sendText(from,'LMMM AI Maintenance V8.15.92');return true;}
   return false;
 }
 async function hasAuthorityV874(u, authority){
@@ -3634,6 +3634,52 @@ async function showAssetModulesV81515(from,term,language,warning=''){
   const options=[['DEFECTS','Defects'],['HISTORY','History'],['JOBS','Jobs'],['VIBRATIONS','Vibrations'],['LOADS','Loads'],['DRAWINGS','Drawings'],['MANUALS','Manuals / SMP'],['MORE','More topics'],['ALL','All results']];
   await sendList(from,`${language==='TE'?'ఎంచుకున్న అంశం':'Selected subject'}: ${term}${warning?`\n${warning}`:''}\n${language==='TE'?'ఏ సమాచారం కావాలి?':'What would you like to find?'}`, 'Choose',options.map(([id,title])=>({id:`MAINT_MOD:${id}`,title})), 'Maintenance Search');
 }
+// A location name alone selects a subject. Explanatory wording asks for its
+// overview. Apply this before any location-specific manual/overview route.
+async function showBareLocationChoicesV81592(from,user,question,language){
+  const match=String(question||'').trim().match(/^cellar\s*[- ]?\s*(\d{1,2})$/i);
+  if(!match||!await hasAuthorityV874(user,'VIEW'))return false;
+  const selected=`Cellar ${Number(match[1])}`;
+  await saveDocumentSessionV81511(from,'MAINT_SEARCH_FLOW',
+    {query:selected,names:[selected],selected,expiresAt:Date.now()+30*60000});
+  await showAssetModulesV81515(from,selected,language);
+  return true;
+}
+function manualFamilyChoicesV81592(question){
+  const normalized=normalizeEquipmentSearchTextV81553(question);
+  if(/^(?:TOCB|T O C B)$/.test(normalized))return readManualItemSearchIndexV81535().items.filter(x=>
+    /turnover type cooling bed/i.test(x.equipment||'')&&/BDM/i.test(x.source_file||''));
+  const singular=normalized.replace(/\bBEDS\b/g,'BED').replace(/\bAREAS\b/g,'AREA');
+  if(singular.length<7)return [];
+  const words=singular.split(' ').filter(x=>x.length>2);
+  if(!words.length)return [];
+  return readManualItemSearchIndexV81535().items.filter(item=>{
+    if(!item.equipment||!item.source_file||!item.source_page)return false;
+    return [item.equipment,...(item.aliases||[])].some(alias=>{
+      const name=normalizeEquipmentSearchTextV81553(alias).replace(/\bBEDS\b/g,'BED').replace(/\bAREAS\b/g,'AREA');
+      return words.every(word=>name.split(' ').includes(word));
+    });
+  }).slice(0,7);
+}
+async function showManualFamilyChoicesV81592(from,user,question,language){
+  if(!await hasAuthorityV874(user,'VIEW')||!bareAssetQuestionV81515(question,universalTermsV81513(question)))return false;
+  const matches=manualFamilyChoicesV81592(question);
+  if(!matches.length)return false;
+  const names=matches.map(x=>x.equipment);
+  if(matches.length===1){
+    await saveDocumentSessionV81511(from,'MAINT_SEARCH_FLOW',
+      {query:question,names,selected:names[0],expiresAt:Date.now()+30*60000});
+    await showAssetModulesV81515(from,names[0],language);return true;
+  }
+  await saveDocumentSessionV81511(from,'MAINT_SEARCH_FLOW',
+    {query:question,names,selected:'',expiresAt:Date.now()+30*60000});
+  await sendList(from,`Several documented equipment sections match ${question}. Choose the equipment and area, or search all sources.`,
+    'Choose',[
+      ...matches.map((item,i)=>({id:`MAINT_ASSET:${i}`,title:(/BDM/i.test(item.source_file)?`BDM TOCB | ${item.equipment}`:item.equipment).slice(0,60),
+        description:`O&M item ${item.item_number} | ${/BDM/i.test(item.source_file)?'BDM':/Bar Mill|Cooling Beds/i.test(item.source_file)?'Bar Mill / finishing':'O&M manual'}`})),
+      {id:'MAINT_ASSET:ALL',title:'All matching sources'}], 'Equipment');
+  return true;
+}
 async function showMoreMaintenanceModulesV81542(from,term){
   const options=[['INSPECTION','Inspection'],['CBM','Condition monitoring'],['PARTS','Parts'],['SPARES','Spares'],['FORMATS','Formats / check sheets'],['PERMITS','Permits'],['ALL','All results']];
   await sendList(from,`${term}: What would you like to find?`,'Choose',options.map(([id,title])=>({id:`MAINT_MOD:${id}`,title})),'Maintenance Search');
@@ -3724,7 +3770,9 @@ async function handleSearchChoiceV81515(from,cmd,user){
   if(module){
     if(module[1]==='MORE'){await showMoreMaintenanceModulesV81542(from,state.selected||state.query);return true;}
     const label={HISTORY:'history',JOBS:'jobs',DEFECTS:'defects',VIBRATIONS:'vibrations',LOADS:'loads',DRAWINGS:'drawings',PARTS:'parts',SPARES:'spares',MANUALS:'manuals',INSPECTION:'inspection',CBM:'condition monitoring',FORMATS:'formats',PERMITS:'permits',ALL:'all results'}[module[1]];
-    await handleUniversalSearchV81513(from,module[1]==='ALL'?(state.selected||state.query):`${state.selected||state.query} ${label}`,user,{module:module[1],language});return true;
+    const subject=state.selected||state.query;
+    await handleUniversalSearchV81513(from,module[1]==='ALL'&&/^Cellar \d+$/i.test(subject)?`Tell me about ${subject}`:
+      module[1]==='ALL'?subject:`${subject} ${label}`,user,{module:module[1],language});return true;
   }
   return false;
 }
@@ -4877,7 +4925,7 @@ function practicalManualPdfV81575(title,report){
     icon(label,x+6,boxY);wrapCellV880(label,16).slice(0,2).forEach((line,j)=>t(line,x+50,boxY+30-j*14,9,true));
     if(col<2&&i<labels.length-1){const right=row?x-25:x+159;s+=`0.08 0.52 0.55 RG 2 w ${right} ${boxY+25} m ${right+21} ${boxY+25} l S `;t(row?'<':'>',right+10,boxY+21,12,true);}
     if(i===2&&labels.length>3){s+=`0.08 0.52 0.55 RG 2 w ${x+79} ${boxY-2} m ${x+79} ${boxY-18} l S `;t('v',x+75,boxY-26,12,true);}});}
-  let y=report.gridLayout?728:labels.length>3?568:645;
+  let y=diagramPage?728:labels.length>3?568:645;
   const sections=[['RECORDED SPECIFICATION',report.recorded],['SYMBOLS AND UNITS',report.units],
     ['WHAT IT MEANS ON THE MACHINE',report.practical],['WORKED EXAMPLE / LIMIT',report.example],
     ['FIELD CHECK',report.check],['SOURCE / LIMIT',report.source]];
@@ -4921,24 +4969,33 @@ function practicalManualPdfV81575(title,report){
   // Append the actual retrieved, scoped O&M text. The summary is a reading
   // aid; it must not silently replace the pages on which it is based.
   const sourcePages=(Array.isArray(report.evidencePages)?report.evidencePages:[]).slice(0,40);
+  let excerpt='',excerptY=0,excerptCount=0;
+  const evidenceWrite=(v,x,y,size=9,b=false,color='0.09 0.20 0.25')=>{excerpt+=`${color} rg BT /F${b?2:1} ${size} Tf 1 0 0 1 ${x} ${y} Tm (${escPdfV879(v)}) Tj ET `;};
+  const flushEvidence=()=>{if(!excerptCount)return;
+    const content=add(`<< /Length ${Buffer.byteLength(excerpt)} >>\nstream\n${excerpt}\nendstream`);
+    pageIds.push(add(`<< /Type /Page /Parent ${pages} 0 R /MediaBox [0 0 ${W} ${H}] /Resources << /Font << /F1 ${font} 0 R /F2 ${bold} 0 R >> >> /Contents ${content} 0 R >>`));
+    excerpt='';excerptCount=0;};
+  const startEvidence=()=>{excerpt='0.043 0.224 0.329 rg 0 762 595 80 re f 0.09 0.67 0.68 rg 0 758 595 4 re f ';
+    evidenceWrite('LMMM | RETRIEVED MANUAL EVIDENCE',30,808,16,true,'1 1 1');
+    evidenceWrite('Indexed source text (OCR may contain errors). Check approved pages before work.',30,731,9);
+    excerptY=706;};
   for(const entry of sourcePages){
     const source=String(entry.source_file||entry.source||'Indexed manual').slice(0,105);
     const location=String(entry.location||'page not recorded').slice(0,55);
     const body=String(entry.source_text||entry.text||'').replace(/[\x00-\x08\x0b-\x1f]/g,' ').slice(0,14000);
     if(body.replace(/\s+/g,' ').trim().length<65)continue;
     const lines=body.split(/\n/).flatMap(part=>wrapCellV880(part.trim(),92)).filter(Boolean);
-    for(let offset=0;offset<lines.length;offset+=43){
-      let excerpt='0.043 0.224 0.329 rg 0 762 595 80 re f 0.09 0.67 0.68 rg 0 758 595 4 re f ';
-      const write=(v,x,y,size=9,b=false,color='0.09 0.20 0.25')=>{excerpt+=`${color} rg BT /F${b?2:1} ${size} Tf 1 0 0 1 ${x} ${y} Tm (${escPdfV879(v)}) Tj ET `;};
-      write('LMMM | RETRIEVED MANUAL EVIDENCE',30,808,16,true,'1 1 1');
-      write(`${source} | ${location}`,30,781,9,false,'0.79 0.91 0.94');
-      write('Indexed source text (OCR may contain errors). Check the approved source before work.',30,731,9);
-      lines.slice(offset,offset+43).forEach((line,i)=>write(line,34,705-i*15,9));
-      write(`Excerpt ${Math.floor(offset/43)+1} of ${Math.max(1,Math.ceil(lines.length/43))} | ${location}`,30,28,8);
-      const content=add(`<< /Length ${Buffer.byteLength(excerpt)} >>\nstream\n${excerpt}\nendstream`);
-      pageIds.push(add(`<< /Type /Page /Parent ${pages} 0 R /MediaBox [0 0 ${W} ${H}] /Resources << /Font << /F1 ${font} 0 R /F2 ${bold} 0 R >> >> /Contents ${content} 0 R >>`));
+    if(!excerpt)startEvidence();
+    if(excerptY<125){flushEvidence();startEvidence();}
+    evidenceWrite(`${source.slice(0,72)} | ${location}`,34,excerptY,9,true);
+    excerptY-=18;excerptCount++;
+    for(const line of lines){
+      if(excerptY<60){flushEvidence();startEvidence();evidenceWrite(`${source.slice(0,72)} | ${location} (continued)`,34,excerptY,9,true);excerptY-=18;excerptCount++;}
+      evidenceWrite(line,34,excerptY,9);excerptY-=14;excerptCount++;
     }
+    excerptY-=12;
   }
+  flushEvidence();
   if(Array.isArray(report.linkedDrawings)&&report.linkedDrawings.length){
     let list='0.043 0.224 0.329 rg 0 762 595 80 re f 0.09 0.67 0.68 rg 0 758 595 4 re f ';
     const write=(v,x,y,size=9,b=false,color='0.09 0.20 0.25')=>{list+=`${color} rg BT /F${b?2:1} ${size} Tf 1 0 0 1 ${x} ${y} Tm (${escPdfV879(v)}) Tj ET `;};
@@ -5234,10 +5291,10 @@ async function answerNamedLocationManualV81591(from,user,number,roman){
   }catch(e){console.error('[NAMED_LOCATION_MANUAL]',String(e?.message||e).slice(0,200));return false;}
 }
 async function answerCellarOverviewV81581(from,user,question,module){
-  if(module!=='ALL'||!canReadDepartmentArchiveV81540(from,user)||
+  if(!['ALL','MANUALS'].includes(module)||!canReadDepartmentArchiveV81540(from,user)||
      !(await hasAuthorityV874(user,'VIEW'))||!pool)return false;
   const m=String(question||'').match(/\bCELLAR\s*[- ]?\s*(\d{1,2})\b/i);
-  if(!m||!/(?:^\s*CELLAR\s*[- ]?\s*\d+\s*$|\b(?:tell|about|what|overview|details|information|describe)\b)/i.test(question))return false;
+  if(!m||!/(?:^\s*CELLAR\s*[- ]?\s*\d+\s*$|\b(?:tell|about|what|overview|details|information|describe|manuals?)\b)/i.test(question))return false;
   const number=Number(m[1]);
   const toRoman=n=>{let result='';for(const [value,symbol] of [[10,'X'],[9,'IX'],[5,'V'],[4,'IV'],[1,'I']])
     while(n>=value){result+=symbol;n-=value;}return result;};
@@ -5435,6 +5492,10 @@ async function handleUniversalSearchV81513(from,question,user,options={}){
   if(await answerChargingEquipmentCountV81533(from,question))return true;
   let module=searchIntentV81524(question,options.module);
   const language=options.language||await searchLanguageV81515(from,question),te=language==='TE';
+  if(module==='ALL'&&!options.module){
+    if(await showBareLocationChoicesV81592(from,user,question,language))return true;
+    if(await showManualFamilyChoicesV81592(from,user,question,language))return true;
+  }
   if(await answerCellarOverviewV81581(from,user,question,module))return true;
   if(await answerMappedEquipmentOverviewV81585(from,user,question,module))return true;
   if(await answerBloomPusherOverviewV81585(from,user,question,module))return true;
