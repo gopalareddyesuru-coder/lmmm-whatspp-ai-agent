@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.92 SUBJECT CHOICES AND COMPACT EVIDENCE 2026-10-14
+// LMMM AI Maintenance V8.15.93 COMPLETE INDEXED MANUAL SECTIONS 2026-10-15
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -3108,10 +3108,7 @@ async function answerManualItemNumberV81535(from,user,question){
   if(!canReadDepartmentArchiveV81540(from,user)||!item.source_page||!item.source_file){
     await sendText(from,`Item ${number}: ${item.equipment}. Detailed source pages are not available under this access scope.`);return true;
   }
-  const following=readManualItemSearchIndexV81535().items.find(x=>x.item_number>number&&
-    x.source_file===item.source_file&&x.source_page>item.source_page);
-  const last=Math.min(item.source_page+39,(following?.source_page||item.source_page+40)-1);
-  const locations=Array.from({length:last-item.source_page+1},(_,i)=>`page:${item.source_page+i}`);
+  const locations=manualItemSectionLocationsV81593(item);
   let pages;
   try{pages=(await pool.query(`SELECT location,source_text FROM lmmm_source_review
     WHERE source_file=$1 AND location=ANY($2::text[])
@@ -3150,6 +3147,19 @@ async function answerManualItemNumberV81535(from,user,question){
   // The source OCR can be heavily corrupted. A raw OCR PDF is misleading and
   // unreadable on WhatsApp; send the concise grounded answer above instead.
   return true;
+}
+// Read the indexed section through the next distinct heading. Shared item
+// numbers can start on the same page, so only a later page is a boundary.
+function manualItemSectionLocationsV81593(item){
+  const start=Number(item?.source_page);
+  if(!Number.isInteger(start)||start<1)return [];
+  const next=readManualItemSearchIndexV81535().items
+    .filter(x=>x.source_file===item.source_file&&Number(x.source_page)>start)
+    .reduce((n,x)=>Math.min(n,Number(x.source_page)),Infinity);
+  // The final section has no next indexed heading. Bound that case while
+  // allowing the longest indexed sections (up to 95 pages) in full.
+  const end=Number.isFinite(next)?next-1:start+119;
+  return Array.from({length:Math.min(120,end-start+1)},(_,i)=>`page:${start+i}`);
 }
 async function answerManualItemNameV81535(from,user,question){
   const q=String(question||'').trim();
@@ -5047,10 +5057,9 @@ async function answerPracticalManualPdfV81575(from,user,question,module){
   if(!grid&&matches.length!==1)return false;
   const item=grid?null:matches[0];
   const source=item?.source_file||'1702906388  Charging Equipement Full Discription (Item 1-8)(2).pdf';
-  const start=item?.source_page||3,next=item?readManualItemSearchIndexV81535().items.find(x=>x.item_number>item.item_number&&x.source_file===source&&x.source_page>start)?.source_page:12;
-  const end=Math.min(start+39,(next||start+40)-1);
+  const locations=item?manualItemSectionLocationsV81593(item):Array.from({length:9},(_,i)=>`page:${i+3}`);
   const pages=(await pool.query(`SELECT location,source_text FROM lmmm_source_review WHERE source_file=$1 AND location=ANY($2::text[]) ORDER BY (substring(location from 'page:([0-9]+)'))::int`,
-    [source,Array.from({length:end-start+1},(_,i)=>`page:${start+i}`)])).rows;
+    [source,locations])).rows;
   if(!pages.length)return false;
   const subject=String(question).replace(/\b(?:explain|from|its|manual|specification|specs|details|of|the)\b/gi,' ').trim();
   const terms=subject.toLowerCase().split(/[^a-z0-9]+/).filter(x=>x.length>3&&!/charging|grid|equipment/.test(x));
