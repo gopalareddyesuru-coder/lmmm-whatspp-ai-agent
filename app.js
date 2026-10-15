@@ -1,4 +1,4 @@
-// LMMM AI Maintenance V8.15.93 COMPLETE INDEXED MANUAL SECTIONS 2026-10-15
+// LMMM AI Maintenance V8.15.94 AREA-AWARE MANUAL FAMILIES 2026-10-15
 // Registration, approval, and explicit-confirmation maintenance file ingestion
 import express from 'express';
 import 'dotenv/config';
@@ -3656,25 +3656,40 @@ async function showBareLocationChoicesV81592(from,user,question,language){
   return true;
 }
 function manualFamilyChoicesV81592(question){
-  const normalized=normalizeEquipmentSearchTextV81553(question);
+  const raw=String(question||'').trim();
+  const overview=/^(?:tell me about|information about|details of|overview(?: of)?|describe|what is)\s+(?:the\s+)?/i.test(raw);
+  const subject=overview?raw.replace(/^(?:tell me about|information about|details of|overview(?: of)?|describe|what is)\s+(?:the\s+)?/i,''):raw;
+  const area=/^\s*(bar\s*mill|bdm|finishing(?:\s+area)?)\b/i.exec(subject)?.[1]||'';
+  const normalized=normalizeEquipmentSearchTextV81553(area?subject.slice(area.length):subject);
   if(/^(?:TOCB|T O C B)$/.test(normalized))return readManualItemSearchIndexV81535().items.filter(x=>
     /turnover type cooling bed/i.test(x.equipment||'')&&/BDM/i.test(x.source_file||''));
   const singular=normalized.replace(/\bBEDS\b/g,'BED').replace(/\bAREAS\b/g,'AREA');
   if(singular.length<7)return [];
   const words=singular.split(' ').filter(x=>x.length>2);
   if(!words.length)return [];
+  const coolingFamily=singular==='COOLING BED';
   return readManualItemSearchIndexV81535().items.filter(item=>{
     if(!item.equipment||!item.source_file||!item.source_page)return false;
-    return [item.equipment,...(item.aliases||[])].some(alias=>{
+    if(area&&!( /^bar\s*mill$/i.test(area)?/Bar Mill|Cooling Beds and Finishing Area/i.test(item.source_file):
+      /^bdm$/i.test(area)?/BDM/i.test(item.source_file):/Finishing Area/i.test(item.source_file)))return false;
+    return coolingFamily&&/\bCOOLING\b/i.test(item.equipment)||[item.equipment,...(item.aliases||[])].some(alias=>{
       const name=normalizeEquipmentSearchTextV81553(alias).replace(/\bBEDS\b/g,'BED').replace(/\bAREAS\b/g,'AREA');
       return words.every(word=>name.split(' ').includes(word));
     });
   }).slice(0,7);
 }
 async function showManualFamilyChoicesV81592(from,user,question,language){
-  if(!await hasAuthorityV874(user,'VIEW')||!bareAssetQuestionV81515(question,universalTermsV81513(question)))return false;
+  const overview=isEquipmentOverviewV81586(question);
+  if(!await hasAuthorityV874(user,'VIEW')||
+     !(bareAssetQuestionV81515(question,universalTermsV81513(question))||overview))return false;
   const matches=manualFamilyChoicesV81592(question);
   if(!matches.length)return false;
+  // An explanatory request naming a family must resolve its exact O&M item
+  // before producing specifications; preserve the original wording in chat.
+  if(overview&&matches.length===1){
+    await answerMappedEquipmentOverviewV81585(from,user,`Tell me about ${matches[0].equipment}`,'ALL');
+    return true;
+  }
   const names=matches.map(x=>x.equipment);
   if(matches.length===1){
     await saveDocumentSessionV81511(from,'MAINT_SEARCH_FLOW',
